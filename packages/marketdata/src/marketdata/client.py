@@ -28,7 +28,7 @@ from marketdata.types import (
     Request,
     ShareholderItem,
 )
-from marketdata.vendors.discovery import DiscoveryVendor
+from marketdata.vendors.discovery import DISCOVERY_VENDOR_CLASSES, DiscoveryVendor
 from marketdata.vendors.news import EastmoneyStockNewsVendor
 
 # 指数 secid(东财):指数与个股 secid 前缀规则不同,必须显式映射,否则按个股规则会取错标的。
@@ -93,9 +93,14 @@ class MarketData:
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=30.0), default_ttl=30.0,
         )
-        # discovery(东财热门榜)是市场级、单源、非 symbol 模型,不进 Engine/不进 DataSource
-        # taxonomy —— md 直接委托给 DiscoveryVendor。
+        # discovery(东财热门榜)是市场级、非 symbol 模型,不进 Engine —— md 直接委托给
+        # discovery vendor。虽然不进 Engine,但仍是**可选数据源**:宿主 DataSource 表
+        # 按 provider 名(见 DISCOVERY_VENDOR_CLASSES)选择用哪个,便于在 push2 不可达的
+        # 网络出口切到 bkzj。未指定 vendor 时沿用历史默认(push2),行为向后兼容。
         self._discovery = DiscoveryVendor()
+        self._discovery_vendors = {
+            name: cls() for name, cls in DISCOVERY_VENDOR_CLASSES.items()
+        }
         # news(新闻资讯)是聚合语义(并发查所有已启用源、结果合并去重),非失败转移
         # (找到一个就停),硬套 Engine 的主备模型是设计错配,故不进 Engine —— 只借 registry
         # 的 build_vendors 复用 vendor 实例,合并/去重/排序/since 过滤逻辑在 news() 里自己做。
@@ -374,14 +379,23 @@ class MarketData:
         """每个 vendor 的内存健康度快照(成功率 / p50 延迟 / 最近错误)。"""
         return self.metrics.snapshot()
 
-    def hot_stocks(self, **kw) -> list[HotStock]:
+    def _discovery_vendor(self, vendor: str | None):
+        """按 provider 名取 discovery vendor;未指定时用历史默认(push2)。"""
+        if not vendor:
+            return self._discovery
+        picked = self._discovery_vendors.get(str(vendor).strip())
+        if picked is None:
+            raise ValueError(f"未知的 discovery vendor: {vendor}")
+        return picked
+
+    def hot_stocks(self, *, vendor: str | None = None, **kw) -> list[HotStock]:
         """热门/异动股(东财榜单,市场级、不经 Engine)。"""
-        return self._discovery.hot_stocks(**kw)
+        return self._discovery_vendor(vendor).hot_stocks(**kw)
 
-    def hot_boards(self, **kw) -> list[HotBoard]:
+    def hot_boards(self, *, vendor: str | None = None, **kw) -> list[HotBoard]:
         """热门板块(东财榜单,市场级、不经 Engine)。"""
-        return self._discovery.hot_boards(**kw)
+        return self._discovery_vendor(vendor).hot_boards(**kw)
 
-    def board_stocks(self, **kw) -> list[HotStock]:
+    def board_stocks(self, *, vendor: str | None = None, **kw) -> list[HotStock]:
         """板块成分股榜单(东财,市场级、不经 Engine)。"""
-        return self._discovery.board_stocks(**kw)
+        return self._discovery_vendor(vendor).board_stocks(**kw)

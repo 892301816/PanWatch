@@ -468,6 +468,10 @@ class DataCollectorManager:
             # 按 provider 路由到对应 Provider,Tushare(暂无 quote)/YFinance 可正确测到。
             return await self._test_quote_source(source, test_symbols)
 
+        elif source.type == "discovery":
+            # 市场级、非 symbol 模型:拉一次板块榜单即验证连通与格式。
+            return await self._test_discovery_source(source)
+
         elif source.type == "chart":
             from src.platform.marketdata.collectors.screenshot_collector import ScreenshotCollector
             import base64
@@ -675,6 +679,47 @@ class DataCollectorManager:
             ],
             count=len(rows),
             error="" if rows else "获取行情失败",
+        )
+
+    async def _test_discovery_source(self, source: DataSource) -> CollectorResult:
+        """按 provider 测试板块/榜单源:拉一次行业板块榜单。
+
+        discovery 是市场级、非 symbol 模型,不传测试标的。只验证该 provider 对应的
+        vendor 存在且能返回板块数据——这是"板块页是否有真实数据"的直接判据。
+        """
+        from marketdata.vendors.discovery import DISCOVERY_VENDOR_CLASSES
+
+        from src.platform.marketdata.collectors.discovery_collector import (
+            EastMoneyDiscoveryCollector,
+        )
+
+        if source.provider not in DISCOVERY_VENDOR_CLASSES:
+            return CollectorResult(
+                success=False,
+                error=f"provider {source.provider} 无对应 vendor，包内未实现该榜单源",
+            )
+
+        cfg = source.config or {}
+        collector = EastMoneyDiscoveryCollector(
+            proxy=cfg.get("proxy"), provider=source.provider
+        )
+        try:
+            boards = await collector.fetch_hot_boards(market="CN", mode="gainers", limit=5)
+        except Exception as e:
+            return CollectorResult(success=False, error=str(e))
+
+        return CollectorResult(
+            success=len(boards) > 0,
+            data=[
+                {
+                    "code": b.code,
+                    "name": b.name,
+                    "change_pct": b.change_pct,
+                }
+                for b in boards
+            ],
+            count=len(boards),
+            error="" if boards else "获取板块榜单失败",
         )
 
     async def _test_news_source(

@@ -28,6 +28,7 @@ TYPE_LABELS = {
     "shareholders": "股东户数",
     "dividend": "分红",
     "northbound": "北向资金",
+    "discovery": "板块榜单",
 }
 
 

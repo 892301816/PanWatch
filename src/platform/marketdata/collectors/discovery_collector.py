@@ -31,11 +31,21 @@ def get_market_data():
     return _g()
 
 
-class EastMoneyDiscoveryCollector:
-    """Discovery ranks (CN/HK/US),经 marketdata 包统一取数。"""
+DEFAULT_DISCOVERY_PROVIDER = "eastmoney"
 
-    def __init__(self, *, proxy: str | None = None):
+
+class EastMoneyDiscoveryCollector:
+    """Discovery ranks (CN/HK/US),经 marketdata 包统一取数。
+
+    ``provider`` 决定用包内哪个 discovery vendor(见 marketdata 包的
+    ``DISCOVERY_VENDOR_CLASSES``):``eastmoney`` 走 push2,``eastmoney_bkzj`` 走
+    ``data.eastmoney.com``。宿主按 DataSource 表的 provider 传入,便于在 push2
+    不可达的网络出口切换。未指定时沿用历史默认,行为不变。
+    """
+
+    def __init__(self, *, proxy: str | None = None, provider: str = DEFAULT_DISCOVERY_PROVIDER):
         self.proxy = proxy
+        self.provider = (provider or DEFAULT_DISCOVERY_PROVIDER).strip() or DEFAULT_DISCOVERY_PROVIDER
 
     async def fetch_hot_stocks(
         self,
@@ -48,6 +58,7 @@ class EastMoneyDiscoveryCollector:
 
         pkg_items = await _aio.to_thread(
             get_market_data().hot_stocks,
+            vendor=self.provider,
             market=market,
             mode=mode,
             limit=limit,
@@ -77,6 +88,7 @@ class EastMoneyDiscoveryCollector:
 
         pkg_items = await _aio.to_thread(
             get_market_data().hot_boards,
+            vendor=self.provider,
             market=market,
             mode=mode,
             limit=limit,
@@ -104,6 +116,7 @@ class EastMoneyDiscoveryCollector:
 
         pkg_items = await _aio.to_thread(
             get_market_data().board_stocks,
+            vendor=self.provider,
             board_code=board_code,
             mode=mode,
             limit=limit,

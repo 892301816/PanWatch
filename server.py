@@ -648,6 +648,34 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },
+        # 板块/热门榜单数据源。两者是同一个发现榜单的两种取数方式,按 priority
+        # 依次尝试、失败自动降级(见 src/modules/market/api/discovery.py)。
+        # bkzj 排在前面:它走 data.eastmoney.com,在 push2 被网络出口 reset 的环境
+        # (桌面/NAS/公司代理)下仍可达,兼容面更广。
+        {
+            "name": "东方财富板块榜单",
+            "type": "discovery",
+            "provider": "eastmoney_bkzj",
+            "config": {
+                "description": "板块/热门榜单，走 data.eastmoney.com 的 bkzj 接口",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": [],  # 市场级、非 symbol 模型,不需要测试标的
+        },
+        {
+            "name": "东方财富榜单(push2)",
+            "type": "discovery",
+            "provider": "eastmoney",
+            "config": {
+                "description": "板块/热门榜单，走 push2.eastmoney.com；部分网络出口不可达，默认关闭",
+            },
+            "enabled": False,
+            "priority": 1,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
 ]
 
 

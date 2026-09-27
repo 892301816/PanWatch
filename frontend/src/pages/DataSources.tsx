@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Image, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight } from 'lucide-react'
+import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Image, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight, LayoutGrid } from 'lucide-react'
 import { fetchAPI, resetDataSourcesToSeed, type DataSource } from '@panwatch/api'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -82,11 +82,12 @@ const DATASOURCE_TYPES = {
   shareholders: { label: '股东户数', icon: Users, color: 'text-teal-500' },
   dividend: { label: '分红', icon: Gift, color: 'text-pink-500' },
   northbound: { label: '北向资金', icon: ArrowLeftRight, color: 'text-sky-500' },
+  discovery: { label: '板块榜单', icon: LayoutGrid, color: 'text-lime-500' },
 }
 
 // 数据源分类分组:仅用于页面展示时的二级归组,不影响数据结构与后端
 const DATASOURCE_CATEGORIES: { key: string; label: string; types: string[] }[] = [
-  { key: 'quote_kline', label: '行情 & K线', types: ['quote', 'kline'] },
+  { key: 'quote_kline', label: '行情 & K线', types: ['quote', 'kline', 'discovery'] },
   { key: 'news', label: '资讯 & 快讯', types: ['news', 'flash_news', 'events'] },
   { key: 'fundamentals', label: '基本面 & 财务', types: ['fundamentals'] },
   { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },
@@ -633,6 +634,24 @@ export default function DataSourcesPage() {
                             (quoteItem.change_pct ?? 0) > 0 ? 'text-red-500' : (quoteItem.change_pct ?? 0) < 0 ? 'text-green-500' : 'text-muted-foreground'
                           }`}>
                             {(quoteItem.change_pct ?? 0) > 0 ? '+' : ''}{quoteItem.change_pct?.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* Discovery (板块榜单) type */}
+                  {testResult.source_type === 'discovery' && testResult.items.map((item, i) => {
+                    const boardItem = item as { code?: string; name?: string; change_pct?: number }
+                    return (
+                      <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-accent/30">
+                        <span className="text-[12px] font-medium text-foreground">{boardItem.name}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[11px] font-mono text-muted-foreground/80">{boardItem.code}</span>
+                          <span className={`text-[11px] font-medium ${
+                            (boardItem.change_pct ?? 0) > 0 ? 'text-red-500' : (boardItem.change_pct ?? 0) < 0 ? 'text-green-500' : 'text-muted-foreground'
+                          }`}>
+                            {(boardItem.change_pct ?? 0) > 0 ? '+' : ''}{boardItem.change_pct?.toFixed(2)}%
                           </span>
                         </div>
                       </div>
