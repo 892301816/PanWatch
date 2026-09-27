@@ -34,31 +34,25 @@ class DbConfigProvider:
             db.close()
 
     def sources_for(self, datatype: str, market: str | None) -> list[SourceConfig]:
-        market_code = (market or "").strip().upper()
+        """按 priority 输出启用源,不额外改写顺序。
+
+        曾经这里对「kline + US + tencent」硬编码跳过,理由是腾讯美股接口会返回 501。
+        但那条跳过会**覆盖用户在数据源页配的优先级**,且实测(2026-09)腾讯美股 K 线
+        9/9 成功、单次 0.2s 内;而它要退让给的 stooq 在本网络单次可挂 90s+、
+        yahoo 也拿不到数据 —— 结果是美股 K 线整条链取不到数据。
+        真遇到 501 时,Engine 本身会按 priority 继续失败转移,无需在此静态改写顺序。
+        """
         rows = self._query_rows(datatype)
-        has_us_fallback = any(
-            row.provider in {"stooq", "yahoo"} for row in rows
-        )
-        sources = []
-        for row in rows:
-            # 腾讯美股接口在当前网络出口稳定返回 501；A/HK 仍保留腾讯作为主源。
-            if (
-                datatype == "kline"
-                and market_code == "US"
-                and row.provider == "tencent"
-                and has_us_fallback
-            ):
-                continue
-            sources.append(
-                SourceConfig(
-                    vendor=row.provider,
-                    priority=row.priority,
-                    enabled=True,
-                    config=row.config or {},
-                    supports_batch=bool(row.supports_batch),
-                )
+        return [
+            SourceConfig(
+                vendor=row.provider,
+                priority=row.priority,
+                enabled=True,
+                config=row.config or {},
+                supports_batch=bool(row.supports_batch),
             )
-        return sources
+            for row in rows
+        ]
 
 
 _md: MarketData | None = None

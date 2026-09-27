@@ -34,6 +34,35 @@ logger = logging.getLogger(__name__)
 _TEST_SYMBOL_LIMIT = 10
 
 
+def _recent_trading_days(*, limit: int = 5, lookback_days: int = 20) -> list[str]:
+    """最近若干个 A 股交易日(YYYY-MM-DD,由近及远)。
+
+    给"只在交易日有数据"的源自检用(如龙虎榜):拿 today 去探,周末/节假日必然是
+    0 条,会把"今天休市"误报成"数据源不可用"。返回多个而非一个,是因为交易日历
+    可能不含临时休市,且当日数据发布有延迟——调用方可以往前多试几天。
+    日历不可用时退回"今天起往前若干自然日",保持原行为不失真。
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    try:
+        from src.platform.scheduling.trading_calendar import is_trading_day
+    except Exception:
+        return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(max(1, limit))]
+
+    days: list[str] = []
+    for offset in range(max(1, lookback_days)):
+        if len(days) >= max(1, limit):
+            break
+        day = today - timedelta(days=offset)
+        try:
+            if is_trading_day("CN", day):
+                days.append(day.strftime("%Y-%m-%d"))
+        except Exception:
+            break
+    return days or [today.strftime("%Y-%m-%d")]
+
+
 @dataclass
 class CollectorResult:
     """采集结果"""
@@ -871,9 +900,9 @@ class DataCollectorManager:
     async def _test_dragon_tiger_source(self, source: DataSource) -> CollectorResult:
         """测试龙虎榜源:走 marketdata 包的单源 Engine(仅该 vendor,不串备份链)。
 
-        龙虎榜是市场级数据(不按 symbols 过滤),但需要指定交易日。测试时优先取
-        source.config.test_date,未配置则用当前日期占位(仅用于验证连通性，
-        实抓以真实交易日为准）。
+        龙虎榜是市场级数据(不按 symbols 过滤),但需要指定交易日。探测取
+        ``source.config.test_date``;未配置时从最近交易日往前试几天,任一有数据
+        即视为可用 —— 原因见下方注释。
         """
         from marketdata import MarketData, SourceConfig, StaticConfigProvider
 
@@ -894,13 +923,29 @@ class DataCollectorManager:
             )
         )
 
-        test_date = cfg.get("test_date") or datetime.now().strftime("%Y-%m-%d")
+        # 默认不取"今天":龙虎榜只在交易日有数据,周末/节假日跑 today 必然是 0 条,
+        # 会把"今天休市"误报成"数据源不可用"。而且仅仅回退到"最近交易日"还不够:
+        # ① 交易日历可能不含临时休市(实测 2026-09-25 中秋,日历仍标为交易日);
+        # ② 当日榜单要收盘后才发布,盘中探测同样为空。
+        # 故从最近交易日往前连试几天,任一有数据即判定该源可用。
+        explicit = (cfg.get("test_date") or "").strip()
+        candidates = [explicit] if explicit else _recent_trading_days(limit=5)
 
-        try:
-            items = await asyncio.to_thread(md.dragon_tiger, date=test_date)
-        except Exception as e:
-            return CollectorResult(success=False, error=str(e))
+        items: list = []
+        last_error = ""
+        for test_date in candidates:
+            try:
+                items = await asyncio.to_thread(md.dragon_tiger, date=test_date)
+            except Exception as e:
+                last_error = str(e)
+                items = []
+            if items:
+                break
 
+        if not items and last_error:
+            return CollectorResult(success=False, error=last_error)
+
+        tried = "、".join(candidates)
         return CollectorResult(
             success=len(items) > 0,
             data=[
@@ -914,7 +959,7 @@ class DataCollectorManager:
             count=len(items),
             error=""
             if items
-            else "未获取到龙虎榜数据（需配置 test_date 或当日有榜）",
+            else f"未获取到龙虎榜数据（已试 {tried}；可在 config.test_date 指定交易日）",
         )
 
     async def _test_margin_source(self, source: DataSource) -> CollectorResult:

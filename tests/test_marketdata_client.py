@@ -44,8 +44,13 @@ def test_db_config_provider_maps_rows(monkeypatch):
     ]
 
 
-def test_db_config_provider_skips_tencent_us_kline(monkeypatch):
-    """美股 K 线跳过腾讯探测，避免每只股票固定产生 501 后再回退。"""
+def test_db_config_provider_keeps_tencent_for_us_kline(monkeypatch):
+    """美股 K 线不得跳过腾讯:跳过会覆盖用户配的优先级,导致美股 K 线取不到数据。
+
+    原先为规避"腾讯美股返回 501"硬编码跳过 kline+US+tencent。但实测(2026-09)腾讯美股
+    K 线 9/9 成功、单次 0.2s 内,而它退让给的 stooq 在本网络单次可挂 90s+、yahoo 也拿不到
+    数据 —— 整条链反而取不到数据。真遇到 501 时 Engine 会按 priority 继续失败转移。
+    """
     rows = [
         SimpleNamespace(provider="tencent", priority=0, config={}, supports_batch=False),
         SimpleNamespace(provider="stooq", priority=15, config={}, supports_batch=False),
@@ -55,4 +60,21 @@ def test_db_config_provider_skips_tencent_us_kline(monkeypatch):
 
     got = cp.sources_for("kline", "US")
 
-    assert [s.vendor for s in got] == ["stooq"]
+    # 顺序与优先级完全按数据源表,不做任何静态改写
+    assert [s.vendor for s in got] == ["tencent", "stooq"]
+    assert [s.priority for s in got] == [0, 15]
+
+
+def test_db_config_provider_does_not_rewrite_any_market(monkeypatch):
+    """其它 datatype/market 组合同样原样透传,不做隐藏改写。"""
+    rows = [
+        SimpleNamespace(provider="tencent", priority=0, config={}, supports_batch=True),
+        SimpleNamespace(provider="sina", priority=5, config={}, supports_batch=True),
+    ]
+    cp = mc.DbConfigProvider()
+    monkeypatch.setattr(cp, "_query_rows", lambda datatype: rows)
+
+    for datatype in ("quote", "kline", "news"):
+        for market in ("CN", "HK", "US"):
+            got = cp.sources_for(datatype, market)
+            assert [s.vendor for s in got] == ["tencent", "sina"], f"{datatype}/{market}"
