@@ -2012,6 +2012,65 @@ def _m127_assistant_trace_metrics(conn: Connection) -> None:
         _add_column_if_missing(conn, "assistant_tool_invocations", name, statement)
 
 
+def _m128_operation_plans(conn: Connection) -> None:
+    """AI 每日操作计划表 + 提醒规则的来源字段。
+
+    operation_plans 是新表,理论上 create_all 会建;但此处显式建一次并补齐索引,
+    保证"表已存在但缺索引"的库也能收敛到同一形态。提醒规则的两个来源字段是
+    ALTER 已有表,create_all 不会处理,必须显式加。
+    """
+    if not _has_table(conn, "operation_plans"):
+        conn.execute(
+            text(
+                "CREATE TABLE operation_plans ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "stock_id INTEGER REFERENCES stocks(id) ON DELETE SET NULL, "
+                "stock_symbol TEXT NOT NULL DEFAULT '', "
+                "stock_name TEXT NOT NULL DEFAULT '', "
+                "market TEXT NOT NULL DEFAULT 'CN', "
+                "plan_date TEXT NOT NULL DEFAULT '', "
+                "plan_end_date TEXT NOT NULL DEFAULT '', "
+                "agent_name TEXT NOT NULL DEFAULT 'operation_plan', "
+                "overall_judgment TEXT DEFAULT '', "
+                "scenarios JSON DEFAULT '[]', "
+                "discipline JSON DEFAULT '[]', "
+                "summary TEXT DEFAULT '', "
+                "risk_warning TEXT DEFAULT '', "
+                "content TEXT DEFAULT '', "
+                "status TEXT DEFAULT 'pending', "
+                "remarks TEXT DEFAULT '', "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "CONSTRAINT uq_operation_plan_symbol_date "
+                "UNIQUE (market, stock_symbol, plan_date)"
+                ")"
+            )
+        )
+    _create_index_if_missing(
+        conn,
+        "ix_operation_plan_date",
+        "CREATE INDEX ix_operation_plan_date ON operation_plans(plan_date)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_operation_plan_symbol",
+        "CREATE INDEX ix_operation_plan_symbol ON operation_plans(stock_symbol)",
+    )
+
+    for name, statement in (
+        ("source", "ALTER TABLE price_alert_rules ADD COLUMN source TEXT DEFAULT ''"),
+        (
+            "source_plan_id",
+            "ALTER TABLE price_alert_rules ADD COLUMN source_plan_id INTEGER",
+        ),
+        (
+            "source_label",
+            "ALTER TABLE price_alert_rules ADD COLUMN source_label TEXT DEFAULT ''",
+        ),
+    ):
+        _add_column_if_missing(conn, "price_alert_rules", name, statement)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2040,6 +2099,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(125, "assistant_task_protocol", _m125_assistant_task_protocol),
     Migration(126, "assistant_task_events", _m126_assistant_task_events),
     Migration(127, "assistant_trace_metrics", _m127_assistant_trace_metrics),
+    Migration(128, "operation_plans", _m128_operation_plans),
 )
 
 

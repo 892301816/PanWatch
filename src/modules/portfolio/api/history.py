@@ -63,6 +63,9 @@ class HistoryResponse(BaseModel):
     prompt_context: str | None = None
     prompt_stats: dict | None = None
     news_debug: dict | None = None
+    # 操作计划的结构化情景(含量化价位),供个股详情展示与"一键加入提醒"
+    scenarios: list[dict] | None = None
+    plan_date: str | None = None
     created_at: str
     updated_at: str
 
@@ -140,6 +143,8 @@ def list_history(
             prompt_context=r.raw_data.get("prompt_context") if r.raw_data else None,
             prompt_stats=r.raw_data.get("prompt_stats") if r.raw_data else None,
             news_debug=r.raw_data.get("news_debug") if r.raw_data else None,
+            scenarios=r.raw_data.get("scenarios") if r.raw_data else None,
+            plan_date=r.raw_data.get("plan_date") if r.raw_data else None,
             created_at=_format_datetime(r.created_at),
             updated_at=_format_datetime(r.updated_at),
         )
@@ -186,6 +191,8 @@ def get_history_detail(
         news_debug=record.raw_data.get("news_debug")
         if record.raw_data
         else None,
+        scenarios=record.raw_data.get("scenarios") if record.raw_data else None,
+        plan_date=record.raw_data.get("plan_date") if record.raw_data else None,
         created_at=_format_datetime(record.created_at),
         updated_at=_format_datetime(record.updated_at),
     )

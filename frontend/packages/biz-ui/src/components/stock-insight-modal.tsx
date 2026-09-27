@@ -3,10 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import { Copy, Download, ExternalLink, RefreshCw, Share2, Sparkles } from 'lucide-react'
 import {
   insightApi,
+  operationPlansApi,
   stocksApi,
   tradingAgentsApi,
   type DeepAnalysisResult,
   type HistoryComparisonResponse,
+  type OperationPlan,
 } from '@panwatch/api'
 import { getMarketBadge } from '@panwatch/biz-ui'
 import { useLocalStorage } from '@/lib/utils'
@@ -22,6 +24,7 @@ import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import { TechnicalBadge } from '@panwatch/biz-ui/components/technical-badge'
 import AddPositionCalculator from '@panwatch/biz-ui/components/add-position-calculator'
+import OperationPlanModal from '@panwatch/biz-ui/components/operation-plan-modal'
 
 interface QuoteResponse {
   symbol: string
@@ -130,6 +133,7 @@ interface StockItem {
 const AGENT_LABELS: Record<string, string> = {
   daily_report: '盘后日报',
   premarket_outlook: '盘前分析',
+  operation_plan: '操作计划',
 }
 
 function formatNumber(value: number | null | undefined, digits = 2): string {
@@ -365,7 +369,9 @@ export default function StockInsightModal(props: {
   const [news, setNews] = useState<NewsItem[]>([])
   const [announcements, setAnnouncements] = useState<NewsItem[]>([])
   const [reports, setReports] = useState<HistoryRecord[]>([])
-  const [reportTab, setReportTab] = useState<'premarket_outlook' | 'daily_report'>('premarket_outlook')
+  const [operationPlan, setOperationPlan] = useState<OperationPlan | null>(null)
+  const [planModalOpen, setPlanModalOpen] = useState(false)
+  const [reportTab, setReportTab] = useState<'premarket_outlook' | 'daily_report' | 'operation_plan'>('premarket_outlook')
   const [deepResult, setDeepResult] = useState<DeepAnalysisResult | null>(null)
   const [deepLoading, setDeepLoading] = useState(false)
   const [deepLoaded, setDeepLoaded] = useState(false)
@@ -564,10 +570,20 @@ export default function StockInsightModal(props: {
     }
   }, [symbol, market])
 
+  const loadOperationPlan = useCallback(async () => {
+    if (!symbol) return
+    try {
+      setOperationPlan(await operationPlansApi.latest(symbol, market || 'CN'))
+    } catch {
+      // 「还没生成过计划」是正常状态而非错误,静默置空即可,不打扰用户
+      setOperationPlan(null)
+    }
+  }, [symbol, market])
+
   const loadReports = useCallback(async () => {
     if (!symbol) return
     try {
-      const agents = ['premarket_outlook', 'daily_report']
+      const agents = ['premarket_outlook', 'daily_report', 'operation_plan']
       const bySymbolResults = await Promise.all(
         agents.map(agent =>
           insightApi.history<HistoryRecord[]>({
@@ -624,25 +640,25 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadHoldingAgg()])
+      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadHoldingAgg(), loadOperationPlan()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadKline, loadMiniKline, loadHoldingAgg, toast])
+  }, [symbol, loadQuote, loadKline, loadMiniKline, loadHoldingAgg, loadOperationPlan, toast])
 
   const handleRefreshAll = useCallback(async () => {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports()])
+      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadOperationPlan()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, toast])
+  }, [symbol, loadQuote, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadOperationPlan, toast])
 
   const refreshForAuto = useCallback(async () => {
     if (!symbol) return
@@ -849,6 +865,7 @@ export default function StockInsightModal(props: {
     const out: Record<string, HistoryRecord | null> = {
       premarket_outlook: null,
       daily_report: null,
+      operation_plan: null,
     }
     for (const r of reports) {
       if (!out[r.agent_name]) out[r.agent_name] = r
@@ -1613,6 +1630,55 @@ export default function StockInsightModal(props: {
                       </div>
                     )}
                   </div>
+
+                  {/* 操作计划:把"计划"变成"纪律"的入口 —— 一键把价位加成提醒 */}
+                  <div className="card p-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-[12px] text-muted-foreground">操作计划</div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px] text-muted-foreground"
+                        onClick={() => setPlanModalOpen(true)}
+                      >
+                        {operationPlan ? '查看' : '详情'}
+                      </Button>
+                    </div>
+                    {!operationPlan ? (
+                      <div className="text-[12px] text-muted-foreground py-3">
+                        暂无计划
+                        <div className="mt-1 text-[11px] text-muted-foreground/70">
+                          生成后可把止损/目标价一键加入提醒
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border/30 bg-accent/10 p-2.5">
+                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                          <span>{operationPlan.plan_date}</span>
+                          {operationPlan.scenarios?.length > 0 && (
+                            <span>{operationPlan.scenarios.length} 个情景</span>
+                          )}
+                          {(operationPlan.alert_count ?? 0) > 0 && (
+                            <span className="text-primary">
+                              已建 {operationPlan.alert_count} 条提醒
+                            </span>
+                          )}
+                        </div>
+                        {operationPlan.summary && (
+                          <div className="mt-1 text-[12px] text-foreground/90 line-clamp-3">
+                            {operationPlan.summary}
+                          </div>
+                        )}
+                        <Button
+                          size="sm"
+                          className="mt-2 h-6 px-2 text-[11px]"
+                          onClick={() => setPlanModalOpen(true)}
+                        >
+                          加入提醒
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1634,6 +1700,7 @@ export default function StockInsightModal(props: {
                     {([
                       { key: 'premarket_outlook', label: '盘前' },
                       { key: 'daily_report', label: '盘后' },
+                      { key: 'operation_plan', label: '操作计划' },
                     ] as const).map(item => (
                       <button
                         key={item.key}
@@ -1855,6 +1922,16 @@ export default function StockInsightModal(props: {
         </DialogContent>
       </Dialog>
 
+      {/* 操作计划查看弹窗。挂在详情弹窗之外(同级),避免与详情弹窗抢焦点。 */}
+      <OperationPlanModal
+        open={planModalOpen}
+        onOpenChange={setPlanModalOpen}
+        symbol={symbol}
+        market={market}
+        stockName={resolvedName}
+        plan={operationPlan}
+        onChanged={loadOperationPlan}
+      />
     </>
   )
 }

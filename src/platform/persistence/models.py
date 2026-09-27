@@ -937,6 +937,56 @@ class SuggestionFeedback(Base):
     created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
+class OperationPlan(Base):
+    """AI 每日操作计划(按 市场+股票+日期 留档)。
+
+    一份计划 = 一次 AI 生成的"多情景操作方案":总体判断 + 若干情景(每个情景同时带
+    人读文本与量化价位) + 操作纪律 + 一句话总结 + 风险提示。
+
+    为什么单独建表而不是塞进 analysis_history:
+    - 情景里的价位要驱动提醒(一键加入提醒),需要可查询的结构化字段与稳定的行标识
+      (提醒通过 source_plan_id 回指计划,便于按计划分组、一键清理);
+    - 计划有状态生命周期(pending/executing/completed/expired),要能标记。
+    同时仍会写一份 analysis_history,让它在既有的「报告」页签里按常规方式出现。
+
+    唯一约束按 (market, symbol, plan_date):同一只股票同一天只留最新一份,历史日期
+    原样留档 —— "当时是怎么计划的"可回溯。stock_id 可空且 SET NULL,标的被删也
+    不丢历史。
+    """
+
+    __tablename__ = "operation_plans"
+    __table_args__ = (
+        UniqueConstraint(
+            "market", "stock_symbol", "plan_date", name="uq_operation_plan_symbol_date"
+        ),
+        Index("ix_operation_plan_date", "plan_date"),
+        Index("ix_operation_plan_symbol", "stock_symbol"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    stock_id = Column(
+        Integer, ForeignKey("stocks.id", ondelete="SET NULL"), nullable=True
+    )
+    stock_symbol = Column(String, nullable=False, default="")
+    stock_name = Column(String, nullable=False, default="")
+    market = Column(String, nullable=False, default="CN")
+    plan_date = Column(String, nullable=False, default="")  # YYYY-MM-DD
+    plan_end_date = Column(String, nullable=False, default="")  # 空=仅当天有效
+    agent_name = Column(String, nullable=False, default="operation_plan")
+    overall_judgment = Column(Text, default="")
+    scenarios = Column(JSON, default=[])  # 结构化情景数组,见 operation_plan.py
+    discipline = Column(JSON, default=[])  # [{principle, detail}]
+    summary = Column(Text, default="")
+    risk_warning = Column(Text, default="")
+    content = Column(Text, default="")  # 完整 markdown 报告
+    status = Column(String, default="pending")  # pending/executing/completed/expired
+    remarks = Column(Text, default="")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    stock = relationship("Stock")
+
+
 class PriceAlertRule(Base):
     """价格提醒规则"""
 
@@ -952,6 +1002,12 @@ class PriceAlertRule(Base):
     )
     name = Column(String, nullable=False, default="")
     enabled = Column(Boolean, default=True)
+    # 规则来源:空=用户手动创建;"operation_plan"=由每日操作计划一键加入。
+    # source_plan_id 回指 operation_plans.id,source_label 记情景与价位名
+    # (如 "情景一 · 止损"),用于界面分组显示与"清理该计划的全部提醒"。
+    source = Column(String, default="")
+    source_plan_id = Column(Integer, nullable=True)
+    source_label = Column(String, default="")
     condition_group = Column(JSON, default={})
     market_hours_mode = Column(String, default="trading_only")  # always/trading_only
     cooldown_minutes = Column(Integer, default=30)

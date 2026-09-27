@@ -23,7 +23,7 @@ from src.modules.administration.api.auth import get_current_user
 from src.modules.administration.api.settings import get_app_version
 from src.modules.assistant import api as assistant_api
 from src.modules.assistant.task_runner import assistant_task_runner
-from src.modules.automation.api import agents, suggestions, templates
+from src.modules.automation.api import agents, operation_plans, suggestions, templates
 from src.modules.market.api import (
     discovery,
     klines,
@@ -125,6 +125,12 @@ app.include_router(
     suggestions.router,
     prefix="/api/suggestions",
     tags=["suggestions"],
+    dependencies=protected,
+)
+app.include_router(
+    operation_plans.router,
+    prefix="/api/operation-plans",
+    tags=["operation-plans"],
     dependencies=protected,
 )
 app.include_router(

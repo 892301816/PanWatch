@@ -97,8 +97,15 @@ def create_alert_rule(
     repeat_mode: str = "repeat",
     expire_at: str | datetime | None = None,
     notify_channel_ids: list[int] | None = None,
+    source: str = "",
+    source_plan_id: int | None = None,
+    source_label: str = "",
 ) -> PriceAlertRule:
-    """Create one validated rule for both HTTP and assistant callers."""
+    """Create one validated rule for both HTTP and assistant callers.
+
+    ``source``/``source_plan_id``/``source_label`` 记录规则来源(如来自某份操作计划的
+    某个情景价位),供界面分组展示与"清理该计划的全部提醒"。手动创建一律留空。
+    """
     stock = db.query(Stock).filter(Stock.id == stock_id).first()
     if stock is None:
         raise LookupError("股票不存在")
@@ -130,6 +137,9 @@ def create_alert_rule(
         repeat_mode=repeat,
         expire_at=parse_expire_at(expire_at),
         notify_channel_ids=list(notify_channel_ids or []),
+        source=str(source or "").strip(),
+        source_plan_id=source_plan_id,
+        source_label=str(source_label or "").strip(),
     )
     db.add(row)
     db.commit()

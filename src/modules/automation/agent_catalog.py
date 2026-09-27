@@ -14,6 +14,7 @@ AGENT_KIND_CAPABILITY = "capability"
 
 WORKFLOW_AGENT_NAMES: tuple[str, ...] = (
     "premarket_outlook",
+    "operation_plan",
     "intraday_monitor",
     "daily_report",
 )
@@ -64,6 +65,20 @@ AGENT_SEED_SPECS: tuple[AgentSeedSpec, ...] = (
         kind=AGENT_KIND_WORKFLOW,
         visible=True,
         display_order=10,
+    ),
+    AgentSeedSpec(
+        name="operation_plan",
+        display_name="操作计划",
+        description="按股生成多情景操作方案（触发条件/买入区间/止损价/目标价），"
+        "可在个股详情里一键把价位加入提醒，用来约束交易纪律",
+        # 默认开启是安全的:调度只跑显式绑定到本 Agent 的股票(StockAgent),
+        # 没有绑定就不会产生 AI 调用与费用。
+        enabled=True,
+        schedule="45 8 * * 1-5",  # 开盘前 15 分钟,留出人工过目的时间
+        execution_mode="single",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=15,  # 紧跟在盘前分析之后
     ),
     AgentSeedSpec(
         name="intraday_monitor",

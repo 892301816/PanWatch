@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -245,3 +246,213 @@ async def scan_alert_rules(dry_run: bool = False, bypass_market_hours: bool = Tr
     return await ENGINE.scan_once(
         dry_run=dry_run, bypass_market_hours=bypass_market_hours
     )
+
+
+# ── 从「每日操作计划」一键加入提醒 ──────────────────────────────────────
+#
+# 设计要点:
+# - 止损价与目标价的语义不同,校验策略也不同。止损"已经被跌破"是允许的 —— 那正是
+#   最需要被叫醒的时刻;而目标价"已经达到"再加提醒只会产生噪声,故直接拒绝。
+# - 计划里的价位是 AI 给的,可能在生成后价格已经走远;创建前拿现价核一次,把
+#   "已失效/已达成"的项挡在门外,避免用户一键加完发现全是立刻触发的废提醒。
+# - expire_at 默认取计划当天收盘,避免昨天的计划今天还在提醒。
+
+_PLAN_LEVEL_META: dict[str, dict] = {
+    "stop_loss": {"label": "止损", "op": "<="},
+    "target1": {"label": "第一目标", "op": ">="},
+    "target2": {"label": "第二目标", "op": ">="},
+    "entry": {"label": "买入区间", "op": "between"},
+}
+
+
+class FromPlanItem(BaseModel):
+    scenario_index: int = Field(..., ge=0, description="情景下标(从 0 开始)")
+    level: str = Field(..., description="stop_loss / target1 / target2 / entry")
+
+
+class PriceAlertFromPlan(BaseModel):
+    plan_id: int
+    items: list[FromPlanItem] = Field(default_factory=list)
+    cooldown_minutes: int = 30
+    max_triggers_per_day: int = 3
+    notify_channel_ids: list[int] = Field(default_factory=list)
+    expire_at: str = Field(default="", description="留空=计划当天 23:59")
+
+
+def _condition_already_true(condition: dict, current_price: float | None) -> bool:
+    """该条件的判定当前是否已经成立。
+
+    提醒引擎是"状态判定"而非"穿越判定"(见 price_alert_engine._eval_condition),
+    所以条件一成立,下一轮扫描(60s 内)就会触发。这对某些情景是对的(价格已经跌穿
+    止损,正需要被叫醒),对另一些是误导(如"突破后回踩"的移动止损 8.25,在股价还
+    没突破 8.25 时条件已然成立)。这里只做标注,交由用户判断,不擅自拒绝。
+    """
+    if current_price is None or not isinstance(condition, dict):
+        return False
+    try:
+        item = (condition.get("items") or [{}])[0]
+        op, value = item.get("op"), item.get("value")
+        price = float(current_price)
+        if op == "<=":
+            return price <= float(value)
+        if op == ">=":
+            return price >= float(value)
+        if op in ("between", "in"):
+            lo, hi = float(value[0]), float(value[1])
+            return lo <= price <= hi
+    except (TypeError, ValueError, IndexError, KeyError):
+        return False
+    return False
+
+
+def _plan_level_condition(level: str, scenario: dict) -> tuple[dict | None, str, str]:
+    """把情景里的某个价位转成提醒条件。
+
+    返回 (condition_group, 展示用数值描述, 拒绝原因)。拒绝原因非空表示该项不可创建。
+    """
+    if level == "entry":
+        low = float(scenario.get("entry_low") or 0)
+        high = float(scenario.get("entry_high") or 0)
+        if low <= 0 or high <= 0:
+            return None, "", "该情景未给出买入区间"
+        return (
+            {"op": "and", "items": [{"type": "price", "op": "between", "value": [low, high]}]},
+            f"{low:g}-{high:g}",
+            "",
+        )
+
+    if level == "stop_loss":
+        price = float(scenario.get("stop_loss_num") or 0)
+        if price <= 0:
+            return None, "", "该情景未给出止损价"
+        return (
+            {"op": "and", "items": [{"type": "price", "op": "<=", "value": price}]},
+            f"{price:g}",
+            "",
+        )
+
+    # target1 / target2:区间取下沿作为"进入目标区"的判定价
+    lo = float(scenario.get(f"{level}_low") or 0)
+    hi = float(scenario.get(f"{level}_high") or 0)
+    price = lo or hi
+    if price <= 0:
+        return None, "", "该情景未给出该目标价"
+    desc = f"{lo:g}-{hi:g}" if (lo and hi) else f"{price:g}"
+    return (
+        {"op": "and", "items": [{"type": "price", "op": ">=", "value": price}]},
+        desc,
+        "",
+    )
+
+
+@router.post("/from-plan")
+async def create_alerts_from_plan(
+    payload: PriceAlertFromPlan, db: Session = Depends(get_db)
+):
+    """把操作计划里的价位批量加成提醒(原子:任一项非法则整批不创建)。
+
+    返回 created / rejected 两份清单:rejected 会说明原因(未给出该价位、已达成等),
+    前端据此提示用户哪些项被跳过,而不是静默少建几条。
+    """
+    from src.modules.automation.operation_plan import QUANT_FIELDS  # noqa: F401
+    from src.platform.marketdata.marketdata_client import md_quote_rows
+    from src.platform.persistence.models import OperationPlan
+
+    plan = db.query(OperationPlan).filter(OperationPlan.id == payload.plan_id).first()
+    if not plan:
+        raise HTTPException(404, "操作计划不存在")
+    if not payload.items:
+        raise HTTPException(400, "未选择任何要加入提醒的价位")
+
+    stock = (
+        db.query(Stock)
+        .filter(Stock.symbol == plan.stock_symbol, Stock.market == plan.market)
+        .first()
+    )
+    if not stock:
+        raise HTTPException(400, f"{plan.stock_name}({plan.stock_symbol}) 不在自选列表中，请先加入自选")
+
+    scenarios = plan.scenarios or []
+    if not isinstance(scenarios, list):
+        raise HTTPException(400, "计划数据异常，无法解析情景")
+
+    # 现价用于"是否已经达成"的校验;取不到就跳过校验(不因行情抖动阻断建提醒)
+    current_price: float | None = None
+    try:
+        rows = await asyncio.to_thread(md_quote_rows, [plan.stock_symbol], plan.market)
+        if rows:
+            current_price = rows[0].get("current_price")
+    except Exception as e:
+        logger.warning(f"取现价失败，跳过价位有效性校验: {e}")
+
+    expire_at = payload.expire_at.strip()
+    if not expire_at:
+        base_date = plan.plan_end_date or plan.plan_date
+        expire_at = f"{base_date} 23:59:00" if base_date else ""
+
+    created: list[dict] = []
+    rejected: list[dict] = []
+
+    for item in payload.items:
+        meta = _PLAN_LEVEL_META.get(item.level)
+        if not meta:
+            rejected.append({"level": item.level, "reason": "未知的价位类型"})
+            continue
+        if item.scenario_index >= len(scenarios):
+            rejected.append({"level": item.level, "reason": "情景下标越界"})
+            continue
+
+        scenario = scenarios[item.scenario_index] or {}
+        title = str(scenario.get("title") or f"情景{item.scenario_index + 1}")
+        condition, desc, reason = _plan_level_condition(item.level, scenario)
+        if not condition:
+            rejected.append({"level": item.level, "title": title, "reason": reason})
+            continue
+
+        # 目标价已达成 → 拒绝(再加只会立刻触发一条"已达成"的噪声提醒)
+        if item.level in ("target1", "target2") and current_price:
+            target = condition["items"][0]["value"]
+            if current_price >= float(target):
+                rejected.append({
+                    "level": item.level,
+                    "title": title,
+                    "reason": f"现价 {current_price:g} 已达成该目标 {target:g}，无需重复提醒",
+                })
+                continue
+
+        label = f"{title} · {meta['label']} {desc}"
+        try:
+            rule = price_alert_service.create_alert_rule(
+                db,
+                stock_id=stock.id,
+                name=f"【计划】{plan.stock_name} {meta['label']} {desc}",
+                condition_group=condition,
+                market_hours_mode="trading_only",
+                cooldown_minutes=payload.cooldown_minutes,
+                max_triggers_per_day=payload.max_triggers_per_day,
+                repeat_mode="repeat",
+                expire_at=expire_at or None,
+                notify_channel_ids=payload.notify_channel_ids,
+                source="operation_plan",
+                source_plan_id=plan.id,
+                source_label=label,
+            )
+        except (ValueError, LookupError) as e:
+            rejected.append({"level": item.level, "title": title, "reason": str(e)})
+            continue
+
+        created.append(
+            {
+                **_to_response(rule),
+                "source_label": label,
+                "current_price": current_price,
+                "already_true": _condition_already_true(condition, current_price),
+            }
+        )
+
+    return {
+        "created": created,
+        "rejected": rejected,
+        "current_price": current_price,
+        "expire_at": expire_at,
+    }

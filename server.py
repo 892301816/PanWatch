@@ -40,6 +40,7 @@ from src.modules.automation.base import AgentContext, PortfolioInfo, AccountInfo
 from src.modules.automation.daily_report import DailyReportAgent
 from src.modules.automation.chart_analyst import ChartAnalystAgent
 from src.modules.automation.intraday_monitor import IntradayMonitorAgent
+from src.modules.automation.operation_plan import OperationPlanAgent
 from src.modules.automation.premarket_outlook import PremarketOutlookAgent
 from src.modules.automation.tradingagents import TradingAgentsAgent
 from src.modules.market.data_collector import DEFAULT_TEST_SYMBOLS
@@ -1129,6 +1130,7 @@ def build_context(agent_name: str, stock_agent_id: int | None = None) -> AgentCo
 AGENT_REGISTRY: dict[str, type] = {
     "daily_report": DailyReportAgent,
     "premarket_outlook": PremarketOutlookAgent,
+    "operation_plan": OperationPlanAgent,
     "chart_analyst": ChartAnalystAgent,
     "intraday_monitor": IntradayMonitorAgent,
     "tradingagents": TradingAgentsAgent,
