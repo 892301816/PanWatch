@@ -47,6 +47,21 @@ const STATUS_LABEL: Record<string, string> = {
   expired: '已过期',
 }
 
+/** 价位相对现价的涨跌。红涨绿跌,与 A 股看板一致。 */
+function priceDelta(price: number, current: number | null | undefined) {
+  if (!current || current <= 0 || !price || price <= 0) {
+    return { pct: null as number | null, cls: 'text-foreground/80' }
+  }
+  const pct = ((price - current) / current) * 100
+  const cls = pct > 0 ? 'text-red-500' : pct < 0 ? 'text-green-500' : 'text-muted-foreground'
+  return { pct, cls }
+}
+
+function fmtPct(pct: number | null) {
+  if (pct === null) return ''
+  return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`
+}
+
 interface Props {
   open: boolean
   onOpenChange: (v: boolean) => void
@@ -55,6 +70,8 @@ interface Props {
   stockName?: string
   /** 外部已取到的计划(可选,避免重复请求) */
   plan?: OperationPlan | null
+  /** 现价,用于计算各价位相对现价的涨跌幅并配色 */
+  currentPrice?: number | null
   /** 生成/加入提醒后通知外部刷新 */
   onChanged?: () => void
 }
@@ -66,6 +83,7 @@ export default function OperationPlanModal({
   market,
   stockName,
   plan: planProp,
+  currentPrice,
   onChanged,
 }: Props) {
   const { toast } = useToast()
@@ -99,19 +117,38 @@ export default function OperationPlanModal({
   }, [open, planProp, load])
 
   /** 该情景中可加入提醒的价位。量化值为 0 的不列 —— 模型没给这个价。 */
-  const levelsOf = (s: OperationScenario): Array<{ level: Level; text: string }> => {
-    const out: Array<{ level: Level; text: string }> = []
-    if (s.stop_loss_num > 0) out.push({ level: 'stop_loss', text: `止损 ${s.stop_loss_num}` })
+  const levelsOf = (
+    s: OperationScenario
+  ): Array<{ level: Level; label: string; price: number; range?: [number, number] }> => {
+    const out: Array<{ level: Level; label: string; price: number; range?: [number, number] }> = []
+    if (s.stop_loss_num > 0) {
+      out.push({ level: 'stop_loss', label: '止损', price: s.stop_loss_num })
+    }
     if (s.target1_low > 0 || s.target1_high > 0) {
       const lo = s.target1_low, hi = s.target1_high
-      out.push({ level: 'target1', text: `第一目标 ${lo && hi ? `${lo}-${hi}` : lo || hi}` })
+      out.push({
+        level: 'target1',
+        label: '第一目标',
+        price: lo || hi,
+        range: lo && hi ? [lo, hi] : undefined,
+      })
     }
     if (s.target2_low > 0 || s.target2_high > 0) {
       const lo = s.target2_low, hi = s.target2_high
-      out.push({ level: 'target2', text: `第二目标 ${lo && hi ? `${lo}-${hi}` : lo || hi}` })
+      out.push({
+        level: 'target2',
+        label: '第二目标',
+        price: lo || hi,
+        range: lo && hi ? [lo, hi] : undefined,
+      })
     }
     if (s.entry_low > 0 && s.entry_high > 0) {
-      out.push({ level: 'entry', text: `买入区间 ${s.entry_low}-${s.entry_high}` })
+      out.push({
+        level: 'entry',
+        label: '买入区间',
+        price: s.entry_low,
+        range: [s.entry_low, s.entry_high],
+      })
     }
     return out
   }
@@ -197,6 +234,12 @@ export default function OperationPlanModal({
               <span className="rounded border border-border px-2 py-0.5 text-muted-foreground">
                 已加入 {alertCount} 条提醒
               </span>
+              {currentPrice ? (
+                <span className="rounded border border-border px-2 py-0.5 text-muted-foreground">
+                  现价 <span className="font-mono font-medium text-foreground">{currentPrice}</span>
+                  <span className="ml-1 text-muted-foreground/70">（下方百分比以此为基准）</span>
+                </span>
+              ) : null}
               {allItems.length > 0 && (
                 <Button
                   size="sm"
@@ -299,18 +342,28 @@ export default function OperationPlanModal({
 
                         {levels.length > 0 ? (
                           <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border/50 pt-2">
-                            {levels.map(({ level, text }) => (
-                              <Button
-                                key={level}
-                                size="sm"
-                                variant="outline"
-                                className="h-6 px-2 text-[11px]"
-                                disabled={submitting}
-                                onClick={() => submit([{ scenario_index: i, level }])}
-                              >
-                                + {text}
-                              </Button>
-                            ))}
+                            {levels.map(({ level, label, price, range }) => {
+                              const { pct, cls } = priceDelta(price, currentPrice)
+                              return (
+                                <Button
+                                  key={level}
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 gap-1 px-2 text-[11px]"
+                                  disabled={submitting}
+                                  title={`加入提醒：${label} ${range ? range.join('-') : price}`}
+                                  onClick={() => submit([{ scenario_index: i, level }])}
+                                >
+                                  <span className="text-muted-foreground">+ {label}</span>
+                                  <span className={`font-mono font-medium ${cls}`}>
+                                    {range ? `${range[0]}-${range[1]}` : price}
+                                  </span>
+                                  {pct !== null && (
+                                    <span className={`${cls} opacity-80`}>{fmtPct(pct)}</span>
+                                  )}
+                                </Button>
+                              )
+                            })}
                           </div>
                         ) : (
                           <div className="mt-2 border-t border-border/50 pt-2 text-[11px] text-muted-foreground">

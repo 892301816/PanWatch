@@ -1930,6 +1930,7 @@ export default function StockInsightModal(props: {
         market={market}
         stockName={resolvedName}
         plan={operationPlan}
+        currentPrice={quote?.current_price ?? null}
         onChanged={loadOperationPlan}
       />
     </>

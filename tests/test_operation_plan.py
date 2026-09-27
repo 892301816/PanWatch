@@ -244,3 +244,36 @@ class TestConditionAlreadyTrue:
         assert self._check({}, 7.66) is False
         assert self._check({"items": []}, 7.66) is False
         assert self._check({"items": [{"op": "<=", "value": "abc"}]}, 7.66) is False
+
+
+class TestScenarioTag:
+    """提醒名称里的情景标注。
+
+    同一个价位常在不同情景里以不同身份出现(8.25 既是情景一的目标卖出价、又是情景二
+    的买入区间下沿)。不带情景标识时,提醒列表里会出现一堆看起来重复的条目,分不清
+    "这条到底是让我卖还是让我买"。
+    """
+
+    @staticmethod
+    def _tag(index, title):
+        from src.modules.market.api.price_alerts import _scenario_tag
+
+        return _scenario_tag(index, title)
+
+    def test_uses_model_written_ordinal(self):
+        assert self._tag(0, "情景一：回踩7.45-7.60缩量企稳") == "情景一"
+        assert self._tag(1, "情景三：跌破7.45止损") == "情景三"
+        assert self._tag(2, "情景十：极端情况") == "情景十"
+
+    def test_falls_back_to_index_when_title_has_no_ordinal(self):
+        assert self._tag(0, "放量突破") == "情景1"
+        assert self._tag(2, "") == "情景3"
+        assert self._tag(1, None) == "情景2"
+
+    def test_tolerates_spacing_and_arabic_numerals(self):
+        assert self._tag(0, "情景 一 ：回踩") == "情景一"
+        assert self._tag(0, "情景2：突破") == "情景2"
+
+    def test_ordinal_mid_title_is_not_mistaken_for_prefix(self):
+        """只有开头的才是情景序号,正文里出现的"情景"不该被当成标识。"""
+        assert self._tag(0, "回踩情景：低吸") == "情景1"

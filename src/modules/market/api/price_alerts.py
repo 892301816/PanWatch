@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -279,6 +280,21 @@ class PriceAlertFromPlan(BaseModel):
     expire_at: str = Field(default="", description="留空=计划当天 23:59")
 
 
+def _scenario_tag(index: int, title: str) -> str:
+    """情景的短标识,用于提醒名称。
+
+    同一个价位常在不同情景里以不同身份出现(如 8.25 既是情景一的目标卖出价、又是
+    情景二的买入区间下沿),只写价位会让提醒列表里出现一堆看起来重复的条目。带上
+    情景标识才能分辨"这条到底是让我卖还是让我买"。
+
+    优先用模型自己写的情景序号(标题多以"情景一：…"开头),取不到再退回下标。
+    """
+    match = re.match(r"^\s*(情景\s*[0-9一二三四五六七八九十百]+)", str(title or ""))
+    if match:
+        return re.sub(r"\s+", "", match.group(1))
+    return f"情景{index + 1}"
+
+
 def _condition_already_true(condition: dict, current_price: float | None) -> bool:
     """该条件的判定当前是否已经成立。
 
@@ -420,12 +436,13 @@ async def create_alerts_from_plan(
                 })
                 continue
 
+        tag = _scenario_tag(item.scenario_index, title)
         label = f"{title} · {meta['label']} {desc}"
         try:
             rule = price_alert_service.create_alert_rule(
                 db,
                 stock_id=stock.id,
-                name=f"【计划】{plan.stock_name} {meta['label']} {desc}",
+                name=f"【计划】{plan.stock_name} {tag}·{meta['label']} {desc}",
                 condition_group=condition,
                 market_hours_mode="trading_only",
                 cooldown_minutes=payload.cooldown_minutes,
