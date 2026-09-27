@@ -143,6 +143,93 @@ def get_klines_batch(payload: KlineBatchRequest):
     return results
 
 
+# A 股连续竞价时段。腾讯分时接口在 15:00 之后还会带出 15:06–15:30 的填充点
+# (价格与量都不再变化),留着会把分时图的横轴拉长 25/242,走势被压扁。
+_SESSION_RANGES: tuple[tuple[str, str], ...] = (("0930", "1130"), ("1300", "1500"))
+
+
+def _in_session(t: str) -> bool:
+    return any(lo <= t <= hi for lo, hi in _SESSION_RANGES)
+
+
+@router.get("/{symbol}/minute")
+def get_minute_klines(
+    symbol: str, market: str = "CN", period: str = "m5", count: int = 320
+):
+    """分钟K线(m1/m5/m15/m30/m60)。
+
+    数据源为腾讯,**不带复权**(该端点无复权参数),与日线的前复权口径不同:
+    看当日/近几日形态无影响,跨除权日做对比时需注意。
+    """
+    from marketdata.vendors.kline import MINUTE_PERIODS
+
+    market_code = _parse_market(market)
+    period = (period or "m5").strip().lower()
+    if period not in MINUTE_PERIODS:
+        raise HTTPException(
+            400, f"不支持的周期: {period}（可选 {'/'.join(sorted(MINUTE_PERIODS))}）"
+        )
+
+    from src.platform.marketdata.marketdata_client import get_market_data
+
+    bars = get_market_data().minute_klines(
+        symbol, market=market_code.value, period=period, count=count
+    )
+    return {
+        "symbol": symbol,
+        "market": market_code.value,
+        "period": period,
+        "count": len(bars),
+        "klines": _serialize_klines(bars),
+    }
+
+
+@router.get("/{symbol}/intraday")
+def get_intraday(symbol: str, market: str = "CN"):
+    """当日分时曲线。返回价/均价/每分钟量额,并已剔除收盘后的填充点。
+
+    源数据给的是**累计**量额;这里换算成图需要的形态:
+    - ``avg_price`` = 累计额 / 累计量 / 100(量单位是手)—— 分时图的均价线
+    - ``volume``/``amount`` = 相邻两点的差值,即**每分钟**增量 —— 量柱
+    """
+    market_code = _parse_market(market)
+
+    from src.platform.marketdata.marketdata_client import get_market_data
+
+    raw_points, prev_close = get_market_data().intraday(
+        symbol, market=market_code.value
+    )
+
+    points: list[dict] = []
+    prev_vol = 0.0
+    prev_amt = 0.0
+    for p in raw_points:
+        if not _in_session(p.time):
+            continue
+        cum_vol = float(p.volume or 0.0)
+        cum_amt = float(p.amount or 0.0)
+        # 累计量是手(=100 股),换算成每股均价
+        avg_price = (cum_amt / (cum_vol * 100)) if cum_vol > 0 else None
+        points.append(
+            {
+                "time": p.time,
+                "price": p.price,
+                "avg_price": round(avg_price, 4) if avg_price else None,
+                "volume": max(0.0, cum_vol - prev_vol),   # 每分钟增量(手)
+                "amount": max(0.0, cum_amt - prev_amt),   # 每分钟增量(元)
+            }
+        )
+        prev_vol, prev_amt = cum_vol, cum_amt
+
+    return {
+        "symbol": symbol,
+        "market": market_code.value,
+        "prev_close": prev_close,
+        "count": len(points),
+        "points": points,
+    }
+
+
 @router.get("/{symbol}/summary")
 def get_kline_summary(symbol: str, market: str = "CN"):
     """获取单只股票K线摘要"""

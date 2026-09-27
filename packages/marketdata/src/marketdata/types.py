@@ -49,6 +49,22 @@ class Quote:
 
 
 @dataclass
+@dataclass(frozen=True)
+class IntradayPoint:
+    """当日分时点。
+
+    ``volume``/``amount`` 是**累计值**(数据源给的原始语义,全天单调递增),
+    不是单分钟增量 —— 分时图的均价线用累计额/累计量算,量柱才需要做差分。
+    保留累计值以免在消费方各自做一次不可逆的还原。
+    """
+
+    time: str          # HHMM
+    price: float
+    volume: float = 0.0   # 累计成交量(手)
+    amount: float = 0.0   # 累计成交额(元)
+
+
+@dataclass(frozen=True)
 class Bar:
     """标准化日K(对齐 PanWatch KlineData:date/open/close/high/low/volume)。"""
 

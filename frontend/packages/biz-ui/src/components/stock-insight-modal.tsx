@@ -64,6 +64,74 @@ interface MiniKlineResponse {
   }>
 }
 
+/** 迷你分时图:价线 + 均价线 + 昨收基准线 + 每分钟量柱。 */
+function MiniIntradayChart({ data, onOpen }: { data: IntradayResponse; onOpen: () => void }) {
+  const pts = data.points || []
+  const prev = data.prev_close
+  if (!pts.length) return null
+
+  const W = 320
+  const H = 120
+  const VOL_H = 22
+  const PRICE_H = H - VOL_H
+
+  const all = [...pts.map(p => p.price), ...pts.map(p => p.avg_price).filter((v): v is number => v != null)]
+  if (prev != null) all.push(prev)
+  const hi = Math.max(...all)
+  const lo = Math.min(...all)
+  const span = hi - lo || 1
+
+  const x = (i: number) => (W * i) / Math.max(1, pts.length - 1)
+  // 上下各留 3px,避免线贴边
+  const y = (v: number) => PRICE_H - ((v - lo) / span) * (PRICE_H - 6) - 3
+  const path = (vals: Array<number | null>) =>
+    vals
+      .map((v, i) => (v == null ? '' : `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`))
+      .join(' ')
+
+  const maxVol = Math.max(...pts.map(p => p.volume), 1)
+  const last = pts[pts.length - 1].price
+  const up = prev != null ? last >= prev : true
+  const color = up ? '#ef4444' : '#10b981'
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-32 cursor-pointer" onClick={onOpen}>
+      <title>点击进入交互式K线</title>
+      {prev != null && (
+        <line x1="0" y1={y(prev)} x2={W} y2={y(prev)} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3 3" />
+      )}
+      {pts.map((p, i) => (
+        <rect
+          key={i}
+          x={x(i) - 0.6}
+          y={H - (p.volume / maxVol) * VOL_H}
+          width={1.2}
+          height={(p.volume / maxVol) * VOL_H}
+          fill={prev != null && p.price < prev ? '#10b981' : '#ef4444'}
+          opacity="0.45"
+        />
+      ))}
+      <path d={path(pts.map(p => p.price))} fill="none" stroke={color} strokeWidth="1.4" />
+      <path d={path(pts.map(p => p.avg_price))} fill="none" stroke="#f59e0b" strokeWidth="1" />
+    </svg>
+  )
+}
+
+/** 分时曲线。volume/amount 是**每分钟增量**(服务端已由累计值差分)。 */
+interface IntradayResponse {
+  symbol: string
+  market: string
+  prev_close: number | null
+  count: number
+  points: Array<{
+    time: string
+    price: number
+    avg_price: number | null
+    volume: number
+    amount: number
+  }>
+}
+
 interface NewsItem {
   source: string
   source_label: string
@@ -364,6 +432,9 @@ export default function StockInsightModal(props: {
   const [klineSummary, setKlineSummary] = useState<KlineSummary | null>(null)
   const [miniKlines, setMiniKlines] = useState<MiniKlineResponse['klines']>([])
   const [miniKlineLoading, setMiniKlineLoading] = useState(false)
+  const [miniMode, setMiniMode] = useState<'kline' | 'intraday'>('kline')
+  const [intraday, setIntraday] = useState<IntradayResponse | null>(null)
+  const [intradayLoading, setIntradayLoading] = useState(false)
   const [miniHoverIdx, setMiniHoverIdx] = useState<number | null>(null)
   const [suggestions, setSuggestions] = useState<SuggestionInfo[]>([])
   const [news, setNews] = useState<NewsItem[]>([])
@@ -427,6 +498,24 @@ export default function StockInsightModal(props: {
       if (!silent) setMiniKlineLoading(false)
     }
   }, [symbol, market])
+
+  const loadIntraday = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!symbol) return
+    const silent = !!opts?.silent
+    if (!silent) setIntradayLoading(true)
+    try {
+      setIntraday(await insightApi.intraday<IntradayResponse>(symbol, market))
+    } catch {
+      setIntraday(null)
+    } finally {
+      if (!silent) setIntradayLoading(false)
+    }
+  }, [symbol, market])
+
+  // 分时只在用户切过去时才拉 —— 它是当日实时数据,提前拉很快就过期,白费一次请求
+  useEffect(() => {
+    if (miniMode === 'intraday') void loadIntraday()
+  }, [miniMode, loadIntraday])
 
   const loadSuggestions = useCallback(async () => {
     if (!symbol) return
@@ -665,6 +754,8 @@ export default function StockInsightModal(props: {
     const tasks: Promise<any>[] = [loadQuote(), loadHoldingAgg()]
     if (tab === 'overview' || tab === 'kline') {
       tasks.push(loadKline(), loadMiniKline({ silent: true }))
+      // 分时是当日实时数据,自动刷新时跟着走;没切过去就不拉
+      if (miniMode === 'intraday') tasks.push(loadIntraday({ silent: true }))
     }
     if (tab === 'overview' || tab === 'suggestions') {
       tasks.push(loadSuggestions())
@@ -679,7 +770,7 @@ export default function StockInsightModal(props: {
       tasks.push(loadReports())
     }
     await Promise.allSettled(tasks)
-  }, [symbol, tab, loadQuote, loadHoldingAgg, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadReports])
+  }, [symbol, tab, miniMode, loadQuote, loadHoldingAgg, loadKline, loadMiniKline, loadIntraday, loadSuggestions, loadNews, loadAnnouncements, loadReports])
 
   const loadDeepResult = useCallback(async () => {
     if (!symbol) return
@@ -1469,8 +1560,40 @@ export default function StockInsightModal(props: {
                   </div>
 
                   <div className="card p-4 h-full">
-                    <div className="text-[12px] text-muted-foreground mb-2">迷你K线</div>
-                    {!klineSummary ? (
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-[12px] text-muted-foreground">
+                        {miniMode === 'intraday' ? '分时' : '迷你K线'}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {([
+                          { key: 'kline', label: 'K线' },
+                          { key: 'intraday', label: '分时' },
+                        ] as const).map(m => (
+                          <button
+                            key={m.key}
+                            onClick={() => setMiniMode(m.key)}
+                            className={`text-[11px] px-2 py-0.5 rounded ${
+                              miniMode === m.key
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-accent/60 text-muted-foreground hover:bg-accent'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {miniMode === 'intraday' ? (
+                      intradayLoading && !intraday ? (
+                        <div className="h-32 rounded bg-accent/30 animate-pulse" />
+                      ) : intraday && intraday.points.length > 0 ? (
+                        <MiniIntradayChart data={intraday} onOpen={() => setTab('kline')} />
+                      ) : (
+                        <div className="h-32 text-[11px] text-muted-foreground flex items-center justify-center">
+                          暂无分时数据（非交易日或数据源不可用）
+                        </div>
+                      )
+                    ) : !klineSummary ? (
                       <div className="text-[12px] text-muted-foreground py-8">暂无K线摘要</div>
                     ) : (
                       <>

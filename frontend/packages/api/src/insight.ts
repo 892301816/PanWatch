@@ -30,6 +30,22 @@ export const insightApi = {
       })
     ),
 
+  /** 分钟K线(m1/m5/m15/m30/m60)。数据源为腾讯,不带复权。 */
+  minuteKlines: <T>(symbol: string, params: { market: string; period?: string; count?: number }) =>
+    fetchAPI<T>(
+      withQuery(`/klines/${encodeURIComponent(symbol)}/minute`, {
+        market: params.market,
+        period: params.period,
+        count: params.count,
+      })
+    ),
+
+  /** 当日分时曲线(价/均价/每分钟量额)+ 昨收,已剔除收盘后填充点。 */
+  intraday: <T>(symbol: string, market: string) =>
+    fetchAPI<T>(
+      withQuery(`/klines/${encodeURIComponent(symbol)}/intraday`, { market })
+    ),
+
   suggestions: <T>(
     symbol: string,
     params: { market?: string; limit?: number; include_expired?: boolean }

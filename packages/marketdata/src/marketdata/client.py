@@ -28,6 +28,7 @@ from marketdata.types import (
     Request,
     ShareholderItem,
 )
+from marketdata.types import IntradayPoint
 from marketdata.vendors.discovery import DISCOVERY_VENDOR_CLASSES, DiscoveryVendor
 from marketdata.vendors.news import EastmoneyStockNewsVendor
 
@@ -67,9 +68,12 @@ class MarketData:
             cache=TTLCache(default_ttl_sec=5.0),
             default_ttl=5.0,
         )
+        # 留一份 vendor 引用:分时(非 Bar 形态)不走 Engine,但要按同一份 DataSource
+        # 顺序挑"声明支持分时"的那个 vendor,见 intraday()。
+        self._kline_vendors = build_vendors("kline")
         self._kline_engine = Engine(
             datatype="kline",
-            vendors=build_vendors("kline"),
+            vendors=self._kline_vendors,
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=0.0), default_ttl=0.0,
         )
@@ -153,6 +157,52 @@ class MarketData:
                       extra=(("days", days),))
         resp = self._kline_engine.fetch(req, min_count=min_count, cache_ttl_sec=0)
         return resp.data or []
+
+    def minute_klines(
+        self, symbol: str, *, market: str, period: str = "m5", count: int = 320
+    ) -> list[Bar]:
+        """分钟K线(m1/m5/m15/m30/m60)。
+
+        走 Engine:仍返回 list[Bar],与日线同形,缓存/指标统计语义一致。周期通过
+        config 透给 vendor,不支持的源返回空、由失败转移自动跳过(见 kline vendor
+        的 `_is_unsupported_here`)。
+
+        注意 **不带复权** —— 腾讯分钟端点是原始价,与日线的 qfq 口径不同。
+        """
+        req = Request(
+            symbols=(symbol,), market=market, timeframe="minute", limit=count,
+            extra=(("days", count), ("period", period)),
+        )
+        resp = self._kline_engine.fetch(req, min_count=1, cache_ttl_sec=0)
+        return resp.data or []
+
+    def intraday(
+        self, symbol: str, *, market: str | None = None
+    ) -> tuple[list[IntradayPoint], float | None]:
+        """当日分时 ``(点序列, 昨收)``。昨收用于分时图基准线,取不到为 None。
+
+        不走 Engine:返回的不是 Bar 列表,混进同一条 Response 会让"kline 引擎返回
+        list[Bar]"的契约失真(缓存 TTL、健康度统计都按 Bar 条数算)。改为按同一份
+        DataSource 顺序,找第一个声明支持分时的 vendor。
+        """
+        sym = Symbol.parse(symbol, market)
+        sources = sorted(
+            self.config.sources_for("kline", sym.market.value), key=lambda s: s.priority
+        )
+        for src in sources:
+            if not src.enabled:
+                continue
+            fetcher = getattr(self._kline_vendors.get(src.vendor), "fetch_intraday", None)
+            if fetcher is None:
+                continue
+            try:
+                points, prev_close = fetcher(sym, src.config or {})
+            except Exception as e:
+                logger.warning(f"分时取数失败 vendor={src.vendor} {sym.code}: {e}")
+                continue
+            if points:
+                return points, prev_close
+        return [], None
 
     def quotes(self, symbols: list[str | Symbol], *, market: str | None = None) -> list[Quote]:
         """批量报价。symbols 可跨市场:未显式给 market 时按代码自动识别并分组。"""
