@@ -446,7 +446,9 @@ class DataCollectorManager:
             collector = CapitalFlowCollector(MarketCode.CN)
             results = []
             for symbol in test_symbols[:_TEST_SYMBOL_LIMIT]:
-                data = collector.get_capital_flow(symbol)
+                # get_capital_flow 是同步阻塞调用,必须下线程 —— 直接在协程里调会堵死
+                # 事件循环,体检跑一次就够让整个服务失去响应(见 _test_kline_source 注释)。
+                data = await asyncio.to_thread(collector.get_capital_flow, symbol)
                 if data:
                     results.append(
                         {
@@ -611,7 +613,10 @@ class DataCollectorManager:
         for symbol in test_symbols[:_TEST_SYMBOL_LIMIT]:
             market = Symbol.parse(symbol).market.value
             try:
-                bars = md.klines(symbol, market=market, days=30)
+                # md.klines 是同步阻塞调用(包内 vendor 都是同步的),必须下线程。
+                # 直接在协程里调会堵死事件循环:自检跑一次,整个服务在探测期间
+                # 失去响应 —— 前端每项 30s 超时全变红,其它接口也一起挂。
+                bars = await asyncio.to_thread(md.klines, symbol, market=market, days=30)
                 if bars:
                     last = bars[-1]
                     results.append(
@@ -661,7 +666,10 @@ class DataCollectorManager:
         )
 
         try:
-            quotes = md.quotes(list(test_symbols[:_TEST_SYMBOL_LIMIT]))
+            # 同 _test_kline_source:同步调用下线程,避免堵住事件循环。
+            quotes = await asyncio.to_thread(
+                md.quotes, list(test_symbols[:_TEST_SYMBOL_LIMIT])
+            )
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -751,7 +759,10 @@ class DataCollectorManager:
         try:
             # 包内 news publish_time 是 aware(UTC),now 也须 aware,否则 since 过滤崩
             from datetime import timezone
-            news = md.news(test_symbols, names=names, now=datetime.now(timezone.utc))
+            news = await asyncio.to_thread(
+                md.news, test_symbols, names=names,
+                now=datetime.now(timezone.utc),
+            )
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -789,7 +800,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.flash_news(limit=20)
+            items = await asyncio.to_thread(md.flash_news, limit=20)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -837,7 +848,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.fundamentals(syms)
+            items = await asyncio.to_thread(md.fundamentals, syms)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -886,7 +897,7 @@ class DataCollectorManager:
         test_date = cfg.get("test_date") or datetime.now().strftime("%Y-%m-%d")
 
         try:
-            items = md.dragon_tiger(date=test_date)
+            items = await asyncio.to_thread(md.dragon_tiger, date=test_date)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -931,7 +942,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.margin(syms)
+            items = await asyncio.to_thread(md.margin, syms)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -978,7 +989,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.shareholders(syms)
+            items = await asyncio.to_thread(md.shareholders, syms)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -1021,7 +1032,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.dividend(syms)
+            items = await asyncio.to_thread(md.dividend, syms)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
@@ -1064,7 +1075,7 @@ class DataCollectorManager:
         )
 
         try:
-            items = md.northbound()
+            items = await asyncio.to_thread(md.northbound)
         except Exception as e:
             return CollectorResult(success=False, error=str(e))
 
