@@ -45,9 +45,45 @@ class SignalPack:
     position: PositionSnapshot | None = None
     news: NewsSnapshot | None = None
     capital_flow: dict | None = None
+    # 基本面/财务指标(营收/净利/毛利率/资产负债率/ROE 等)。拿不到的字段为 None。
+    fundamentals: dict | None = None
     events: EventsSnapshot | None = None
     sources: dict[str, str] = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)
+
+
+def _fundamentals_to_dict(f) -> dict:
+    """Fundamentals → dict,只保留**取到值**的字段。
+
+    缺失项直接不写(而不是写 None),这样 prompt 侧按"键是否存在"就能判断
+    "有没有这项数据",既不把一堆 None 塞进上下文浪费 token,也不会让模型误以为
+    "营收 = None" 是一个可引用的值。
+    """
+    if f is None:
+        return {}
+    out: dict = {}
+    for field in (
+        "report_date",
+        "eps",
+        "bps",
+        "roe",
+        "revenue",
+        "net_profit",
+        "gross_margin",
+        "net_margin",
+        "revenue_yoy",
+        "net_profit_yoy",
+        "debt_ratio",
+        "total_liability",
+        "pe_ttm",
+        "pb",
+        "dividend_yield",
+        "total_market_value",
+    ):
+        value = getattr(f, field, None)
+        if value is not None and value != "":
+            out[field] = value
+    return out
 
 
 class SignalPackBuilder:
@@ -63,6 +99,7 @@ class SignalPackBuilder:
         self._tech_source_cache: dict[tuple[MarketCode, str], str] = {}
         self._news_cache: dict[tuple[str, int], list[NewsItem]] = {}
         self._flow_cache: dict[tuple[MarketCode, str], dict] = {}
+        self._fundamentals_cache: dict[tuple[MarketCode, str], dict] = {}
         self._flow_source_cache: dict[tuple[MarketCode, str], str] = {}
         self._events_cache: dict[tuple[str, int], list[dict]] = {}
         self._events_source_cache: dict[tuple[str, int], str] = {}
@@ -124,6 +161,7 @@ class SignalPackBuilder:
         include_capital_flow: bool = False,
         include_events: bool = False,
         events_days: int = 7,
+        include_fundamentals: bool = False,
     ) -> dict[str, SignalPack]:
         """Build packs for multiple symbols.
 
@@ -135,6 +173,8 @@ class SignalPackBuilder:
             include_capital_flow: whether to include CN capital flow snapshot
             include_events: whether to include event snapshot
             events_days: lookback window in days
+            include_fundamentals: whether to include 基本面/财务指标(多一次取数,
+                按需开启 —— 只有需要基本面定价的 Agent 才用得上)
         """
 
         computed_at = self._now_iso()
@@ -336,6 +376,48 @@ class SignalPackBuilder:
                     except Exception as e:
                         logger.warning(f"SignalPack capital_flow 采集失败: {e}")
 
+        # 4b) Fundamentals(基本面/财务指标)。走 marketdata 包的 fundamentals datatype,
+        # 由它按 DataSource 表选源、失败转移;这里只负责按 symbol 摊平与缓存。
+        fundamentals_map: dict[str, dict] = {}
+        if include_fundamentals:
+            pending = [
+                (sym, market) for sym, market, _ in symbols
+                if (market, sym) not in self._fundamentals_cache
+            ]
+            if pending:
+                try:
+                    from src.platform.marketdata.marketdata_client import (
+                        get_market_data,
+                    )
+
+                    by_mkt: dict[MarketCode, list[str]] = {}
+                    for sym, market in pending:
+                        by_mkt.setdefault(market, []).append(sym)
+                    for market, syms in by_mkt.items():
+                        try:
+                            rows = await asyncio.to_thread(
+                                get_market_data().fundamentals,
+                                syms,
+                                market=market.value,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"SignalPack fundamentals 采集失败({market.value}): {e}"
+                            )
+                            rows = []
+                        got = {getattr(r, "symbol", ""): r for r in rows}
+                        for sym in syms:
+                            row = got.get(sym)
+                            self._fundamentals_cache[(market, sym)] = (
+                                _fundamentals_to_dict(row) if row else {}
+                            )
+                except Exception as e:
+                    logger.warning(f"SignalPack fundamentals 初始化失败: {e}")
+            for sym, market, _ in symbols:
+                cached = self._fundamentals_cache.get((market, sym))
+                if cached:
+                    fundamentals_map[sym] = cached
+
         # 5) Events
         events_by_symbol: dict[str, list[dict]] = {}
         events_key = (",".join(sorted(symbol_set)), int(events_days))
@@ -466,6 +548,7 @@ class SignalPackBuilder:
                 capital_flow=flow_map.get(sym)
                 if (include_capital_flow and market == MarketCode.CN)
                 else None,
+                fundamentals=fundamentals_map.get(sym) if include_fundamentals else None,
                 events=EventsSnapshot(
                     days=int(events_days), items=events_by_symbol.get(sym, [])[:5]
                 )

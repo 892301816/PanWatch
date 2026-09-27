@@ -1,5 +1,7 @@
 """fundamentals(基本面/财务)vendor + client 方法测试。离线 monkeypatch market_get,不实抓。"""
 
+import pytest
+
 import marketdata.vendors.fundamentals as fv
 from marketdata.client import MarketData
 from marketdata.defaults import StaticConfigProvider
@@ -217,3 +219,145 @@ def test_client_fundamentals_no_sources_returns_empty():
     md = MarketData(config=StaticConfigProvider({}))
     out = md.fundamentals(["600519"], market="CN")
     assert out == []
+
+
+# ---------------------------------------------------------------------------
+# A 股财报字段:_fetch_cn 的 datacenter 分支
+# ---------------------------------------------------------------------------
+
+class TestCnFinancials:
+    """A 股财报字段来自 datacenter 的 F10 主要指标。
+
+    这条链路原先缺失 —— _fetch_cn 只走 push2 拿市值股本,营收/净利/毛利率/资产负债率
+    全是 None,导致 AI 分析时只能说"基本面数据不足"。字段名与港美股完全不同
+    (港美股 OPERATE_INCOME / PARENT_HOLDER_NETPROFIT / ROE_AVG,A 股 OPERATE_INCOME_PK
+    / PARENTNETPROFIT / ROEJQ),所以单独一张映射表,下面的样例即真实响应形态。
+    """
+
+    CN_ROW = {
+        "REPORT_DATE": "2026-06-30 00:00:00",
+        "SECURITY_NAME_ABBR": "贵州茅台",
+        "EPSJB": 35.57,
+        "OPERATE_INCOME_PK": 90703260964.48,
+        "TOTALOPERATEREVETZ": 1.30,
+        "PARENTNETPROFIT": 44516880421.86,
+        "PARENTNETPROFITTZ": -1.95,
+        "XSMLL": 89.56,
+        "XSJLL": 50.75,
+        "ROEJQ": 16.75,
+        "ZCFZL": 15.19,
+        "LIABILITY": 46954432394.95,
+    }
+
+    # 估值分析表(RPT_VALUEANALYSIS_DET)的真实响应形态
+    CN_VALUE_ROW = {
+        "SECURITY_NAME_ABBR": "贵州茅台",
+        "PE_TTM": 18.98901222,
+        "PE_LAR": 18.7846171,
+        "PB_MRQ": 6.15454256,
+        "PS_TTM": 8.92614001,
+        "TOTAL_MARKET_CAP": 1546350940437,
+    }
+
+    @staticmethod
+    def _patch(monkeypatch, *, valuation=None, row=None, value_row=None):
+        """按 reportName 分发:两张表各自返回自己的行。"""
+        monkeypatch.setattr(fv, "_fetch_cn_valuation", lambda sym: valuation)
+
+        def fake(report_name, secucode, sym, *, sort_column="REPORT_DATE"):
+            if report_name == fv._REPORT_NAME_CN_VALUE:
+                return value_row
+            return row
+
+        monkeypatch.setattr(fv, "_fetch_gmainindicator", fake)
+
+    def test_maps_all_cn_financial_fields(self, monkeypatch):
+        self._patch(monkeypatch, valuation=None, row=self.CN_ROW)
+        f = fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert f is not None
+        assert f.revenue == 90703260964.48
+        assert f.net_profit == 44516880421.86
+        assert f.gross_margin == 89.56
+        assert f.net_margin == 50.75
+        assert f.debt_ratio == 15.19
+        assert f.total_liability == 46954432394.95
+        assert f.roe == 16.75
+        assert f.eps == 35.57
+        assert f.revenue_yoy == 1.30
+        assert f.net_profit_yoy == -1.95
+        assert f.report_date == "2026-06-30"
+
+    def test_merges_with_valuation_fields(self, monkeypatch):
+        """估值/股本来自 push2,财报来自 datacenter,两者要合并到同一条记录。"""
+        val = Fundamentals(
+            symbol="600519", market="CN", name="贵州茅台",
+            total_market_value=21000.5, total_shares=12.56e8,
+        )
+        self._patch(monkeypatch, valuation=val, row=self.CN_ROW)
+        f = fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert f.total_market_value == 21000.5   # 估值侧保留
+        assert f.revenue == 90703260964.48        # 财报侧补上
+        assert f.name == "贵州茅台"                # 原有名字不被覆盖
+
+    def test_missing_financials_fall_back_to_valuation_only(self, monkeypatch):
+        """财报接口挂了只损失新字段,不该把原有的市值/股本一起搭进去。"""
+        val = Fundamentals(symbol="600519", market="CN", total_market_value=21000.5)
+        self._patch(monkeypatch, valuation=val, row=None)
+        f = fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert f.total_market_value == 21000.5
+        assert f.revenue is None
+
+    def test_both_sources_empty_returns_none(self, monkeypatch):
+        self._patch(monkeypatch, valuation=None, row=None)
+        assert fv._fetch_cn(Symbol.parse("600519", market="CN")) is None
+
+    def test_absent_columns_stay_none(self, monkeypatch):
+        """银行没有毛利率,该字段就应该是 None 而不是 0 或编造值。"""
+        row = {"REPORT_DATE": "2026-06-30", "PARENTNETPROFIT": 25696000000.0}
+        self._patch(monkeypatch, valuation=None, row=row)
+        f = fv._fetch_cn(Symbol.parse("000001", market="CN"))
+        assert f.net_profit == 25696000000.0
+        assert f.gross_margin is None
+        assert f.revenue is None
+
+    @pytest.mark.parametrize(
+        "code,expected",
+        [("600519", "600519.SH"), ("000001", "000001.SZ"),
+         ("300750", "300750.SZ"), ("920001", "920001.BJ")],
+    )
+    def test_secucode_exchange_suffix(self, code, expected):
+        """SECUCODE 的交易所后缀复用 symbol 模块的既有判定,不另写一套前缀规则。"""
+        assert fv._cn_secucode(code) == expected
+
+
+    def test_maps_datacenter_valuation_fields(self, monkeypatch):
+        """PE/PB/PS/市值也来自 datacenter —— push2 不可达时估值仍有兜底。"""
+        self._patch(monkeypatch, valuation=None, row=None, value_row=self.CN_VALUE_ROW)
+        f = fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert f.pe_ttm == 18.98901222
+        assert f.pe_static == 18.7846171
+        assert f.pb == 6.15454256
+        assert f.ps_ttm == 8.92614001
+        assert f.total_market_value == pytest.approx(15463.50940437, rel=1e-6)
+        assert f.name == "贵州茅台"
+
+    def test_push2_market_value_wins_when_available(self, monkeypatch):
+        """push2 给了市值就不被 datacenter 覆盖,避免两个来源口径打架。"""
+        val = Fundamentals(symbol="600519", market="CN", total_market_value=99999.0)
+        self._patch(monkeypatch, valuation=val, row=None, value_row=self.CN_VALUE_ROW)
+        f = fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert f.total_market_value == 99999.0
+
+    def test_valuation_report_is_queried_without_sort_column(self, monkeypatch):
+        """估值表没有 REPORT_DATE 列,带排序会被服务端拒("排序列不存在")。"""
+        seen = {}
+
+        def fake(report_name, secucode, sym, *, sort_column="REPORT_DATE"):
+            seen[report_name] = sort_column
+            return None
+
+        monkeypatch.setattr(fv, "_fetch_cn_valuation", lambda sym: None)
+        monkeypatch.setattr(fv, "_fetch_gmainindicator", fake)
+        fv._fetch_cn(Symbol.parse("600519", market="CN"))
+        assert seen[fv._REPORT_NAME_CN_VALUE] is None
+        assert seen[fv._REPORT_NAME_CN] == "REPORT_DATE"

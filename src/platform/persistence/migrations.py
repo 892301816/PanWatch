@@ -2071,6 +2071,64 @@ def _m128_operation_plans(conn: Connection) -> None:
         _add_column_if_missing(conn, "price_alert_rules", name, statement)
 
 
+def _m129_operation_plan_manual(conn: Connection) -> None:
+    """操作计划 Agent 改为手动触发。
+
+    它最初是按"盘前 08:45 定时跑自选股"设计的,但计划本就是"要看某只股票时才生成",
+    定时对全自选股跑一遍既慢又费 token。种子已改为 enabled=False/schedule="",
+    但 seed_agents 有意不覆盖已存在行的 enabled/schedule(那是用户配置),所以老库
+    需要这条一次性收敛。
+
+    只在行的值**仍是我们当初写入的旧默认**时才改 —— 用户若已自行启用或改过排期,
+    说明那是他的选择,不该被迁移无声推翻。
+    """
+    if not _has_table(conn, "agent_configs"):
+        return
+    conn.execute(
+        text(
+            "UPDATE agent_configs SET enabled = 0, schedule = '' "
+            "WHERE name = 'operation_plan' "
+            "AND enabled = 1 AND schedule = '45 8 * * 1-5'"
+        )
+    )
+
+
+def _m130_fundamentals_priority(conn: Connection) -> None:
+    """基本面数据源优先级:东财提到腾讯之前。
+
+    腾讯 qt.gtimg 只给 PE/PB/市值,**没有营收/净利/毛利率/资产负债率**;东财(改造后)
+    两者都有。原先腾讯 prio=0 会先命中并终止失败转移,导致东财的财报永远取不到 ——
+    Agent 只能写"基本面数据不足"。
+
+    只在两行**仍是当初的默认优先级**(腾讯 0 / 东财 5)时才交换,用户自行调过顺序的
+    不碰。
+    """
+    if not _has_table(conn, "data_sources"):
+        return
+    rows = {
+        r[0]: r[1]
+        for r in conn.execute(
+            text(
+                "SELECT provider, priority FROM data_sources "
+                "WHERE type = 'fundamentals' AND provider IN ('tencent', 'eastmoney')"
+            )
+        )
+    }
+    if rows.get("tencent") == 0 and rows.get("eastmoney") == 5:
+        conn.execute(
+            text(
+                "UPDATE data_sources SET priority = 0 "
+                "WHERE type = 'fundamentals' AND provider = 'eastmoney'"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE data_sources SET priority = 5 "
+                "WHERE type = 'fundamentals' AND provider = 'tencent'"
+            )
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2100,6 +2158,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(126, "assistant_task_events", _m126_assistant_task_events),
     Migration(127, "assistant_trace_metrics", _m127_assistant_trace_metrics),
     Migration(128, "operation_plans", _m128_operation_plans),
+    Migration(129, "operation_plan_manual", _m129_operation_plan_manual),
+    Migration(130, "fundamentals_priority", _m130_fundamentals_priority),
 )
 
 

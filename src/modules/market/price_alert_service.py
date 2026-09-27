@@ -6,7 +6,7 @@ HTTP API 和 PanAgent 工具都通过这里读写提醒规则，避免两条入�
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -51,15 +51,76 @@ def validate_condition_group(group: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_expire_at(value: str | datetime | None) -> datetime | None:
-    """Parse the ISO-8601 expiry accepted by both API and agent callers."""
+    """解析 API / Agent 传入的过期时间,统一转成 **UTC naive** 存储。
+
+    存储口径是"naive 即 UTC"(引擎的 `_can_trigger` 与 API 的 `_format_datetime`
+    都按这个假设走),而调用方给的都是**本地时间**——前端日期选择器选 15:00,
+    用户期望的就是本地 15:00。此前直接 `fromisoformat` 把本地时间当 UTC 存,
+    界面上再 +8 回显,用户选 15:00 会看到 23:00,提醒实际也晚 8 小时才失效。
+
+    因此这里对**无时区**的输入按应用时区解释再转 UTC;带时区的输入按其自身时区换算。
+    """
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
-        return value
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("expire_at 格式错误") from exc
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_app_tz())
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _app_tz():
+    """应用时区;取不到就退回 UTC(此时行为与修复前一致)。"""
     try:
-        return datetime.fromisoformat(str(value))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("expire_at 格式错误") from exc
+        from zoneinfo import ZoneInfo
+
+        from src.platform.runtime.config import Settings
+
+        return ZoneInfo(Settings().app_timezone or "UTC")
+    except Exception:
+        return timezone.utc
+
+
+def default_alert_expiry(now: datetime | None = None) -> datetime:
+    """提醒的默认过期时间:**下一个交易日收盘**,返回**带时区的本地时间**。
+
+    返回 aware 而非 naive-UTC:存储口径的换算统一由 ``parse_expire_at`` 负责,
+    这里若直接返回 naive-UTC,下游会把它当本地时间再转一次(实测会被转成 07:00)。
+
+    用户的典型用法是"收盘后复盘,把这套价位加到第二天的盘"。此前取计划日期当天
+    23:59,有两个问题:
+
+    1. 语义不对 —— 收盘后加提醒时"计划日期当天"已经过去,提醒一建就该失效;
+    2. 配合上面的时区口径,23:59 本地会被存成次日 07:59,既不在任何市场边界上,
+       又仍然早于开盘。
+
+    改为:交易时段内(含开盘前)→ 当天收盘;收盘后或当天非交易日 → 下一个交易日收盘。
+    """
+    from datetime import time
+
+    from src.platform.scheduling.trading_calendar import is_trading_day, next_trading_day
+
+    tz = _app_tz()
+    current = now or datetime.now(tz)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=tz)
+
+    close_at = time(15, 0)
+    today = current.date()
+    local_now_time = current.timetz().replace(tzinfo=None)
+    # 收盘后,或今天压根不是交易日 → 顺延到下一个交易日
+    if local_now_time >= close_at or not is_trading_day("CN", today):
+        target = next_trading_day("CN", today, include_self=False)
+    else:
+        target = today
+
+    return datetime.combine(target, close_at, tzinfo=tz)
 
 
 def list_alert_rules(

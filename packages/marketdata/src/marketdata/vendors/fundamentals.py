@@ -107,10 +107,25 @@ _DATACENTER_HEADERS = {
 }
 _REPORT_NAME_US = "RPT_USF10_FN_GMAININDICATOR"
 _REPORT_NAME_HK = "RPT_HKF10_FN_GMAININDICATOR"
+# A 股主要财务指标(毛利率/资产负债率/ROE/营收净利及同比都在这张表里)。
+_REPORT_NAME_CN = "RPT_F10_FINANCE_MAINFINADATA"
+# A 股估值分析(PE_TTM/PB_MRQ/PS_TTM/总市值)。该表无 REPORT_DATE 列,不能按它排序。
+_REPORT_NAME_CN_VALUE = "RPT_VALUEANALYSIS_DET"
 
 
-def _fetch_cn(sym: Symbol) -> Fundamentals | None:
-    """CN:push2 stock/get。PE/PB 该端点未提供,留 None(quote 端另有源,这里不重复取)。"""
+def _cn_secucode(code: str) -> str:
+    """A 股 SECUCODE(如 600519.SH / 159915.SZ / 920001.BJ)。
+
+    交易所后缀复用 symbol 模块的既有判定(5/6→SH、83/87/88/920→BJ、其余→SZ),
+    不在此另写一套前缀规则。
+    """
+    from marketdata.symbol import _cn_exchange
+
+    return f"{code}.{_cn_exchange(code).upper()}"
+
+
+def _fetch_cn_valuation(sym: Symbol) -> Fundamentals | None:
+    """CN 估值/股本:push2 stock/get。PE/PB 该端点未提供,留 None(quote 端另有源)。"""
     payload = market_get(
         _PUSH2_URL,
         host_key=_PUSH2_HOST,
@@ -142,6 +157,78 @@ def _fetch_cn(sym: Symbol) -> Fundamentals | None:
     )
 
 
+# A 股主要财务指标。**字段名与港美股不同** —— 港美股用 OPERATE_INCOME /
+# PARENT_HOLDER_NETPROFIT / ROE_AVG / GROSS_PROFIT_RATIO,A 股用 *_PK / PARENTNETPROFIT
+# / ROEJQ / XSMLL,故单独一张映射表,不硬塞进 _row_to_fundamentals。
+# 下列字段名均已用真实响应(600519,2026H1)逐一核对过。
+_CN_FIN_FIELDS: tuple[tuple[str, str], ...] = (
+    ("eps", "EPSJB"),                        # 基本每股收益
+    ("revenue", "OPERATE_INCOME_PK"),        # 营业总收入
+    ("revenue_yoy", "TOTALOPERATEREVETZ"),   # 营业总收入同比(%)
+    ("net_profit", "PARENTNETPROFIT"),       # 归母净利润
+    ("net_profit_yoy", "PARENTNETPROFITTZ"), # 归母净利润同比(%)
+    ("gross_margin", "XSMLL"),               # 销售毛利率(%)
+    ("net_margin", "XSJLL"),                 # 销售净利率(%)
+    ("roe", "ROEJQ"),                        # 净资产收益率(加权,%)
+    ("debt_ratio", "ZCFZL"),                 # 资产负债率(%)
+    ("total_liability", "LIABILITY"),        # 负债合计
+)
+
+
+# 估值分析:PE/PB/PS/总市值。东财在 push2 之外也提供这张表,因此在 push2 不可达的
+# 网络下估值字段同样拿得到(实测 PE_TTM 与行情层的 pe_ratio 一致)。
+_CN_VALUE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("pe_ttm", "PE_TTM"),
+    ("pe_static", "PE_LAR"),
+    ("pb", "PB_MRQ"),
+    ("ps_ttm", "PS_TTM"),
+)
+
+
+def _fetch_cn(sym: Symbol) -> Fundamentals | None:
+    """CN:估值/股本走 push2 + datacenter,财报指标走 datacenter。
+
+    push2 只提供市值/股本,财报和 PE/PB 都不在它那儿 —— 而 push2 在部分网络出口
+    不可达,所以估值另有一路 datacenter 兜底,保证"换个网络就只剩市值"不会发生。
+
+    三段互相独立、各自 fail-soft:任一段挂了只损失它那几个字段,不牵连其余。
+    """
+    base = _fetch_cn_valuation(sym)  # push2:市值/股本(不可达时为 None)
+    secucode = _cn_secucode(sym.code)
+
+    value_row = _fetch_gmainindicator(
+        _REPORT_NAME_CN_VALUE, secucode, sym, sort_column=None
+    )
+    fin_row = _fetch_gmainindicator(_REPORT_NAME_CN, secucode, sym)
+
+    if base is None and (value_row or fin_row):
+        base = Fundamentals(symbol=sym.code, market=sym.market.value)
+    if base is None:
+        return None
+
+    if value_row:
+        for attr, column in _CN_VALUE_FIELDS:
+            value = _to_float(value_row.get(column))
+            if value is not None:
+                setattr(base, attr, value)
+        cap = _to_float(value_row.get("TOTAL_MARKET_CAP"))
+        if cap is not None and base.total_market_value is None:
+            base.total_market_value = cap / 1e8  # 元 → 亿
+        if not base.name:
+            base.name = str(value_row.get("SECURITY_NAME_ABBR") or "")
+
+    if fin_row:
+        for attr, column in _CN_FIN_FIELDS:
+            value = _to_float(fin_row.get(column))
+            if value is not None:
+                setattr(base, attr, value)
+        base.report_date = str(fin_row.get("REPORT_DATE") or "")[:10]
+        if not base.name:
+            base.name = str(fin_row.get("SECURITY_NAME_ABBR") or "")
+
+    return base
+
+
 def _hk_secucode(code: str) -> str:
     """HK SECUCODE:补零到 5 位 + .HK(参考 symbol.py to_yfinance 的补零惯例,该处补 4 位是 yfinance
     专用格式,SECUCODE 按东财 F10 惯例补 5 位)。"""
@@ -150,15 +237,19 @@ def _hk_secucode(code: str) -> str:
     return f"{code}.HK"
 
 
-def _fetch_gmainindicator(report_name: str, secucode: str, sym: Symbol) -> dict | None:
+def _fetch_gmainindicator(
+    report_name: str, secucode: str, sym: Symbol, *, sort_column: str | None = "REPORT_DATE"
+) -> dict | None:
     params = {
         "reportName": report_name,
         "filter": f'(SECUCODE="{secucode}")',
-        "sortColumns": "REPORT_DATE",
-        "sortTypes": "-1",
         "pageSize": "1",
         "columns": "ALL",
     }
+    # 有些报表没有 REPORT_DATE 列(如估值分析),传了会被服务端拒("排序列不存在")
+    if sort_column:
+        params["sortColumns"] = sort_column
+        params["sortTypes"] = "-1"
     payload = market_get(
         _DATACENTER_URL,
         host_key=_DATACENTER_HOST,

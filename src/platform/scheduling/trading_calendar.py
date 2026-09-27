@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+# next_trading_day 的向前搜索上限(自然日)。覆盖春节+周末这类最长连休绰绰有余。
+_NEXT_TRADING_LOOKAHEAD = 30
 
 # A 股交易日集合;None = 尚未加载或加载失败(此时降级为只判周末)
 _CN_TRADING_DATES: frozenset[date] | None = None
@@ -145,6 +148,32 @@ def is_trading_day(market, d: date | datetime | None = None) -> bool:
 
     # 港美股、日历缺失、超出覆盖范围:只判周末。
     return True
+
+
+def next_trading_day(
+    market, d: date | datetime | None = None, *, include_self: bool = True
+) -> date:
+    """给定日期之后的第一个交易日(含当天,`include_self=False` 则从次日算起)。
+
+    用于"这笔设置该管到哪一天收盘"这类问题。日历不可用或长期查不到时退回
+    "隔天起第一个非周末日",保证一定返回一个可用日期而不是抛错。
+    """
+    from src.platform.marketdata.models import MarketCode
+
+    code = _to_market_code(market)
+    start = _resolve_date(code, d)
+    for offset in range(0, _NEXT_TRADING_LOOKAHEAD):
+        candidate = start + timedelta(days=offset)
+        if not include_self and offset == 0:
+            continue
+        if is_trading_day(code, candidate):
+            return candidate
+    # 兜底:跳过周末,不查日历
+    candidate = start if include_self else start + timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    logger.warning("[交易日历] 未找到 %s 之后的交易日,退回周末规则: %s", start, candidate)
+    return candidate
 
 
 def any_market_trading_day(d: date | datetime | None = None) -> bool:

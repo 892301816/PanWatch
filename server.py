@@ -548,9 +548,11 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "name": "腾讯基本面",
             "type": "fundamentals",
             "provider": "tencent",
-            "config": {"description": "腾讯 qt.gtimg 估值快照(CN,免 key):PE/PB/市值。"},
+            "config": {
+                "description": "腾讯 qt.gtimg 估值快照(CN,免 key):仅 PE/PB/市值,无财报指标。"
+            },
             "enabled": True,
-            "priority": 0,
+            "priority": 5,  # 东财(0)之后的兜底:它给不出营收/净利/毛利率/负债率
             "supports_batch": True,
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },
@@ -559,10 +561,11 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "type": "fundamentals",
             "provider": "eastmoney",
             "config": {
-                "description": "东财基本面:CN 股本/市值(push2),US/HK 财报指标(GMAININDICATOR)。"
+                "description": "东财基本面:CN 财报(营收/净利/毛利率/资产负债率/ROE)+ 估值(PE/PB/PS/市值),"
+                "US/HK 财报指标(GMAININDICATOR)。数据最全,故排在最前。"
             },
             "enabled": True,
-            "priority": 5,
+            "priority": 0,  # 唯一能给出财报指标的源,必须排在只有估值快照的腾讯之前
             "supports_batch": True,
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },

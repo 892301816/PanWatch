@@ -166,7 +166,8 @@ class OperationPlanAgent(BaseAgent):
             include_technical=True,
             include_capital_flow=True,
             include_events=True,
-            events_days=14,
+            events_days=30,  # 覆盖到最近一期财报公告,客户集中度要从里面读
+            include_fundamentals=True,
         )
         context_pack = await ContextBuilder().build_symbol_contexts(
             agent_name=self.name,
@@ -265,7 +266,67 @@ class OperationPlanAgent(BaseAgent):
                 for item in items:
                     lines.append(f"    - {_text(getattr(item, 'title', ''))[:60]}")
 
+            # 基本面/财务指标。缺失的键直接不写 —— 让模型看到"没这项"而不是
+            # 看到一堆 None,更不容易被诱导编造。报告期要显式标注,否则模型会把
+            # 半年报的数字当成最新季度数据。
+            fund = (getattr(pack, "fundamentals", None) or {}) if pack else {}
+            if fund:
+                period = fund.get("report_date") or "报告期未知"
+                parts = []
+                if fund.get("revenue") is not None:
+                    parts.append(f"营收 {fund['revenue'] / 1e8:.2f}亿")
+                if fund.get("revenue_yoy") is not None:
+                    parts.append(f"营收同比 {fund['revenue_yoy']:+.1f}%")
+                if fund.get("net_profit") is not None:
+                    parts.append(f"归母净利 {fund['net_profit'] / 1e8:.2f}亿")
+                if fund.get("net_profit_yoy") is not None:
+                    parts.append(f"净利同比 {fund['net_profit_yoy']:+.1f}%")
+                if fund.get("gross_margin") is not None:
+                    parts.append(f"毛利率 {fund['gross_margin']:.2f}%")
+                if fund.get("net_margin") is not None:
+                    parts.append(f"净利率 {fund['net_margin']:.2f}%")
+                if fund.get("roe") is not None:
+                    parts.append(f"ROE {fund['roe']:.2f}%")
+                if fund.get("debt_ratio") is not None:
+                    parts.append(f"资产负债率 {fund['debt_ratio']:.2f}%")
+                if fund.get("eps") is not None:
+                    parts.append(f"每股收益 {fund['eps']}")
+                if fund.get("pb") is not None:
+                    parts.append(f"PB {fund['pb']}")
+                if parts:
+                    lines.append(f"- 财务（{period}）：" + "　".join(parts))
+                else:
+                    lines.append(f"- 财务（{period}）：仅取到报告期，指标缺失")
+            else:
+                lines.append("- 财务：数据不足，无法做基本面定价")
+
             ctx = symbol_contexts.get(stock.symbol) or {}
+
+            # 公告全文:客户集中度、大额订单、监管问询这类只有正文里才有,结构化
+            # 接口拿不到(东财 F10 无"主要客户"字段,go-stock 也没有)。已在
+            # ContextBuilder 里给重要公告附了 content_fulltext,这里透给模型。
+            events = ctx.get("events") or []
+            with_text = [e for e in events if isinstance(e, dict) and e.get("content_fulltext")]
+            if with_text:
+                lines.append("- 公告正文摘录（客户集中度等只有正文里有的信息从这里读）：")
+                for ev in with_text[:3]:
+                    title = _text(ev.get("title"))[:50]
+                    lines.append(f"    【{ev.get('time', '')}】{title}")
+                    lines.append(f"      {_text(ev.get('content_fulltext'))[:900]}")
+
+            rs = ctx.get("relative_strength")
+            if isinstance(rs, dict) and rs:
+                bits = [f"{k} {v:+.1f}%" for k, v in rs.items() if isinstance(v, (int, float))]
+                if bits:
+                    lines.append("- 相对大盘强度：" + "　".join(bits))
+
+            verdict = ctx.get("ta_verdict")
+            if isinstance(verdict, dict) and verdict:
+                lines.append(
+                    f"- 深度分析结论（{verdict.get('days_ago', '?')}天前，高权重先验）："
+                    f"{_text(verdict.get('rating'))}　{_text(verdict.get('summary'))[:200]}"
+                )
+
             summary = ctx.get("summary") or ctx.get("context_summary")
             if summary:
                 lines.append(f"- 历史脉络：{_text(summary)[:300]}")

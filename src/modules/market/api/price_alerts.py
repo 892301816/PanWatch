@@ -401,10 +401,9 @@ async def create_alerts_from_plan(
     except Exception as e:
         logger.warning(f"取现价失败，跳过价位有效性校验: {e}")
 
-    expire_at = payload.expire_at.strip()
-    if not expire_at:
-        base_date = plan.plan_end_date or plan.plan_date
-        expire_at = f"{base_date} 23:59:00" if base_date else ""
+    # 不传则用"下一个交易日收盘"(本地时区语义),而不是计划日期当天 23:59 ——
+    # 后者在收盘后加提醒时已经过期,且会被当成 UTC 存成次日凌晨,对不上开盘。
+    expire_value = payload.expire_at.strip() or price_alert_service.default_alert_expiry()
 
     created: list[dict] = []
     rejected: list[dict] = []
@@ -448,7 +447,7 @@ async def create_alerts_from_plan(
                 cooldown_minutes=payload.cooldown_minutes,
                 max_triggers_per_day=payload.max_triggers_per_day,
                 repeat_mode="repeat",
-                expire_at=expire_at or None,
+                expire_at=expire_value,
                 notify_channel_ids=payload.notify_channel_ids,
                 source="operation_plan",
                 source_plan_id=plan.id,
@@ -471,5 +470,6 @@ async def create_alerts_from_plan(
         "created": created,
         "rejected": rejected,
         "current_price": current_price,
-        "expire_at": expire_at,
+        # 回显本地时间(created 里的 expire_at 已由 _to_response 格式化过)
+        "expire_at": (created[0].get("expire_at") or "") if created else "",
     }

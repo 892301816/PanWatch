@@ -141,6 +141,8 @@ class Fundamentals:
     net_margin: float | None = None                 # 净利率(%)
     revenue_yoy: float | None = None                # 营收同比增长(%)
     net_profit_yoy: float | None = None             # 净利润同比增长(%)
+    debt_ratio: float | None = None                 # 资产负债率(%)
+    total_liability: float | None = None            # 总负债
     report_date: str = ""                           # 报告期(原样字符串,不做日期解析)
     timestamp: datetime = field(default_factory=datetime.now)
 

@@ -70,11 +70,11 @@ AGENT_SEED_SPECS: tuple[AgentSeedSpec, ...] = (
         name="operation_plan",
         display_name="操作计划",
         description="按股生成多情景操作方案（触发条件/买入区间/止损价/目标价），"
-        "可在个股详情里一键把价位加入提醒，用来约束交易纪律",
-        # 默认开启是安全的:调度只跑显式绑定到本 Agent 的股票(StockAgent),
-        # 没有绑定就不会产生 AI 调用与费用。
-        enabled=True,
-        schedule="45 8 * * 1-5",  # 开盘前 15 分钟,留出人工过目的时间
+        "可在个股详情里一键把价位加入提醒，用来约束交易纪律。需手动触发。",
+        # 手动触发,不排期:计划是"要看某只股票时才生成",定时对全自选股跑一遍既慢
+        # 又费 token,且盘前的判断本就该由用户主动发起(见个股详情的触发入口)。
+        enabled=False,
+        schedule="",
         execution_mode="single",
         kind=AGENT_KIND_WORKFLOW,
         visible=True,
