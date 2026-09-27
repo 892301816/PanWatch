@@ -357,10 +357,18 @@ def _realtime_search(query: str, market: str = "", limit: int = 20) -> list[dict
         classify = (item.get("Classify") or "").strip()
         security_type = (item.get("SecurityTypeName") or "").strip()
         code_raw = (item.get("Code") or "").strip().upper()
+        # 不能写成 `or ""`：深市 MktNum 为 0，会被 falsy 判空而误杀深市 ETF。
+        mkt_num = str(item.get("MktNum") if item.get("MktNum") is not None else "").strip()
+
+        # 场内基金（ETF/LOF）：东财 Classify=Fund，MktNum 0=深 / 1=沪。
+        # 与股票一样在交易所挂牌，有实时行情和 K 线，可加自选与持仓。
+        # 场外基金是 Classify=OTCFUND 且 MktNum=150，无交易所行情，仍走 else 排除。
+        is_listed_fund = classify == "Fund" and mkt_num in ("0", "1")
 
         # 判断市场
         if (
             classify in ("AStock", "BJStock")
+            or is_listed_fund
             or any(ch in security_type for ch in ("沪", "深", "北"))
             or code_raw.endswith(".BJ")
             or code_raw.startswith("BJ")
@@ -371,7 +379,7 @@ def _realtime_search(query: str, market: str = "", limit: int = 20) -> list[dict
         elif classify == "UsStock" or "美" in security_type:
             stock_market = "US"
         else:
-            continue  # 跳过其他类型（债券、基金等）
+            continue  # 跳过其他类型（债券、场外基金等）
 
         # 市场筛选
         if market and stock_market != market:
