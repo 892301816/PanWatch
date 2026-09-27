@@ -26,10 +26,16 @@ class TestUnwrapPayload:
     def test_double_layer(self):
         assert nb._unwrap_payload({"data": {"data": {"hgt": [], "sgt": []}}}) == {"hgt": [], "sgt": []}
 
+    def test_flat_payload_passes_through(self):
+        """实测形态就是扁平的 {"time":..,"hgt":..,"sgt":..},没有 data 包裹。"""
+        flat = {"time": ["09:10"], "hgt": [0], "sgt": [1.0]}
+        assert nb._unwrap_payload(flat) == flat
+
     def test_not_a_dict_returns_empty(self):
         assert nb._unwrap_payload(None) == {}
         assert nb._unwrap_payload("not a dict") == {}
-        assert nb._unwrap_payload({"no_data_key": 1}) == {}
+        # 扁平兜底:没有 data 包裹时原样返回,交给下游按键名取值(取不到自然为空)
+        assert nb._unwrap_payload({"no_data_key": 1}) == {"no_data_key": 1}
 
 
 class TestLastPoint:
@@ -43,10 +49,38 @@ class TestLastPoint:
         t, v = nb._last_point(series)
         assert t == "09:31" and v == 1.5
 
+    def test_flat_series_uses_parallel_time_array(self):
+        """实测形态:值序列是纯数值,时间在同级 time 数组里按下标对齐。"""
+        series = [0, 0.03, -9.28]
+        times = ["09:10", "09:11", "15:00"]
+        assert nb._last_point(series, times) == ("15:00", -9.28)
+
+    def test_flat_series_without_times_still_yields_value(self):
+        """时间缺失不该连值一起丢掉,时间返回 None 即可。"""
+        assert nb._last_point([1.0, 2.0]) == (None, 2.0)
+        assert nb._last_point([1.0, 2.0], times=None) == (None, 2.0)
+
+    def test_flat_series_misaligned_times_yields_none_time(self):
+        """长度对不齐时无法确定取值对应哪一分钟,时间给 None。"""
+        assert nb._last_point([1.0, 2.0, 3.0], ["09:10"]) == (None, 3.0)
+
     def test_empty_or_invalid_returns_none_none(self):
         assert nb._last_point([]) == (None, None)
         assert nb._last_point(None) == (None, None)
         assert nb._last_point("not a series") == (None, None)
+
+
+class TestIsFlatSeries:
+    def test_flat(self):
+        assert nb._is_flat_series([0, 1.0, 2.0]) is True
+
+    def test_pairs_and_dicts_are_not_flat(self):
+        assert nb._is_flat_series([["09:30", 1.0]]) is False
+        assert nb._is_flat_series([{"time": "09:30", "value": 1.0}]) is False
+
+    def test_empty_is_not_flat(self):
+        assert nb._is_flat_series([]) is False
+        assert nb._is_flat_series(None) is False
 
 
 class TestToFloatAndSgtValid:
@@ -116,6 +150,40 @@ class TestHexinNorthboundVendor:
         assert item.sgt_net is None
         assert item.total_net is None
         assert item.hgt_net == 8.76  # hgt 不受 sgt 异常污染
+
+    def test_real_flat_payload_drops_misaligned_sgt(self, monkeypatch):
+        """实测形态(扁平平行数组):hgt 与 time 对齐可用;sgt 长度对不齐 → 判为不可信。
+
+        真实响应样例:time 与 hgt 均 262 点(09:10–15:00),sgt 只有 35 点,且其数值
+        量级(开盘即 364)明显不是当日净买入。
+        """
+        payload = {
+            "time": ["09:10", "09:11", "15:00"],
+            "hgt": [0, 0.03, -9.28],
+            "sgt": [364.81, 379.75],  # 2 点 vs time 的 3 点,对不齐
+        }
+        monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
+
+        out = nb.HexinNorthboundVendor().fetch([], {})
+        assert len(out) == 1
+        assert out[0].hgt_net == -9.28
+        assert out[0].time == "15:00"
+        assert out[0].sgt_net is None  # 对不齐,不臆造
+        assert out[0].total_net is None
+
+    def test_real_flat_payload_with_aligned_sgt(self, monkeypatch):
+        """扁平形态下 sgt 与 time 对齐时正常参与合计。"""
+        payload = {
+            "time": ["09:10", "15:00"],
+            "hgt": [0, -9.28],
+            "sgt": [1.5, 2.5],
+        }
+        monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
+
+        out = nb.HexinNorthboundVendor().fetch([], {})
+        assert out[0].hgt_net == -9.28
+        assert out[0].sgt_net == 2.5
+        assert out[0].total_net == -9.28 + 2.5
 
     def test_none_response_returns_empty(self, monkeypatch):
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: None)

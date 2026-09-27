@@ -4,13 +4,18 @@
 不可用。改走同花顺 hexin 私有接口 `data.hexin.cn/market/hsgtApi/method/dayChart/`,
 返回当日分钟级累计净买入序列,`hgt`(沪股通)/`sgt`(深股通),单位均为"亿元"。
 
-**待实抓校准**:沙箱代理会拦截 hexin,无法实抓验证真实响应结构。以下解析按背景描述
-("响应含当日分钟序列,每点有时间 + hgt/sgt 累计值")尽力构造 + 逐层防御 `.get()`,
-拿不到就返回 []。真实结构上线前需用真实响应复核。
+**实测结构(2026-09 实抓校准,替换原先的"待校准"猜测)**:响应是**扁平**的平行数组,
+没有 data 包裹::
 
-已知坑(SKILL 标注):`sgt`(深股通)近期数据不可靠,可能是 NaN 或量级异常(远超合理的
-"亿元"范围),必须容错——异常时 sgt_net=None,不参与 total_net 计算,也不让异常值污染
-hgt_net。绝不用无参 now()/time()/random 填充缺失的 date/time。
+    {"time": ["09:10", ..., "15:00"], "hgt": [0, 0.03, ..., -9.28], "sgt": [364.81, ...]}
+
+``time`` 与 ``hgt`` 均为 262 点(09:10–15:00)且按下标对齐;``sgt`` 实测只有 35 点,
+与 time 对不齐。单位为亿元。
+
+已知坑:`sgt`(深股通)数据不可靠——既可能量级异常(远超合理的"亿元"范围),实测还
+与 time 长度不一致,无法确定末值对应哪一分钟。故除量级阈值外再加对齐校验,任一不过
+即 sgt_net=None,不参与 total_net 计算,也不让它污染 hgt_net。绝不用无参
+now()/time()/random 填充缺失的 date/time。
 """
 from __future__ import annotations
 
@@ -63,23 +68,48 @@ def _sgt_valid(value) -> float | None:
 
 
 def _unwrap_payload(resp) -> dict:
-    """防御性剥离外层包裹:hexin 响应可能是 {"data": {...}} 或再套一层
-    {"data": {"data": {...}}}——具体结构待实抓校准,逐层 .get() 兜底,拿不到就 {}。
+    """剥离外层包裹,还原成含 time/hgt/sgt 的那一层。
+
+    实测(2026-09)hexin 返回的是**扁平**结构:
+        {"time": ["09:10", ...], "hgt": [0, 0.03, ...], "sgt": [364.81, ...]}
+    没有 data 包裹。此处兼容历史上猜测的 {"data": {...}} / {"data": {"data": {...}}}
+    两层写法,拿不到就原样返回(交给下游按键名取值)。
     """
     if not isinstance(resp, dict):
         return {}
     layer = resp.get("data")
-    if not isinstance(layer, dict):
-        return {}
-    inner = layer.get("data")
-    if isinstance(inner, dict):
-        return inner
-    return layer
+    if isinstance(layer, dict):
+        inner = layer.get("data")
+        return inner if isinstance(inner, dict) else layer
+    return resp
 
 
-def _last_point(series) -> tuple[object, object]:
-    """从分钟序列取末值(当日最新累计净买入)。序列元素可能是 [time, value] 或
-    {"time":.., "value":..}(键名待实抓校准,防御多种常见键名)。取不到返回 (None, None)。
+def _is_flat_series(series) -> bool:
+    """序列是否只有数值、时间要靠同级 time 数组对齐(实测的扁平形态)。
+
+    每点自带时间的写法(``[time, value]`` 或 ``{"time":..,"value":..}``)返回 False ——
+    它们自带时间轴,不需要也不能做长度对齐校验。
+    """
+    if not isinstance(series, (list, tuple)) or not series:
+        return False
+    return not isinstance(series[0], (list, tuple, dict))
+
+
+def _aligned_times(series, times) -> list | None:
+    """平行数组的时间轴;长度与取值序列不一致时返回 None(无法确定取值对应哪一分钟)。"""
+    if not isinstance(times, (list, tuple)):
+        return None
+    if len(times) != len(series):
+        return None
+    return list(times)
+
+
+def _last_point(series, times=None) -> tuple[object, object]:
+    """取分钟序列末值(当日最新累计净买入),返回 (时间, 值)。
+
+    实测结构是**平行数组**:``hgt``/``sgt`` 只有数值,时间在同级的 ``time`` 数组里,
+    按下标对齐;因此必须把 times 一并传入。同时兼容每点为 ``[time, value]`` 或
+    ``{"time":..,"value":..}`` 的写法。取不到返回 (None, None)。
     """
     if not isinstance(series, (list, tuple)) or not series:
         return None, None
@@ -90,7 +120,8 @@ def _last_point(series) -> tuple[object, object]:
         t = last.get("time") or last.get("t") or last.get("x")
         v = last.get("value") or last.get("v") or last.get("y") or last.get("net")
         return t, v
-    return None, None
+    aligned = _aligned_times(series, times)
+    return (aligned[-1] if aligned else None), last
 
 
 class HexinNorthboundVendor(_NorthboundVendorBase):
@@ -116,10 +147,20 @@ class HexinNorthboundVendor(_NorthboundVendorBase):
         if not payload:
             return []
 
-        hgt_time, hgt_raw = _last_point(payload.get("hgt"))
-        sgt_time, sgt_raw = _last_point(payload.get("sgt"))
+        times = payload.get("time")
+        hgt_series = payload.get("hgt") or []
+        sgt_series = payload.get("sgt") or []
+
+        hgt_time, hgt_raw = _last_point(hgt_series, times)
+        sgt_time, sgt_raw = _last_point(sgt_series, times)
         hgt_net = _to_float(hgt_raw)
         sgt_net = _sgt_valid(sgt_raw)
+        # sgt 除量级存疑外,实测(扁平形态)长度还与 time 对不上(35 vs 262 点),无法确定
+        # 末值对应哪一分钟 —— 扁平序列对不齐时整体判为不可信。每点自带时间的写法不受
+        # 此限(它自带时间轴)。
+        if sgt_net is not None and _is_flat_series(sgt_series):
+            if not _aligned_times(sgt_series, times):
+                sgt_net = None
         if hgt_net is None and sgt_net is None:
             return []
 
