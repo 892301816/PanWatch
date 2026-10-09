@@ -9,9 +9,11 @@ import pytest
 from src.modules.automation.tradingagents import operations as auto_trigger
 
 
-def _make_agent(raw_config: dict):
-    agent = MagicMock()
-    agent.raw_config = raw_config
+def _make_agent(config: dict):
+    # spec 限制可访问属性:模型上不存在的字段名(如曾经的 raw_config)会直接抛
+    # AttributeError,而不是被 MagicMock 静默吞掉。
+    agent = MagicMock(spec=["config"])
+    agent.config = config
     return agent
 
 
