@@ -100,6 +100,17 @@ export default function PriceAlertsPage() {
 
   const stockOptions = useMemo(() => stocks, [stocks])
 
+  // 已过期规则数。expire_at 是带时区偏移的 ISO 串(后端 _format_datetime 产出),
+  // Date.parse 可直接解析;解析不出来的保守算作"未过期",避免误删。
+  const expiredCount = useMemo(() => {
+    const now = Date.now()
+    return rules.filter(r => {
+      if (!r.expire_at) return false
+      const t = Date.parse(r.expire_at)
+      return !Number.isNaN(t) && t < now
+    }).length
+  }, [rules])
+
   const load = async () => {
     setLoading(true)
     try {
@@ -240,6 +251,26 @@ export default function PriceAlertsPage() {
     }
   }
 
+  const bulkDelete = async (scope: 'expired' | 'all') => {
+    const n = scope === 'expired' ? expiredCount : rules.length
+    if (n === 0) return
+    const msg =
+      scope === 'expired'
+        ? `确认删除 ${n} 条已过期的提醒？\n\n过期的规则本来就不会触发，删除只影响列表显示。`
+        : `确认删除全部 ${n} 条提醒？\n\n⚠️ 此操作不可恢复，包括尚未过期的规则。`
+    if (!window.confirm(msg)) return
+    try {
+      const res = await fetchAPI<{ deleted: number }>('/price-alerts/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ scope }),
+      })
+      await load()
+      toast(`已删除 ${res?.deleted ?? n} 条`, 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '批量删除失败', 'error')
+    }
+  }
+
   const runScan = async () => {
     setScanRunning(true)
     try {
@@ -282,9 +313,24 @@ export default function PriceAlertsPage() {
         <p className="text-[12px] md:text-[13px] text-muted-foreground mt-0.5 md:mt-1">到价/量能触发，支持冷却、每日上限与交易时段门禁</p>
       </div>
 
-      <div className="card p-4 mb-4 flex items-center justify-between gap-2">
-        <div className="text-[12px] text-muted-foreground">规则数：{rules.length}</div>
-        <div className="flex items-center gap-2">
+      <div className="card p-4 mb-4 flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[12px] text-muted-foreground">
+          规则数：{rules.length}
+          {expiredCount > 0 && <span className="ml-1 text-amber-600 dark:text-amber-400">（已过期 {expiredCount}）</span>}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {expiredCount > 0 && (
+            <Button variant="secondary" size="sm" className="h-8" onClick={() => bulkDelete('expired')}>
+              <Trash2 className="w-3.5 h-3.5" />
+              清理已过期（{expiredCount}）
+            </Button>
+          )}
+          {rules.length > 0 && (
+            <Button variant="secondary" size="sm" className="h-8" onClick={() => bulkDelete('all')}>
+              <Trash2 className="w-3.5 h-3.5" />
+              删除全部
+            </Button>
+          )}
           <Button variant="secondary" size="sm" className="h-8" onClick={runScan} disabled={scanRunning}>
             {scanRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
             立即扫描

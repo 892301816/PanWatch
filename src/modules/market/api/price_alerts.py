@@ -159,6 +159,54 @@ def delete_alert_rule(rule_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class BulkDeleteBody(BaseModel):
+    scope: str = Field(
+        "expired",
+        description="all=全部 / expired=只删已过期 / disabled=只删已停用",
+    )
+    source: str | None = Field(
+        None, description="可选，只删某个来源（如 operation_plan）；None 表示不限"
+    )
+
+
+@router.post("/bulk-delete")
+def bulk_delete_alert_rules(body: BulkDeleteBody, db: Session = Depends(get_db)):
+    """批量删除提醒规则。**不可恢复**，前端必须二次确认并展示条数。
+
+    默认 scope=expired（而不是 all）—— 默认值决定了误点的后果，过期规则本就不会触发，
+    删错了损失最小；真要清空必须显式传 all。
+    """
+    scope = (body.scope or "").strip().lower()
+    if scope not in ("all", "expired", "disabled"):
+        raise HTTPException(400, f"不支持的 scope: {body.scope}")
+
+    query = db.query(PriceAlertRule)
+    if body.source:
+        query = query.filter(PriceAlertRule.source == body.source.strip())
+    if scope == "expired":
+        # expire_at 以 naive UTC 存库（见 price_alert_engine._can_trigger 的同款处理）
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        query = query.filter(
+            PriceAlertRule.expire_at.isnot(None), PriceAlertRule.expire_at < now
+        )
+    elif scope == "disabled":
+        query = query.filter(PriceAlertRule.enabled == False)  # noqa: E712
+
+    targets = query.all()
+    ids = [r.id for r in targets]
+    if not ids:
+        return {"ok": True, "deleted": 0, "scope": scope}
+    # 同步清掉这些规则的命中记录，否则 alert-hits 会留下孤儿行。
+    db.query(PriceAlertHit).filter(PriceAlertHit.rule_id.in_(ids)).delete(
+        synchronize_session=False
+    )
+    for row in targets:
+        db.delete(row)
+    db.commit()
+    logger.info("[价格提醒] 批量删除 %d 条 (scope=%s source=%s)", len(ids), scope, body.source or "-")
+    return {"ok": True, "deleted": len(ids), "scope": scope}
+
+
 @router.get("/hits/today")
 def list_today_hits(limit: int = 50, db: Session = Depends(get_db)):
     """今日(本地时区)全部命中,跨规则聚合 —— 供首页"今日要紧事"。"""
