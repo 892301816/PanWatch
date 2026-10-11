@@ -28,10 +28,12 @@ from src.modules.market.api import (
     discovery,
     klines,
     market,
+    messages,
     news,
     price_alerts,
     quotes,
     stocks,
+    themes,
 )
 from src.modules.paper_trading.api import paper_trading
 from src.modules.portfolio.api import accounts, dashboard, history
@@ -72,6 +74,12 @@ app.include_router(
 )
 app.include_router(
     quotes.router, prefix="/api/quotes", tags=["quotes"], dependencies=protected
+)
+app.include_router(
+    themes.router, prefix="/api/themes", tags=["themes"], dependencies=protected
+)
+app.include_router(
+    messages.router, prefix="/api/messages", tags=["messages"], dependencies=protected
 )
 app.include_router(
     klines.router, prefix="/api/klines", tags=["klines"], dependencies=protected
