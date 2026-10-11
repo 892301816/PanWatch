@@ -389,6 +389,18 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": True,  # 支持批量查询
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },
+        {
+            "name": "巨潮资讯公告",
+            "type": "news",
+            "provider": "cninfo",
+            "config": {
+                "description": "巨潮资讯(cninfo)公告,交易所指定的信息披露平台,与东财公告互备。",
+            },
+            "enabled": True,
+            "priority": 3,
+            "supports_batch": True,  # 一次请求可查多只(symbol 需先换 orgId)
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
         # K线数据源
         {
             "name": "腾讯K线",
@@ -540,6 +552,26 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "config": {"description": "东财 np-weblist 7×24 资讯,与财联社互备。"},
             "enabled": True,
             "priority": 10,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
+        {
+            "name": "同花顺要闻",
+            "type": "flash_news",
+            "provider": "ths",
+            "config": {"description": "同花顺 A 股要闻(免 key),条目带关联个股代码。"},
+            "enabled": True,
+            "priority": 15,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
+        {
+            "name": "金十数据快讯",
+            "type": "flash_news",
+            "provider": "jin10",
+            "config": {"description": "金十数据 7×24 快讯(免 key),偏宏观/数据/公告。"},
+            "enabled": True,
+            "priority": 20,
             "supports_batch": False,
             "test_symbols": [],
         },

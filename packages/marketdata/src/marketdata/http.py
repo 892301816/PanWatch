@@ -75,6 +75,72 @@ def throttle(host_key: str, min_interval_s: float) -> None:
         _last_call[host_key] = time.time()
 
 
+def _market_request(
+    method: str,
+    url: str,
+    *,
+    host_key: str,
+    params: dict | None = None,
+    data: dict | None = None,
+    json_body: Any | None = None,
+    headers: dict | None = None,
+    min_interval_s: float = 0.0,
+    timeout: float = 10.0,
+    retries: int = 2,
+    backoff: float = 0.4,
+    jitter: float = 0.25,
+    parse: str = "text",   # "text" | "json" | "content"
+    encoding: str | None = None,
+    symbol: str = "",
+    log_label: str = "",
+    raise_for_status: bool = True,
+    trust_env: bool = True,
+    follow_redirects: bool = True,
+    verify: bool = True,
+    proxy: str | None = None,
+) -> Any | None:
+    """market_get / market_post 的共用实现:节流 + 退避重试 + 解析 + 失败上报。"""
+    effective_proxy = proxy
+    last_err: Any = None
+    for attempt in range(max(1, retries + 1)):
+        throttle(host_key, min_interval_s)
+        try:
+            with httpx.Client(
+                follow_redirects=follow_redirects,
+                timeout=timeout + attempt * 4,
+                headers=headers,
+                trust_env=trust_env,
+                verify=verify,
+                **({"proxy": effective_proxy} if effective_proxy else {}),
+            ) as client:
+                # 按方法分派到 client.get/post,而非统一的 client.request —— 保持 GET 调用形态
+                # 与原实现逐字一致,避免破坏既有测试替身/子类(它们只实现了 get)。
+                if method == "POST":
+                    resp = client.post(url, params=params, data=data, json=json_body)
+                else:
+                    resp = client.get(url, params=params)
+                if raise_for_status:
+                    resp.raise_for_status()
+                if parse == "json":
+                    return resp.json()
+                if parse == "content":
+                    return resp.content
+                if encoding:
+                    return resp.content.decode(encoding, errors="ignore")
+                return resp.text
+        except Exception as e:
+            last_err = e
+        if attempt < retries:
+            time.sleep(backoff * (attempt + 1) + random.uniform(0, jitter))
+
+    if last_err is not None:
+        label = log_label or host_key
+        sym = f" symbol={symbol}" if symbol else ""
+        logger.warning(f"{label} 获取失败{sym}: {last_err}{source_suffix()}")
+        record_error(f"{label}{sym}: {type(last_err).__name__}: {last_err}")
+    return None
+
+
 def market_get(
     url: str,
     *,
@@ -100,37 +166,46 @@ def market_get(
 
     proxy: 显式代理,仅在给了值时传给 httpx.Client 覆盖 env 代理;不传则遵循 trust_env(env)。
     """
-    effective_proxy = proxy
-    last_err: Any = None
-    for attempt in range(max(1, retries + 1)):
-        throttle(host_key, min_interval_s)
-        try:
-            with httpx.Client(
-                follow_redirects=follow_redirects,
-                timeout=timeout + attempt * 4,
-                headers=headers,
-                trust_env=trust_env,
-                verify=verify,
-                **({"proxy": effective_proxy} if effective_proxy else {}),
-            ) as client:
-                resp = client.get(url, params=params)
-                if raise_for_status:
-                    resp.raise_for_status()
-                if parse == "json":
-                    return resp.json()
-                if parse == "content":
-                    return resp.content
-                if encoding:
-                    return resp.content.decode(encoding, errors="ignore")
-                return resp.text
-        except Exception as e:
-            last_err = e
-        if attempt < retries:
-            time.sleep(backoff * (attempt + 1) + random.uniform(0, jitter))
+    return _market_request(
+        "GET", url, host_key=host_key, params=params, headers=headers,
+        min_interval_s=min_interval_s, timeout=timeout, retries=retries,
+        backoff=backoff, jitter=jitter, parse=parse, encoding=encoding,
+        symbol=symbol, log_label=log_label, raise_for_status=raise_for_status,
+        trust_env=trust_env, follow_redirects=follow_redirects, verify=verify,
+        proxy=proxy,
+    )
 
-    if last_err is not None:
-        label = log_label or host_key
-        sym = f" symbol={symbol}" if symbol else ""
-        logger.warning(f"{label} 获取失败{sym}: {last_err}{source_suffix()}")
-        record_error(f"{label}{sym}: {type(last_err).__name__}: {last_err}")
-    return None
+
+def market_post(
+    url: str,
+    *,
+    host_key: str,
+    data: dict | None = None,
+    json_body: Any | None = None,
+    params: dict | None = None,
+    headers: dict | None = None,
+    min_interval_s: float = 0.0,
+    timeout: float = 10.0,
+    retries: int = 2,
+    backoff: float = 0.4,
+    jitter: float = 0.25,
+    parse: str = "text",   # "text" | "json" | "content"
+    encoding: str | None = None,
+    symbol: str = "",
+    log_label: str = "",
+    raise_for_status: bool = True,
+    trust_env: bool = True,
+    follow_redirects: bool = True,
+    verify: bool = True,
+    proxy: str | None = None,
+) -> Any | None:
+    """同 market_get,但发 POST。data= 表单体(application/x-www-form-urlencoded),
+    json_body= JSON 体;两者都不传则发空 POST。"""
+    return _market_request(
+        "POST", url, host_key=host_key, params=params, data=data,
+        json_body=json_body, headers=headers, min_interval_s=min_interval_s,
+        timeout=timeout, retries=retries, backoff=backoff, jitter=jitter,
+        parse=parse, encoding=encoding, symbol=symbol, log_label=log_label,
+        raise_for_status=raise_for_status, trust_env=trust_env,
+        follow_redirects=follow_redirects, verify=verify, proxy=proxy,
+    )

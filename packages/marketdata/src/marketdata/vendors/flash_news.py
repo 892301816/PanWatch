@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 
 from marketdata.http import market_get
@@ -60,7 +61,7 @@ def _extract_symbol_code(entry) -> str:
     if isinstance(entry, str):
         return entry.strip()
     if isinstance(entry, dict):
-        for key in ("code", "stock_code", "SecurityCode", "secu_code", "symbol", "Code"):
+        for key in ("code", "stock_code", "stockCode", "SecurityCode", "secu_code", "symbol", "Code"):
             v = entry.get(key)
             if v:
                 return str(v).strip()
@@ -113,12 +114,17 @@ def _cls_sign(params: dict) -> str:
     return hashlib.md5(hashlib.sha1(qs.encode()).hexdigest().encode()).hexdigest()
 
 
+# cls 接口对 rn 有硬上限:实测 rn=50 正常,rn>=80 一律返回空(不报错,静默空)。
+# 调用方传更大的 limit(如聚合时按用户 limit 透传)会把它整个打空,故在此钳制。
+_CLS_MAX_RN = 50
+
+
 class ClsFlashNewsVendor(_FlashNewsVendorBase):
     name = "cls"
     supports_markets = {"CN"}
 
     def fetch(self, symbols: list[Symbol], config: dict) -> list[FlashNews]:
-        limit = int((config or {}).get("days") or 50)
+        limit = min(int((config or {}).get("days") or 50), _CLS_MAX_RN)
         params = {
             "appName": "CailianpressWeb",
             "os": "web",
@@ -202,12 +208,16 @@ def _sina_symbols(item: dict) -> list[str]:
     return out
 
 
+# sina 直播接口 page_size 过大时行为异常:实测 100 正常,200 只返 10 条(疑似服务端截断)。
+_SINA_MAX_PAGE_SIZE = 100
+
+
 class SinaFlashNewsVendor(_FlashNewsVendorBase):
     name = "sina"
     supports_markets = {"CN"}
 
     def fetch(self, symbols: list[Symbol], config: dict) -> list[FlashNews]:
-        limit = int((config or {}).get("days") or 50)
+        limit = min(int((config or {}).get("days") or 50), _SINA_MAX_PAGE_SIZE)
         params = {"zhibo_id": 152, "page_size": limit, "dire": "f"}
         headers = {"User-Agent": _UA, "Referer": "https://finance.sina.com.cn/"}
 
@@ -307,6 +317,147 @@ class EastmoneyFlashNewsVendor(_FlashNewsVendorBase):
                         publish_time=publish_time,
                         symbols=[],
                         importance=0,
+                        url="",
+                    )
+                )
+            except Exception:
+                continue
+        return result
+
+
+# ---------------------------------------------------------------------------
+# ths(同花顺,市场级 A 股要闻)
+# ---------------------------------------------------------------------------
+
+_THS_URL = "https://news.10jqka.com.cn/tapp/news/push/stock/"
+_THS_HOST = "news.10jqka.com.cn"
+
+
+class ThsFlashNewsVendor(_FlashNewsVendorBase):
+    """同花顺 A 股要闻。市场级(接口不接受 symbol 参数),但条目自带关联股
+    stock[].stockCode,故 symbol 维度信息比纯市场快讯更丰富。"""
+
+    name = "ths"
+    supports_markets = {"CN"}
+
+    def fetch(self, symbols: list[Symbol], config: dict) -> list[FlashNews]:
+        limit = int((config or {}).get("days") or 50)
+        params = {"page": 1, "tag": "", "track": "website", "pagesize": limit}
+        headers = {"User-Agent": _UA, "Referer": "https://news.10jqka.com.cn/"}
+
+        data = market_get(
+            _THS_URL,
+            host_key=_THS_HOST,
+            params=params,
+            headers=headers,
+            parse="json",
+            retries=2,
+            timeout=8,
+            log_label="同花顺要闻",
+        )
+        if not data:
+            return []
+
+        items = ((data or {}).get("data") or {}).get("list") or []
+        result: list[FlashNews] = []
+        for item in items:
+            try:
+                title = (item.get("title") or "").strip()
+                if not title:
+                    continue
+                result.append(
+                    FlashNews(
+                        source="ths",
+                        external_id=str(item.get("id", "")),
+                        title=title,
+                        content=(item.get("digest") or "").strip(),
+                        publish_time=_parse_epoch_seconds(item.get("rtime")),
+                        symbols=_extract_symbols(item.get("stock") or []),
+                        importance=0,
+                        url=item.get("url", "") or "",
+                    )
+                )
+            except Exception:
+                continue
+        return result
+
+
+# ---------------------------------------------------------------------------
+# jin10(金十数据)
+# ---------------------------------------------------------------------------
+
+_JIN10_URL = "https://flash-api.jin10.com/get_flash_list"
+_JIN10_HOST = "flash-api.jin10.com"
+# web 端公开的固定应用标识(非用户凭证,所有访客一致)
+_JIN10_APP_ID = "bVBF4FyRTn5NJF5n"
+_JIN10_VERSION = "1.0.0"
+# 金十的 data.title 恒为空,标题写在 content 开头的【】里
+_JIN10_TITLE_RE = re.compile(r"^【([^】]{1,60})】")
+
+
+def _jin10_title(title: str, content: str) -> str:
+    """金十标题取法:优先 data.title;空则从 content 抽开头【...】;再无则截断正文。"""
+    t = (title or "").strip()
+    if t:
+        return t
+    text = (content or "").strip()
+    m = _JIN10_TITLE_RE.match(text)
+    if m:
+        return m.group(1).strip()
+    return text[:40]
+
+
+class Jin10FlashNewsVendor(_FlashNewsVendorBase):
+    """金十数据快讯。市场级,以宏观/数据/公司公告类消息为主,时效密集。"""
+
+    name = "jin10"
+    supports_markets = {"CN"}
+
+    def fetch(self, symbols: list[Symbol], config: dict) -> list[FlashNews]:
+        limit = int((config or {}).get("days") or 50)
+        params = {"channel": "-8200", "vip": "1"}
+        headers = {
+            "User-Agent": _UA,
+            "Referer": "https://www.jin10.com/",
+            "x-app-id": _JIN10_APP_ID,
+            "x-version": _JIN10_VERSION,
+        }
+
+        data = market_get(
+            _JIN10_URL,
+            host_key=_JIN10_HOST,
+            params=params,
+            headers=headers,
+            parse="json",
+            retries=2,
+            timeout=8,
+            log_label="金十快讯",
+        )
+        if not data:
+            return []
+
+        items = (data or {}).get("data") or []
+        result: list[FlashNews] = []
+        for item in items:
+            try:
+                body = item.get("data") or {}
+                content = (body.get("content") or "").strip()
+                title = _jin10_title(body.get("title"), content)
+                if not title and not content:
+                    continue
+                try:
+                    importance = int(item.get("important") or 0)
+                except (TypeError, ValueError):
+                    importance = 0
+                result.append(
+                    FlashNews(
+                        source="jin10",
+                        external_id=str(item.get("id", "")),
+                        title=title,
+                        content=content,
+                        publish_time=_parse_datetime_str(item.get("time")),
+                        symbols=[],
+                        importance=max(0, min(importance, 3)),
                         url="",
                     )
                 )

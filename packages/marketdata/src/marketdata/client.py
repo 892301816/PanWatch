@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -14,6 +15,7 @@ from marketdata.registry import build_vendors
 from marketdata.symbol import Symbol
 from marketdata.types import (
     CapitalFlow,
+    ConceptBoard,
     DividendItem,
     DragonTigerItem,
     EventItem,
@@ -27,10 +29,12 @@ from marketdata.types import (
     Quote,
     Request,
     ShareholderItem,
+    ZtPoolItem,
 )
 from marketdata.types import IntradayPoint
 from marketdata.vendors.discovery import DISCOVERY_VENDOR_CLASSES, DiscoveryVendor
 from marketdata.vendors.news import EastmoneyStockNewsVendor
+from marketdata.vendors.theme import THEME_VENDOR_CLASSES, ThemeVendor
 
 # 指数 secid(东财):指数与个股 secid 前缀规则不同,必须显式映射,否则按个股规则会取错标的。
 # 美股指数东财K线不支持,未列入 → index_klines 返回空,fail-soft。
@@ -54,6 +58,41 @@ INDEX_TENCENT: dict[str, str] = {
     "DJI": "usDJI",         # 道琼斯
     "INX": "usINX",         # 标普500
 }
+
+
+# 快讯指纹归一化。各源 external_id 体系互不相通,跨源判重只能靠内容。
+# 【…】里装的是事件主体(金十把标题写在正文开头),所以要**取出来**用 ——
+# 剥掉它等于把最有辨识度的部分丢了。
+_FLASH_BRACKET_RE = re.compile(r"^【([^】]{1,80})】")
+_FLASH_NOISE_RE = re.compile(r"[\s　，。、：；！？（）()\[\]【】“”\"'‘’·—\-…,.:;!?]+")
+
+
+def _flash_news_fingerprint(item: FlashNews) -> str:
+    text = (item.title or "").strip() or (item.content or "").strip()
+    m = _FLASH_BRACKET_RE.match(text)
+    if m:
+        text = m.group(1)
+    text = _FLASH_NOISE_RE.sub("", text)
+    return text[:30]
+
+
+def _dedupe_flash_news(items: list[FlashNews]) -> list[FlashNews]:
+    """按指纹去重,保留先出现的(调用方已按 priority 排序 → 高优先级源优先保留)。
+
+    指纹过短(标题/正文都不足以判定同一事件)的条目直接保留、不参与去重,避免误合并。
+    """
+    seen: set[str] = set()
+    out: list[FlashNews] = []
+    for it in items:
+        fp = _flash_news_fingerprint(it)
+        if len(fp) < 8:
+            out.append(it)
+            continue
+        if fp in seen:
+            continue
+        seen.add(fp)
+        out.append(it)
+    return out
 
 
 class MarketData:
@@ -89,14 +128,18 @@ class MarketData:
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=0.0), default_ttl=0.0,
         )
-        # flash_news(快讯 7×24)是市场级(symbols 恒空),但仍走 Engine 做主备/缓存/健康度,
-        # 与 discovery(不进 Engine)的区别是:flash_news 有多源竞争、需要统一 TTL 缓存。
+        # flash_news(快讯 7×24)是市场级(symbols 恒空)。Engine 仍保留(宿主按它判定
+        # "引擎已挂载"并展示健康度),但取数**不再走 Engine 的主备链**——见下方
+        # flash_news():同一件事常被多个源同时报道,主备语义只取第一个源会丢内容。
+        self._flash_news_vendors = build_vendors("flash_news")
         self._flash_news_engine = Engine(
             datatype="flash_news",
-            vendors=build_vendors("flash_news"),
+            vendors=self._flash_news_vendors,
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=30.0), default_ttl=30.0,
         )
+        # 聚合路径自己管缓存(不再有 Engine 那层 30s TTL)。
+        self._flash_news_cache = TTLCache(default_ttl_sec=30.0)
         # discovery(东财热门榜)是市场级、非 symbol 模型,不进 Engine —— md 直接委托给
         # discovery vendor。虽然不进 Engine,但仍是**可选数据源**:宿主 DataSource 表
         # 按 provider 名(见 DISCOVERY_VENDOR_CLASSES)选择用哪个,便于在 push2 不可达的
@@ -104,6 +147,11 @@ class MarketData:
         self._discovery = DiscoveryVendor()
         self._discovery_vendors = {
             name: cls() for name, cls in DISCOVERY_VENDOR_CLASSES.items()
+        }
+        # theme(涨停/炸板/跌停池 + 概念板块)同为市场级、不进 Engine,与 discovery 同模式。
+        self._theme = ThemeVendor()
+        self._theme_vendors = {
+            name: cls() for name, cls in THEME_VENDOR_CLASSES.items()
         }
         # news(新闻资讯)是聚合语义(并发查所有已启用源、结果合并去重),非失败转移
         # (找到一个就停),硬套 Engine 的主备模型是设计错配,故不进 Engine —— 只借 registry
@@ -262,13 +310,63 @@ class MarketData:
         return resp.data or []
 
     def flash_news(self, *, market: str = "CN", limit: int = 50, keyword: str | None = None) -> list[FlashNews]:
-        """快讯(7×24)。市场级,symbols 恒空。不在包内缓存额外一层——用 Engine 默认 30s TTL。"""
-        req = Request(symbols=(), market=market, limit=limit)
-        resp = self._flash_news_engine.fetch(req)
-        data = resp.data or []
+        """快讯(7×24)。市场级,symbols 恒空。**聚合语义**,不走 Engine 的主备链。
+
+        - 查所有已启用源 → 合并 → 按内容指纹去重 → 按时间倒序 → 取前 `limit` 条。
+        - 为什么不用主备:同一件事常被多个源同时报道(实测 5 源 221 条,去重后 164 条,
+          重复率 21%,单条最多被 4 个源同时报)。主备语义只取优先级最高的第一个源,
+          会丢掉其余源独有的内容。
+        - 为什么不能按 external_id 去重:各源 ID 体系互不相通(财联社 2501537 / 金十
+          20261011172134255800 / 东财 202610113892074984),同一事件在 5 个源里就是 5 个
+          不同 ID,按 ID 去重等于没去重。
+        - 各自管 30s TTL 缓存(不再有 Engine 那层)。
+        """
+        cache_key = f"flash_news:{market}:{limit}"
+        cached = self._flash_news_cache.get(cache_key)
+        if cached is None:
+            srcs = sorted(
+                self.config.sources_for("flash_news", market), key=lambda s: s.priority
+            )
+            merged: list[FlashNews] = []
+            for src in srcs:
+                if not src.enabled:
+                    continue
+                vendor = self._flash_news_vendors.get(src.vendor)
+                if vendor is None:
+                    continue
+                if vendor.supports_markets and market not in vendor.supports_markets:
+                    continue
+
+                t0 = time.monotonic()
+                try:
+                    items = vendor.fetch([], {**(src.config or {}), "days": limit}) or []
+                except Exception as e:
+                    latency = int((time.monotonic() - t0) * 1000)
+                    self.metrics.record(
+                        vendor=src.vendor, datatype="flash_news", market=market,
+                        ok=False, count=0, latency_ms=latency, error=str(e),
+                    )
+                    record_error(f"{src.vendor}: {type(e).__name__}: {e}")
+                    continue
+
+                latency = int((time.monotonic() - t0) * 1000)
+                self.metrics.record(
+                    vendor=src.vendor, datatype="flash_news", market=market,
+                    ok=bool(items), count=len(items), latency_ms=latency,
+                    error="" if items else "empty",
+                )
+                merged.extend(items)
+
+            data = _dedupe_flash_news(merged)
+            data.sort(key=lambda x: x.publish_time, reverse=True)
+            self._flash_news_cache.set(cache_key, data)
+        else:
+            data = cached
+
+        out = data[:limit] if limit and limit > 0 else data
         if keyword:
-            data = [x for x in data if keyword in (x.title or "") or keyword in (x.content or "")]
-        return data
+            out = [x for x in out if keyword in (x.title or "") or keyword in (x.content or "")]
+        return out
 
     def news(
         self,
@@ -437,6 +535,39 @@ class MarketData:
         if picked is None:
             raise ValueError(f"未知的 discovery vendor: {vendor}")
         return picked
+
+    def _theme_vendor(self, vendor: str | None):
+        """按 provider 名取 theme vendor;未指定时用默认(eastmoney)。"""
+        if not vendor:
+            return self._theme
+        picked = self._theme_vendors.get(str(vendor).strip())
+        if picked is None:
+            raise ValueError(f"未知的 theme vendor: {vendor}")
+        return picked
+
+    def zt_pool(self, *, vendor: str | None = None, **kw) -> list[ZtPoolItem]:
+        """涨停池(东财 push2ex,市场级、不经 Engine)。"""
+        return self._theme_vendor(vendor).zt_pool(**kw)
+
+    def zb_pool(self, *, vendor: str | None = None, **kw) -> list[ZtPoolItem]:
+        """炸板池(东财 push2ex,市场级、不经 Engine)。"""
+        return self._theme_vendor(vendor).zb_pool(**kw)
+
+    def dt_pool(self, *, vendor: str | None = None, **kw) -> list[ZtPoolItem]:
+        """跌停池(东财 push2ex,市场级、不经 Engine)。"""
+        return self._theme_vendor(vendor).dt_pool(**kw)
+
+    def concept_boards(self, *, vendor: str | None = None, **kw) -> list[ConceptBoard]:
+        """概念板块榜(东财 push2 clist,市场级、不经 Engine)。"""
+        return self._theme_vendor(vendor).concept_boards(**kw)
+
+    def concept_stocks(self, *, vendor: str | None = None, **kw) -> list[dict]:
+        """板块成分股(东财 push2 clist,市场级、不经 Engine)。
+
+        与 discovery 的 ``board_stocks`` 是两条路:后者走 push2delay(部分网络已被 reset),
+        本方法走 push2,与 ``concept_boards`` 同主机。
+        """
+        return self._theme_vendor(vendor).concept_stocks(**kw)
 
     def hot_stocks(self, *, vendor: str | None = None, **kw) -> list[HotStock]:
         """热门/异动股(东财榜单,市场级、不经 Engine)。"""

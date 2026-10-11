@@ -116,6 +116,49 @@ class HotBoard:
 
 
 @dataclass
+class ConceptBoard:
+    """概念板块(东财 push2 clist,fs=m:90+t:3)。市场级,不进 Engine。
+
+    比 HotBoard 多出"资金/家数/领涨股"三个维度 —— 这是判定"炒作题材"强度的关键:
+    光看涨幅会被一次性脉冲误导,叠加主力净流入和上涨家数才看得出资金是否真的在做。
+    """
+
+    code: str
+    name: str
+    change_pct: float | None = None
+    turnover: float | None = None
+    main_net_inflow: float | None = None   # 主力净流入(元)
+    up_count: int | None = None            # 上涨家数
+    down_count: int | None = None          # 下跌家数
+    leader_name: str = ""                  # 领涨股名称
+    leader_code: str = ""                  # 领涨股代码
+    leader_change_pct: float | None = None
+
+
+@dataclass
+class ZtPoolItem:
+    """涨停/炸板/跌停池条目(东财 push2ex getTopicZTPool 系)。
+
+    A 股"炒作题材"最核心的信号来源:连板数(lbc)代表空间高度,封板资金(fund)代表
+    承接强度,hybk 是可聚合的题材维度。市场级、不进 Engine。
+    """
+
+    code: str
+    name: str
+    change_pct: float | None = None
+    amount: float | None = None              # 成交额(元)
+    turnover_rate: float | None = None       # 换手率(%)
+    limit_up_days: int = 0                   # 连板数(lbc)
+    first_seal_time: str = ""                # 首次封板时间(HHMMSS)
+    seal_fund: float | None = None           # 封板资金(元)
+    break_count: int = 0                     # 炸板次数(zbc)
+    industry: str = ""                       # 所属行业板块(hybk)
+    stat_days: int = 0                       # 涨停统计:统计窗口天数
+    stat_count: int = 0                      # 涨停统计:窗口内涨停次数
+    float_market_cap: float | None = None    # 流通市值(元)
+
+
+@dataclass
 class EventItem:
     """结构化事件(对齐 PanWatch src/collectors/events_collector.EventItem)。"""
 

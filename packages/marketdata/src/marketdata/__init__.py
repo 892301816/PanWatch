@@ -10,6 +10,7 @@ from marketdata.symbol import Market, Symbol
 from marketdata.types import (
     Bar,
     CapitalFlow,
+    ConceptBoard,
     DividendItem,
     DragonTigerItem,
     EventItem,
@@ -24,13 +25,14 @@ from marketdata.types import (
     Request,
     Response,
     ShareholderItem,
+    ZtPoolItem,
 )
 
 __version__ = "0.1.0"
 
 __all__ = [
     "MarketData", "Symbol", "Market", "Bar", "CapitalFlow", "EventItem", "FlashNews", "Fundamentals",
-    "HotStock", "HotBoard", "NewsArticle",
+    "HotStock", "HotBoard", "ConceptBoard", "ZtPoolItem", "NewsArticle",
     "DragonTigerItem", "MarginItem", "ShareholderItem", "DividendItem", "NorthboundItem",
     "Quote", "Request", "Response",
     "SourceConfig", "ConfigProvider", "MetricsSink",

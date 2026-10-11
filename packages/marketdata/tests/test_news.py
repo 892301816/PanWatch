@@ -450,3 +450,144 @@ def test_marketdata_news_by_keyword(monkeypatch):
     assert out[0].title == "光伏板块行业动态"
     sent = json.loads(calls[0]["param"])
     assert sent["keyword"] == "光伏"
+
+
+# ---------------------------------------------------------------------------
+# cninfo(巨潮资讯公告)
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+@pytest.fixture
+def _clear_cninfo_org_cache():
+    """orgId 映射是进程内缓存,测试间必须清空,否则相互污染。"""
+    news_mod._CNINFO_ORG_CACHE.clear()
+    yield
+    news_mod._CNINFO_ORG_CACHE.clear()
+
+
+def _cninfo_stocklist(*pairs):
+    return {"stockList": [{"code": c, "orgId": o} for c, o in pairs]}
+
+
+def test_cninfo_parses_item_and_importance():
+    item = {
+        "announcementId": "1225597478",
+        "secCode": "000670",
+        "secName": "盈方微",
+        "announcementTitle": "<em>重大</em>资产重组进展公告",
+        "announcementTime": 1791475200000,  # ms -> 2026-10-09 UTC
+        "adjunctUrl": "finalpage/2026-10-09/1225597478.PDF",
+    }
+    a = news_mod._parse_cninfo_item(item)
+    assert isinstance(a, NewsArticle)
+    assert a.source == "cninfo"
+    assert a.external_id == "1225597478"
+    assert a.title == "重大资产重组进展公告"  # HTML 标签被清理
+    assert a.publish_time == datetime.fromtimestamp(1791475200, tz=timezone.utc)
+    assert a.symbols == ["000670"]
+    assert a.url == "http://static.cninfo.com.cn/finalpage/2026-10-09/1225597478.PDF"
+    assert a.importance == 3  # 命中"重大"
+
+
+def test_cninfo_importance_tiers():
+    assert news_mod._cninfo_importance("关于回购股份的公告") == 2
+    assert news_mod._cninfo_importance("对外担保公告") == 1
+    assert news_mod._cninfo_importance("第 X 届监事会第 Y 次会议决议") == 0
+
+
+def test_cninfo_parses_missing_fields_returns_none():
+    assert news_mod._parse_cninfo_item({}) is None
+    assert news_mod._parse_cninfo_item({"announcementId": "1"}) is None  # 无标题
+
+
+def test_cninfo_fetch_resolves_org_and_batches(monkeypatch, _clear_cninfo_org_cache):
+    seen = {}
+
+    monkeypatch.setattr(
+        news_mod, "market_get",
+        lambda *a, **k: _cninfo_stocklist(("000670", "gssz0000670"), ("600519", "gssh0600519")),
+    )
+
+    def fake_post(url, *, data=None, **kw):
+        seen["stock"] = data["stock"]
+        seen["seDate"] = data["seDate"]
+        return {
+            "announcements": [
+                {"announcementId": "1", "secCode": "000670", "announcementTitle": "盈方微公告",
+                 "announcementTime": 1791475200000, "adjunctUrl": "a.pdf"},
+                {"announcementId": "2", "secCode": "600519", "announcementTitle": "茅台公告",
+                 "announcementTime": 1791475200000, "adjunctUrl": "b.pdf"},
+            ]
+        }
+
+    monkeypatch.setattr(news_mod, "market_post", fake_post)
+
+    out = news_mod.CninfoAnnNewsVendor().fetch(
+        [Symbol.parse("000670"), Symbol.parse("600519")], {}
+    )
+    assert len(out) == 2
+    assert {a.symbols[0] for a in out} == {"000670", "600519"}
+    # 批量参数形如 "代码,orgId;代码,orgId",orgId 走全量表而非代码拼接
+    assert seen["stock"] == "000670,gssz0000670;600519,gssh0600519"
+    # seDate 留空 = 接口默认按时间倒序,不必在 vendor 里算"今天"
+    assert seen["seDate"] == ""
+
+
+def test_cninfo_skips_symbols_without_org_id(monkeypatch, _clear_cninfo_org_cache):
+    monkeypatch.setattr(
+        news_mod, "market_get", lambda *a, **k: _cninfo_stocklist(("000670", "gssz0000670"))
+    )
+    called = {"n": 0}
+
+    def fake_post(url, *, data=None, **kw):
+        called["n"] += 1
+        assert data["stock"] == "000670,gssz0000670"  # 未命中 orgId 的 600519 不出现在批量参数里
+        return {"announcements": []}
+
+    monkeypatch.setattr(news_mod, "market_post", fake_post)
+
+    out = news_mod.CninfoAnnNewsVendor().fetch(
+        [Symbol.parse("000670"), Symbol.parse("600519")], {}
+    )
+    assert out == []
+    assert called["n"] == 1
+
+
+def test_cninfo_all_org_ids_missing_returns_empty(monkeypatch, _clear_cninfo_org_cache):
+    monkeypatch.setattr(news_mod, "market_get", lambda *a, **k: _cninfo_stocklist())
+    monkeypatch.setattr(
+        news_mod, "market_post",
+        lambda *a, **k: pytest.fail("orgId 全缺失时不应发起公告查询"),
+    )
+    with capture_errors() as errs:
+        out = news_mod.CninfoAnnNewsVendor().fetch([Symbol.parse("000670")], {})
+    assert out == []
+    assert any("orgId" in e for e in errs)
+
+
+def test_cninfo_tolerates_broken_item(monkeypatch, _clear_cninfo_org_cache):
+    monkeypatch.setattr(
+        news_mod, "market_get", lambda *a, **k: _cninfo_stocklist(("000670", "gssz0000670"))
+    )
+    monkeypatch.setattr(
+        news_mod, "market_post",
+        lambda *a, **k: {"announcements": [
+            {"announcementId": "1", "secCode": "000670",
+             "announcementTitle": "正常公告", "announcementTime": 1791475200000},
+            "不是 dict",
+            {"announcementId": "", "announcementTitle": "缺 id"},
+        ]},
+    )
+    out = news_mod.CninfoAnnNewsVendor().fetch([Symbol.parse("000670")], {})
+    assert len(out) == 1
+    assert out[0].title == "正常公告"
+
+
+def test_cninfo_non_a_share_symbols_skipped(monkeypatch, _clear_cninfo_org_cache):
+    monkeypatch.setattr(
+        news_mod, "market_get",
+        lambda *a, **k: pytest.fail("非 A 股不应触发 orgId 查询"),
+    )
+    assert news_mod.CninfoAnnNewsVendor().fetch([Symbol.parse("AAPL", "US")], {}) == []

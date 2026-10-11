@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import json as json_module
 import re
+import threading
 from datetime import datetime, timezone
 
-from marketdata.http import market_get, record_error
+from marketdata.http import market_get, market_post, record_error
 from marketdata.symbol import Symbol
 from marketdata.types import NewsArticle
 from marketdata.vendors.base import NewsVendor as _NewsVendorBase
@@ -427,5 +428,168 @@ def _parse_ann_item(item: dict, symbols: list[str]) -> NewsArticle | None:
         publish_time=publish_time,
         symbols=symbols,
         importance=importance,
+        url=url,
+    )
+
+
+# ---------------------------------------------------------------------------
+# cninfo(巨潮资讯,交易所指定信息披露平台)
+# ---------------------------------------------------------------------------
+
+_CNINFO_STOCKLIST_URL = "http://www.cninfo.com.cn/new/data/szse_stock.json"
+_CNINFO_QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+_CNINFO_STATIC_BASE = "http://static.cninfo.com.cn/"
+_CNINFO_HOST = "www.cninfo.com.cn"
+_CNINFO_HEADERS = {
+    "User-Agent": _UA,
+    "Referer": "http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice",
+    "X-Requested-With": "XMLHttpRequest",
+    "Content-Type": "application/x-www-form-urlencoded",
+}
+
+# 代码 → orgId 全量映射。进程内缓存,股票表一天最多变一次,不值得每轮重拉。
+_CNINFO_ORG_CACHE: dict[str, str] = {}
+_CNINFO_ORG_LOCK = threading.Lock()
+
+
+def _load_cninfo_org_map() -> dict[str, str]:
+    """A 股代码 → 巨潮 orgId 映射(带进程内缓存)。
+
+    **orgId 无法由代码推导**:实测 600519→gssh0600519、000670→gssz0000670 看似有规律,
+    但 002594→gshk0001211、601318→9900002221、300308→9900022016 全是特例。传错 orgId
+    查询会静默返回 0 条(不报错),所以只能从全量表取。该表覆盖沪深京全部 A 股。
+    """
+    with _CNINFO_ORG_LOCK:
+        if _CNINFO_ORG_CACHE:
+            return _CNINFO_ORG_CACHE
+
+    data = market_get(
+        _CNINFO_STOCKLIST_URL,
+        host_key=_CNINFO_HOST,
+        headers={"User-Agent": _UA},
+        timeout=30,
+        retries=1,
+        parse="json",
+        log_label="巨潮股票表",
+    )
+    fresh: dict[str, str] = {}
+    if isinstance(data, dict):
+        for item in data.get("stockList") or []:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            org = str(item.get("orgId") or "").strip()
+            if code and org:
+                fresh[code] = org
+
+    with _CNINFO_ORG_LOCK:
+        if fresh:
+            _CNINFO_ORG_CACHE.update(fresh)
+        return _CNINFO_ORG_CACHE
+
+
+def _cninfo_importance(title: str) -> int:
+    if any(k in title for k in ("重大", "业绩预告", "业绩快报", "年度报告", "半年度报告", "年报", "半年报")):
+        return 3
+    if any(k in title for k in ("季度报告", "季报", "分红", "增持", "减持", "回购", "停牌", "复牌", "退市")):
+        return 2
+    if any(k in title for k in ("担保", "关联交易", "股东大会", "续聘", "澄清")):
+        return 1
+    return 0
+
+
+class CninfoAnnNewsVendor(_NewsVendorBase):
+    """巨潮资讯公告。交易所指定的信息披露平台,是 A 股公告的权威源头
+    (东财公告亦聚合自此),作为个股维度的第二公告源与东财互备。
+
+    接口是 POST 表单,故走 market_post。股票代码需先查 orgId 全量表。"""
+
+    name = "cninfo"
+    supports_markets = {"CN"}
+
+    def fetch(self, symbols: list[Symbol], config: dict) -> list[NewsArticle]:
+        a_share = sorted({s.code for s in symbols if len(s.code) == 6 and s.code.isdigit()})
+        if not a_share:
+            return []
+
+        org_map = _load_cninfo_org_map()
+        pairs = [(code, org_map[code]) for code in a_share if org_map.get(code)]
+        if not pairs:
+            record_error("巨潮公告: 未取得 orgId 映射(股票表接口可能失败)")
+            return []
+
+        try:
+            page_size = int((config or {}).get("page_size") or 50)
+        except (TypeError, ValueError):
+            page_size = 50
+        page_size = max(1, min(page_size, 100))
+
+        data = market_post(
+            _CNINFO_QUERY_URL,
+            host_key=_CNINFO_HOST,
+            data={
+                "pageNum": 1,
+                "pageSize": page_size,
+                # 实测 column 取 szse/sse 结果一致,沪深京通吃,无需按市场拆分
+                "column": "szse",
+                "tabName": "fulltext",
+                "plate": "",
+                # 批量形如 "000670,gssz0000670;600519,gssh0600519"
+                "stock": ";".join(f"{code},{org}" for code, org in pairs),
+                "searchkey": "",
+                "secid": "",
+                "category": "",
+                "trade": "",
+                # 留空 = 全时段按公告时间倒序(最新在前)。不在 vendor 里算"今天",
+                # 真正的 since 过滤由 client.news() 统一做。
+                "seDate": "",
+                "sortName": "",
+                "sortType": "",
+                "isHLtitle": "true",
+            },
+            headers=_CNINFO_HEADERS,
+            min_interval_s=0.2,
+            timeout=15,
+            retries=1,
+            parse="json",
+            log_label="巨潮公告",
+        )
+        if not isinstance(data, dict):
+            return []
+
+        out: list[NewsArticle] = []
+        for item in data.get("announcements") or []:
+            try:
+                article = _parse_cninfo_item(item)
+                if article:
+                    out.append(article)
+            except Exception:
+                continue
+        return out
+
+
+def _parse_cninfo_item(item: dict) -> NewsArticle | None:
+    external_id = str(item.get("announcementId") or "").strip()
+    if not external_id:
+        return None
+
+    title = _strip_html(item.get("announcementTitle") or "")
+    if not title:
+        return None
+
+    code = str(item.get("secCode") or "").strip()
+    publish_time = _parse_epoch_millis(item.get("announcementTime"))
+
+    adjunct = str(item.get("adjunctUrl") or "").strip()
+    url = f"{_CNINFO_STATIC_BASE}{adjunct}" if adjunct else ""
+
+    return NewsArticle(
+        source="cninfo",
+        external_id=external_id,
+        title=title,
+        content="",  # 公告正文是 PDF,不抓(与 eastmoney 公告同策略)
+        publish_time=publish_time,
+        symbols=[code] if code else [],
+        importance=_cninfo_importance(title),
         url=url,
     )
