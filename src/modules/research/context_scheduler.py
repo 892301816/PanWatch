@@ -37,6 +37,7 @@ class ContextMaintenanceScheduler:
         self._evaluating = False
         self._cleaning = False
         self._refreshing = False
+        self._refreshing_themes = False
 
     async def _evaluate_job(self):
         if self._evaluating:
@@ -219,6 +220,33 @@ class ContextMaintenanceScheduler:
         finally:
             self._refreshing = False
 
+    async def _refresh_themes_job(self):
+        """定时刷新每日炒作题材。全市场休市日跳过。
+
+        与机会刷新共用 09:15/13:30/22:00 三个时点,但**含义不同**:
+        涨停池是当日累计的,09:15 那轮算的是上一交易日的最终结果(盘前参考),
+        22:00 那轮才是今天收盘后的定稿。
+        """
+        from src.platform.scheduling.trading_calendar import any_market_trading_day
+
+        if not any_market_trading_day():
+            logger.debug("[上下文维护] 非交易日，跳过题材刷新")
+            return
+        if self._refreshing_themes:
+            logger.debug("[上下文维护] 上一轮题材刷新仍在执行，跳过本轮")
+            return
+        self._refreshing_themes = True
+        try:
+            from src.modules.market import theme_service
+
+            diag = await theme_service.refresh_themes()
+            level = logging.INFO if diag.get("themes") else logging.DEBUG
+            logger.log(level, "[上下文维护] 题材刷新完成: %s", diag)
+        except Exception as e:
+            logger.exception(f"[上下文维护] 题材刷新异常: {e}")
+        finally:
+            self._refreshing_themes = False
+
     async def refresh_opportunities_once(self) -> dict:
         """手动触发一次机会刷新。"""
         with kline_source("refresh_opportunities"):
@@ -298,6 +326,18 @@ class ContextMaintenanceScheduler:
                 minute=job_minute,
                 jitter=120,  # 错峰,避免与其它调度同刻写 SQLite
                 id=f"context_maintenance_refresh_opportunities_{job_hour:02d}{job_minute:02d}",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+            )
+            # 题材刷新:与机会刷新同时点,但错峰 5 分钟,避免两者同刻争 push2 与 SQLite 写锁。
+            self.scheduler.add_job(
+                self._refresh_themes_job,
+                "cron",
+                hour=job_hour,
+                minute=(job_minute + 5) % 60,
+                jitter=120,
+                id=f"context_maintenance_refresh_themes_{job_hour:02d}{job_minute:02d}",
                 replace_existing=True,
                 coalesce=True,
                 max_instances=1,

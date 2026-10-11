@@ -2129,6 +2129,46 @@ def _m130_fundamentals_priority(conn: Connection) -> None:
         )
 
 
+def _m131_hot_themes(conn: Connection) -> None:
+    """每日炒作题材表。
+
+    新表理论上 create_all 会建;此处显式建一次并补索引,保证"表已存在但缺索引"的库
+    也能收敛到同一形态(与 _m128_operation_plans 同款处理)。
+
+    JSON 列存的是当时的快照(涨停股构成 / 命中的快讯),事后回溯不会因次日数据变化失真。
+    """
+    if not _has_table(conn, "hot_themes"):
+        conn.execute(
+            text(
+                "CREATE TABLE hot_themes ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "trade_date TEXT NOT NULL DEFAULT '', "
+                "code TEXT NOT NULL DEFAULT '', "
+                "name TEXT NOT NULL DEFAULT '', "
+                "rank INTEGER DEFAULT 0, "
+                "score REAL DEFAULT 0.0, "
+                "limit_up_count INTEGER DEFAULT 0, "
+                "limit_up_ratio REAL DEFAULT 0.0, "
+                "max_limit_up_days INTEGER DEFAULT 0, "
+                "member_count INTEGER DEFAULT 0, "
+                "main_net_inflow REAL, "
+                "change_pct REAL, "
+                "up_count INTEGER DEFAULT 0, "
+                "leader_name TEXT DEFAULT '', "
+                "leader_code TEXT DEFAULT '', "
+                "limit_up_stocks JSON DEFAULT '[]', "
+                "news JSON DEFAULT '[]', "
+                "ai_comment TEXT DEFAULT '', "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "CONSTRAINT uq_hot_theme_date_code UNIQUE (trade_date, code)"
+                ")"
+            )
+        )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_hot_theme_date ON hot_themes(trade_date)")
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2160,6 +2200,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(128, "operation_plans", _m128_operation_plans),
     Migration(129, "operation_plan_manual", _m129_operation_plan_manual),
     Migration(130, "fundamentals_priority", _m130_fundamentals_priority),
+    Migration(131, "hot_themes", _m131_hot_themes),
 )
 
 

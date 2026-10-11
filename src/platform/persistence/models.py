@@ -1396,3 +1396,40 @@ class MCPCallLog(Base):
     duration_ms = Column(Integer, default=0)
     client_ip = Column(String, nullable=True)
     called_at = Column(DateTime, server_default=func.now())
+
+
+class HotTheme(Base):
+    """每日炒作题材榜(一个交易日 × 一个题材 = 一行)。
+
+    落库而非实时算,是为了支持"近 5 日题材演进" —— 只有存了历史才看得出
+    哪个题材在持续发酵、哪个是新上榜。
+
+    ``limit_up_stocks`` / ``news`` 存 JSON 快照:当时的涨停股构成与命中的快讯,
+    事后回溯不会因为次日数据变化而失真。
+    """
+
+    __tablename__ = "hot_themes"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "code", name="uq_hot_theme_date_code"),
+        Index("ix_hot_theme_date", "trade_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String, nullable=False, default="")   # YYYY-MM-DD
+    code = Column(String, nullable=False, default="")         # 概念代码(BKxxxx)
+    name = Column(String, nullable=False, default="")
+    rank = Column(Integer, default=0)
+    score = Column(Float, default=0.0)
+    limit_up_count = Column(Integer, default=0)
+    limit_up_ratio = Column(Float, default=0.0)
+    max_limit_up_days = Column(Integer, default=0)
+    member_count = Column(Integer, default=0)
+    main_net_inflow = Column(Float, nullable=True)
+    change_pct = Column(Float, nullable=True)
+    up_count = Column(Integer, default=0)
+    leader_name = Column(String, default="")
+    leader_code = Column(String, default="")
+    limit_up_stocks = Column(JSON, default=list)
+    news = Column(JSON, default=list)
+    ai_comment = Column(String, default="")
+    created_at = Column(DateTime, server_default=func.now())

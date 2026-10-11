@@ -27,6 +27,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Onboarding } from '@panwatch/biz-ui/components/onboarding'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
+import ThemePanel from '@/components/ThemePanel'
 import Sparkline from '@/components/Sparkline'
 import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
@@ -726,6 +727,7 @@ export default function DashboardPage() {
             )}
           </div>
         )}
+        <ThemePanel />
       </div>
 
       <DiscoveryPanel monitorStocks={scan} onOpenStock={openStock} />
