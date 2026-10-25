@@ -23,6 +23,12 @@ interface TemplatePayload {
   settings?: Record<string, string>
   agents?: any[]
   stocks?: any[]
+  ai?: { services?: any[] }
+  notify_channels?: any[]
+  data_sources?: any[]
+  accounts?: any[]
+  price_alerts?: any[]
+  screener_rules?: any[]
 }
 
 interface FeedbackStats {
@@ -293,7 +299,7 @@ export default function SettingsPage() {
       const data = await fetchAPI<TemplatePayload>('/templates/export')
       const date = new Date().toISOString().slice(0, 10)
       downloadJson(`panwatch-config-${date}.json`, data)
-      toast('配置包已导出', 'success')
+      toast('配置包已导出（含 API Key，请妥善保管）', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : '导出失败', 'error')
     } finally {
@@ -308,7 +314,11 @@ export default function SettingsPage() {
         method: 'POST',
         body: JSON.stringify(payload),
       })
-      toast('配置包已导入', 'success')
+      const s = resp?.summary || {}
+      toast(
+        `配置包已导入：数据源 ${s.data_sources ?? 0} · 模型 ${s.ai_services_models ?? 0} · 渠道 ${s.notify_channels ?? 0} · 自选 ${s.created_stocks ?? 0} · 持仓 ${s.positions ?? 0}`,
+        'success'
+      )
       // refresh
       await load()
       return resp
@@ -969,7 +979,9 @@ export default function SettingsPage() {
           <div className="flex items-start justify-between mb-4 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">配置包</h3>
-              <p className="text-[11px] text-muted-foreground mt-1">一键导入/导出 Agent、关注列表与系统设置</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                完整配置迁移：Agent、关注列表与分组、数据源（含 Key）、模型与 API Key、通知渠道、账户持仓、价格提醒、选股分组、系统设置
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="secondary" size="sm" className="h-8" onClick={exportTemplate} disabled={exporting}>
@@ -1025,6 +1037,10 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground">
               <FileJson className="w-4 h-4 text-muted-foreground" />
               官方模板
+            </div>
+            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+              模板只调整通知重试/静默时段，以及盘前、盘中、收盘 3 个 Agent 的调度频率；
+              不涉及数据源、模型 Key、关注列表。想让模板生效，对应 Agent 需要处于启用状态。
             </div>
             <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
               {builtinTemplates.map(t => (

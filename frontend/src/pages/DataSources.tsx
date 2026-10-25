@@ -8,6 +8,7 @@ import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { Badge } from '@panwatch/base-ui/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import DatasetPanel from '@/components/DatasetPanel'
 
 interface TestLogItem {
   timestamp: string
@@ -110,6 +111,15 @@ const PROVIDER_CREDENTIAL_FIELDS: Record<string, CredentialFieldDef[]> = {
   ],
   xueqiu: [
     { key: 'cookies', label: '雪球 Cookies', placeholder: 'xq_a_token=...; xq_r_token=...', secret: true, help: '浏览器 DevTools → Network → 复制完整 cookie 字符串' },
+  ],
+  fuyao: [
+    { key: 'api_key', label: 'fuyao API Key', placeholder: 'sk-...（留空则读环境变量 FUYAO_API_KEY）', secret: true, help: '同花顺金融数据 API，fuyao.aicubes.cn 申请' },
+  ],
+  tickflow: [
+    { key: 'api_key', label: 'TickFlow API Key', placeholder: 'tk_...（留空则读 TICKFLOW_API_KEY / 走 Free）', secret: true, help: '批量日K需 Starter 及以上' },
+  ],
+  tdxquant: [
+    { key: 'api_key', label: 'TdxQuant API Key', placeholder: 'TDX...（留空则读 TDXQUANT_API_KEY）', secret: true, help: '通达信商城创建，按积分计费' },
   ],
 }
 
@@ -413,6 +423,8 @@ export default function DataSourcesPage() {
             </div>
           )
         })}
+
+        <DatasetPanel />
       </div>
 
       {/* Edit Dialog - 编辑模式只允许修改配置项;新增模式含名称/类型/Provider */}

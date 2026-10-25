@@ -13,6 +13,7 @@ export interface StockItem {
   name: string
   market: string
   sort_order?: number
+  group_name?: string
   agents?: StockAgentInfo[]
 }
 
@@ -20,6 +21,12 @@ export interface StockCreatePayload {
   symbol: string
   name: string
   market: string
+  group_name?: string
+}
+
+export interface StockGroupItem {
+  name: string
+  count: number
 }
 
 export interface StockAgentUpdatePayload {
@@ -67,6 +74,17 @@ export const stocksApi = {
     fetchAPI<StockItem>('/stocks', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  groups: () => fetchAPI<StockGroupItem[]>('/stocks/groups'),
+  createBatch: (items: StockCreatePayload[], skipExisting = true) =>
+    fetchAPI<{
+      added: Array<{ symbol: string; name: string }>
+      skipped: Array<{ symbol: string; name: string; reason: string }>
+      added_count: number
+      skipped_count: number
+    }>('/stocks/batch', {
+      method: 'POST',
+      body: JSON.stringify({ items, skip_existing: skipExisting }),
     }),
   remove: (id: number) => fetchAPI<{ ok: boolean }>(`/stocks/${id}`, { method: 'DELETE' }),
   updateAgents: (id: number, payload: StockAgentUpdatePayload) =>

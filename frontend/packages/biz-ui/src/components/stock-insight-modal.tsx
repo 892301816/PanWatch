@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Copy, Download, ExternalLink, RefreshCw, Share2, Sparkles } from 'lucide-react'
 import {
+  fetchAPI,
   insightApi,
   operationPlansApi,
   stocksApi,
@@ -26,6 +27,26 @@ import { TechnicalBadge } from '@panwatch/biz-ui/components/technical-badge'
 import AddPositionCalculator from '@panwatch/biz-ui/components/add-position-calculator'
 import OperationPlanModal from '@panwatch/biz-ui/components/operation-plan-modal'
 
+interface BusinessItem {
+  name: string
+  income_yi: number | null
+  ratio: number | null
+  gross_margin: number | null
+}
+
+interface BusinessGroup {
+  type: string
+  label: string
+  items: BusinessItem[]
+}
+
+interface BusinessResponse {
+  symbol: string
+  report_date: string
+  groups: BusinessGroup[]
+  error?: string
+}
+
 interface QuoteResponse {
   symbol: string
   market: string
@@ -43,6 +64,28 @@ interface QuoteResponse {
   pe_ratio?: number | null
   total_market_value?: number | null
   circulating_market_value?: number | null
+  amplitude?: number | null
+}
+
+/** 财务基本面(/insights/fundamentals)。缺失字段不会返回。 */
+interface FundamentalsResponse {
+  symbol: string
+  market: string
+  report_date?: string
+  eps?: number
+  bps?: number
+  roe?: number
+  revenue?: number
+  net_profit?: number
+  gross_margin?: number
+  net_margin?: number
+  revenue_yoy?: number
+  net_profit_yoy?: number
+  debt_ratio?: number
+  pb?: number
+  pe_ttm?: number
+  dividend_yield?: number
+  total_market_value?: number
 }
 
 interface KlineSummaryResponse {
@@ -429,6 +472,8 @@ export default function StockInsightModal(props: {
     20
   )
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
+  const [business, setBusiness] = useState<BusinessResponse | null>(null)
+  const [fundamentals, setFundamentals] = useState<FundamentalsResponse | null>(null)
   const [klineSummary, setKlineSummary] = useState<KlineSummary | null>(null)
   const [miniKlines, setMiniKlines] = useState<MiniKlineResponse['klines']>([])
   const [miniKlineLoading, setMiniKlineLoading] = useState(false)
@@ -808,6 +853,44 @@ export default function StockInsightModal(props: {
     loadCore()
   }, [props.open, symbol, market, loadCore])
 
+  // 主营构成(按产品/行业/地区),仅 A 股,按股票缓存 6h
+  useEffect(() => {
+    if (!props.open || !symbol || market !== 'CN') {
+      setBusiness(null)
+      return
+    }
+    let cancelled = false
+    fetchAPI<BusinessResponse>(`/insights/business/${symbol}?market=CN`)
+      .then((data) => {
+        if (!cancelled) setBusiness(data)
+      })
+      .catch(() => {
+        if (!cancelled) setBusiness(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.open, symbol, market])
+
+  // 财务基本面(报告期/营收/净利/同比/毛利率/ROE/负债率)
+  useEffect(() => {
+    if (!props.open || !symbol) {
+      setFundamentals(null)
+      return
+    }
+    let cancelled = false
+    fetchAPI<FundamentalsResponse>(`/insights/fundamentals/${symbol}?market=${market}`)
+      .then((data) => {
+        if (!cancelled) setFundamentals(data)
+      })
+      .catch(() => {
+        if (!cancelled) setFundamentals(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.open, symbol, market])
+
   // 切到「深度」tab 时按需拉取(仅首次)
   useEffect(() => {
     if (!props.open || !symbol) return
@@ -951,6 +1034,13 @@ export default function StockInsightModal(props: {
     if (hi == null || lo == null || pre == null || pre === 0) return null
     return ((hi - lo) / pre) * 100
   }, [quote?.high_price, quote?.low_price, quote?.prev_close])
+
+  const fmtYi = (v?: number | null) => (v == null ? '--' : `${(v / 1e8).toFixed(2)} 亿`)
+  const fmtPct = (v?: number | null) => (v == null ? '--' : `${v.toFixed(2)}%`)
+  const fmtPctSigned = (v?: number | null) =>
+    v == null ? '--' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
+  const fmtNum = (v?: number | null, digits = 2) =>
+    v == null ? '--' : v.toFixed(digits)
 
   const reportMap = useMemo(() => {
     const out: Record<string, HistoryRecord | null> = {
@@ -1654,6 +1744,102 @@ export default function StockInsightModal(props: {
                         </div>
                       </>
                     )}
+                  </div>
+                </div>
+
+                {business && business.groups.length > 0 && (
+                  <div className="card p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[12px] text-muted-foreground">业务与收入结构</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        报告期 {business.report_date}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {business.groups.map((group) => (
+                        <div key={group.type}>
+                          <div className="text-[11px] text-muted-foreground mb-1.5">{group.label}</div>
+                          <div className="space-y-1.5">
+                            {group.items.slice(0, 6).map((item) => (
+                              <div key={item.name}>
+                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                  <span className="truncate text-foreground/90">{item.name}</span>
+                                  <span className="shrink-0 font-mono text-muted-foreground">
+                                    {item.income_yi != null ? `${item.income_yi.toFixed(2)} 亿` : '--'}
+                                    {item.ratio != null ? ` · ${item.ratio.toFixed(1)}%` : ''}
+                                  </span>
+                                </div>
+                                <div className="mt-0.5 h-1 rounded bg-accent/30 overflow-hidden">
+                                  <div
+                                    className="h-1 rounded bg-primary/60"
+                                    style={{ width: `${Math.min(100, item.ratio || 0)}%` }}
+                                  />
+                                </div>
+                                {item.gross_margin != null && (
+                                  <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                    毛利率 {item.gross_margin.toFixed(1)}%
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch">
+                  <div className="card p-4 h-full">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[12px] text-muted-foreground">估值与规模</div>
+                      <div className="text-[10px] text-muted-foreground">最新交易日快照</div>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[12px]">
+                      {([
+                        ['换手率', quote?.turnover_rate != null ? fmtPct(quote.turnover_rate) : '--'],
+                        ['市盈率(TTM)', quote?.pe_ratio != null ? fmtNum(quote.pe_ratio) : '--'],
+                        ['市净率', fmtNum(fundamentals?.pb)],
+                        ['总市值', formatMarketCap(quote?.total_market_value, market)],
+                        ['流通市值', formatMarketCap(quote?.circulating_market_value, market)],
+                        ['振幅', amplitudePct != null ? `${amplitudePct.toFixed(2)}%` : '--'],
+                      ] as Array<[string, string]>).map(([label, value]) => (
+                        <div key={label} className="rounded bg-accent/15 px-2 py-1.5">
+                          <div className="text-[10px] text-muted-foreground">{label}</div>
+                          <div className="mt-0.5 font-mono">{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="card p-4 h-full">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[12px] text-muted-foreground">财务基本面</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        报告期 {fundamentals?.report_date || '--'}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[12px]">
+                      {([
+                        ['营业收入', fmtYi(fundamentals?.revenue)],
+                        ['归母净利', fmtYi(fundamentals?.net_profit)],
+                        ['营收同比', fmtPctSigned(fundamentals?.revenue_yoy)],
+                        ['净利同比', fmtPctSigned(fundamentals?.net_profit_yoy)],
+                        ['毛利率', fmtPct(fundamentals?.gross_margin)],
+                        ['净利率', fmtPct(fundamentals?.net_margin)],
+                        ['ROE', fmtPct(fundamentals?.roe)],
+                        ['资产负债率', fmtPct(fundamentals?.debt_ratio)],
+                        ['EPS', fmtNum(fundamentals?.eps, 3)],
+                      ] as Array<[string, string]>).map(([label, value]) => (
+                        <div key={label} className="rounded bg-accent/15 px-2 py-1.5">
+                          <div className="text-[10px] text-muted-foreground">{label}</div>
+                          <div className="mt-0.5 font-mono">{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                      财务数据为最近一期报告，存在披露滞后；不可用时显示 --。
+                    </div>
                   </div>
                 </div>
 

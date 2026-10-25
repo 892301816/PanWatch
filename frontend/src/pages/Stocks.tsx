@@ -49,6 +49,7 @@ interface Stock {
   name: string
   market: string
   sort_order?: number
+  group_name?: string
   agents: StockAgentInfo[]
 }
 
@@ -492,6 +493,7 @@ export default function StocksPage() {
 
   // Stock list filter
   const [stockListFilter, setStockListFilter] = useState('')  // '' = 全部, 'CN' = A股, 'HK' = 港股, 'US' = 美股
+  const [watchGroupFilter, setWatchGroupFilter] = useState('__all__')  // 自选分组筛选
   const [watchlistOnlyAlerts, setWatchlistOnlyAlerts] = useLocalStorage<boolean>('panwatch_watchlist_only_alerts', false)
 
   // Remove watchlist modal
@@ -1497,6 +1499,17 @@ export default function StocksPage() {
     return (portfolio?.accounts || []).reduce((acc, a) => acc + (a.positions?.length || 0), 0)
   }, [portfolio])
 
+  const watchGroups = useMemo(() => {
+    const map = new Map<string, number>()
+    stocks.forEach((s) => {
+      const g = s.group_name || ''
+      map.set(g, (map.get(g) || 0) + 1)
+    })
+    return Array.from(map, ([name, count]) => ({ name, count })).sort(
+      (a, b) => (a.name === '' ? 1 : 0) - (b.name === '' ? 1 : 0) || a.name.localeCompare(b.name)
+    )
+  }, [stocks])
+
   const watchlistCount = useMemo(() => {
     return stocks.length
   }, [stocks])
@@ -2379,6 +2392,35 @@ export default function StocksPage() {
             </div>
           </div>
 
+          {watchGroups.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1 mb-3">
+              <span className="text-[10px] text-muted-foreground mr-1">分组</span>
+              <button
+                onClick={() => setWatchGroupFilter('__all__')}
+                className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+                  watchGroupFilter === '__all__'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-accent/50 text-muted-foreground hover:bg-accent'
+                }`}
+              >
+                全部 ({stocks.length})
+              </button>
+              {watchGroups.map((g) => (
+                <button
+                  key={g.name || '__ungrouped__'}
+                  onClick={() => setWatchGroupFilter(g.name)}
+                  className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+                    watchGroupFilter === g.name
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-accent/50 text-muted-foreground hover:bg-accent'
+                  }`}
+                >
+                  {g.name || '未分组'} ({g.count})
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-3">
             <div className="text-[11px] text-muted-foreground">筛选</div>
             <div className="flex items-center gap-2">
@@ -2404,6 +2446,7 @@ export default function StocksPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks
                 .filter(s => !stockListFilter || s.market === stockListFilter)
+                .filter(s => watchGroupFilter === '__all__' || (s.group_name || '') === watchGroupFilter)
                 .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.id - b.id)
                 .filter(stock => {
                   if (!watchlistOnlyAlerts) return true
@@ -2419,15 +2462,15 @@ export default function StocksPage() {
                 return (
                   <div
                     key={stock.id}
-                    draggable={stockListFilter === '' && !watchlistOnlyAlerts}
+                    draggable={stockListFilter === '' && !watchlistOnlyAlerts && watchGroupFilter === '__all__'}
                     onDragStart={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts) return
+                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       watchDragSnapshotRef.current = stocks
                       setDraggingWatchStockId(stock.id)
                       e.dataTransfer.effectAllowed = 'move'
                     }}
                     onDragOver={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts) return
+                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       e.preventDefault()
                       e.dataTransfer.dropEffect = 'move'
                       if (draggingWatchStockId != null) {
@@ -2435,7 +2478,7 @@ export default function StocksPage() {
                       }
                     }}
                     onDrop={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts) return
+                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       e.preventDefault()
                       if (draggingWatchStockId != null) commitWatchlistReorder()
                       setDraggingWatchStockId(null)
@@ -2457,6 +2500,11 @@ export default function StocksPage() {
                           <span className={`text-[9px] px-1 py-0.5 rounded ${marketBadge(stock.market).style}`}>
                             {marketBadge(stock.market).label}
                           </span>
+                          {stock.group_name && (
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-primary/10 text-primary">
+                              {stock.group_name}
+                            </span>
+                          )}
                           <button
                             className="font-mono text-[12px] font-semibold text-foreground hover:text-primary"
                             onClick={(e) => { e.stopPropagation(); openStockDetail(stock.symbol, stock.market, stock.name, false) }}

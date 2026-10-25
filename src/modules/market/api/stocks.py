@@ -30,10 +30,17 @@ class StockCreate(BaseModel):
     symbol: str
     name: str
     market: str = "CN"
+    group_name: str = ""
+
+
+class StockBatchCreate(BaseModel):
+    items: list[StockCreate]
+    skip_existing: bool = True
 
 
 class StockUpdate(BaseModel):
     name: str | None = None
+    group_name: str | None = None
 
 
 class StockAgentInfo(BaseModel):
@@ -50,6 +57,7 @@ class StockResponse(BaseModel):
     name: str
     market: str
     sort_order: int
+    group_name: str = ""
     agents: list[StockAgentInfo] = []
 
     class Config:
@@ -102,6 +110,7 @@ def _stock_to_response(stock: Stock, agent_display_names: dict[str, str] | None 
         "name": stock.name,
         "market": stock.market,
         "sort_order": stock.sort_order or 0,
+        "group_name": stock.group_name or "",
         "agents": [
             {
                 "agent_name": sa.agent_name,
@@ -204,6 +213,22 @@ def list_stocks(db: Session = Depends(get_db)):
     return [_stock_to_response(s, agent_display_names) for s in stocks]
 
 
+@router.get("/groups")
+def list_stock_groups(db: Session = Depends(get_db)):
+    """自选分组及数量(选股批量加入时用来选目标分组)。"""
+    rows = (
+        db.query(Stock.group_name, func.count(Stock.id))
+        .group_by(Stock.group_name)
+        .all()
+    )
+    out = [
+        {"name": (name or ""), "count": int(count)}
+        for name, count in rows
+    ]
+    out.sort(key=lambda x: (x["name"] == "", x["name"]))
+    return out
+
+
 @router.get("/quotes")
 def get_quotes(db: Session = Depends(get_db)):
     """获取所有自选股的实时行情"""
@@ -253,6 +278,46 @@ def create_stock(stock: StockCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_stock)
     return _stock_to_response(db_stock, _agent_display_names(db, [db_stock]))
+
+
+@router.post("/batch")
+def create_stocks_batch(payload: StockBatchCreate, db: Session = Depends(get_db)):
+    """批量加入自选(选股页「批量加自选」)。已存在的按 skip_existing 跳过。"""
+    existing = {
+        (row[0], row[1]) for row in db.query(Stock.symbol, Stock.market).all()
+    }
+    max_order = db.query(func.max(Stock.sort_order)).scalar() or 0
+    added: list[dict] = []
+    skipped: list[dict] = []
+
+    for item in payload.items:
+        symbol = (item.symbol or "").strip()
+        if not symbol:
+            continue
+        key = (symbol, item.market or "CN")
+        if key in existing:
+            if payload.skip_existing:
+                skipped.append({"symbol": symbol, "name": item.name, "reason": "already_exists"})
+                continue
+        row = Stock(
+            symbol=symbol,
+            name=item.name or symbol,
+            market=item.market or "CN",
+            group_name=(item.group_name or "").strip(),
+            sort_order=int(max_order) + len(added) + 1,
+        )
+        db.add(row)
+        existing.add(key)
+        added.append({"symbol": symbol, "name": item.name})
+
+    if added:
+        db.commit()
+    return {
+        "added": added,
+        "skipped": skipped,
+        "added_count": len(added),
+        "skipped_count": len(skipped),
+    }
 
 
 @router.put("/reorder")

@@ -2129,6 +2129,16 @@ def _m130_fundamentals_priority(conn: Connection) -> None:
         )
 
 
+def _m132_stock_group_name(conn: Connection) -> None:
+    """自选股分组:选股结果批量加入时可指定分组,关注页按分组筛选。"""
+    _add_column_if_missing(
+        conn,
+        "stocks",
+        "group_name",
+        "ALTER TABLE stocks ADD COLUMN group_name VARCHAR DEFAULT ''",
+    )
+
+
 def _m131_hot_themes(conn: Connection) -> None:
     """每日炒作题材表。
 
@@ -2201,6 +2211,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(129, "operation_plan_manual", _m129_operation_plan_manual),
     Migration(130, "fundamentals_priority", _m130_fundamentals_priority),
     Migration(131, "hot_themes", _m131_hot_themes),
+    Migration(132, "stock_group_name", _m132_stock_group_name),
 )
 
 

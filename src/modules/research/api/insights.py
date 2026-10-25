@@ -8,6 +8,11 @@ from src.platform.marketdata.models import MarketCode
 from src.platform.marketdata.marketdata_client import md_quote_rows
 from src.platform.marketdata.collectors.kline_collector import KlineCollector
 from src.modules.automation.suggestion_pool import get_latest_suggestions
+from src.modules.research.stock_overview import (
+    business_summary,
+    fetch_business,
+    snapshot_metrics,
+)
 from src.modules.assistant.tool_adapters import (
     build_stock_context,
     fetch_realtime_context,
@@ -100,6 +105,8 @@ def insights_batch(payload: InsightsBatchRequest):
     for it in payload.items:
         market_code = _parse_market(it.market)
         quote = quotes_by_market.get(market_code, {}).get(it.symbol)
+        # 行情源(同花顺快照)不带估值/换手,用本地全市场快照补齐,避免概览显示 "--"
+        metrics = snapshot_metrics(it.symbol) if market_code.value == "CN" else {}
         results.append({
             "symbol": it.symbol,
             "market": market_code.value,
@@ -112,6 +119,13 @@ def insights_batch(payload: InsightsBatchRequest):
                 "low_price": quote.get("low_price") if quote else None,
                 "volume": quote.get("volume") if quote else None,
                 "turnover": quote.get("turnover") if quote else None,
+                "turnover_rate": (quote or {}).get("turnover_rate") or metrics.get("turnover_rate"),
+                "pe_ratio": (quote or {}).get("pe_ratio") or metrics.get("pe_ttm"),
+                "total_market_value": (quote or {}).get("total_market_value")
+                or (metrics.get("total_mv") * 1e8 if metrics.get("total_mv") else None),
+                "circulating_market_value": (quote or {}).get("circulating_market_value")
+                or (metrics.get("float_mv") * 1e8 if metrics.get("float_mv") else None),
+                "amplitude": metrics.get("amplitude"),
             },
             "kline_summary": kline_by_symbol.get(f"{market_code.value}:{it.symbol}", {}),
             "suggestion": latest_sugs.get(f"{market_code.value}:{it.symbol}"),
@@ -143,29 +157,51 @@ def _parse_verdict(text: str) -> str:
 
 
 async def _fetch_fundamental_context(symbol: str, market: str) -> str:
-    """基本面摘要:PE / 换手率 / 市值 / 今日振幅(取自实时行情,失败返回空)。"""
+    """基本面摘要:PE / 换手率 / 市值 / 今日振幅 + 主营构成(失败降级为空)。"""
+    text = ""
     try:
         mc = MarketCode(market) if market in ("CN", "HK", "US") else MarketCode.CN
         rows = await asyncio.to_thread(md_quote_rows, [symbol], mc.value)
-        if not rows:
-            return ""
-        q = rows[0]
+        q = rows[0] if rows else {}
+        # 行情源常常不带估值/换手,用本地全市场快照补齐
+        metrics = (
+            await asyncio.to_thread(snapshot_metrics, symbol)
+            if market == "CN"
+            else {}
+        )
         parts: list[str] = []
-        if q.get("pe_ratio") not in (None, 0):
-            parts.append(f"市盈率 {q['pe_ratio']}")
-        if q.get("turnover_rate") not in (None, 0):
-            parts.append(f"换手率 {q['turnover_rate']}%")
-        if q.get("circulating_market_value"):
-            parts.append(f"流通市值 {q['circulating_market_value']}亿")
-        if q.get("total_market_value"):
-            parts.append(f"总市值 {q['total_market_value']}亿")
+        pe = q.get("pe_ratio") or metrics.get("pe_ttm")
+        turnover_rate = q.get("turnover_rate") or metrics.get("turnover_rate")
+        circ_mv = q.get("circulating_market_value")
+        circ_mv_yi = circ_mv / 1e8 if circ_mv else metrics.get("float_mv")
+        total_mv = q.get("total_market_value")
+        total_mv_yi = total_mv / 1e8 if total_mv else metrics.get("total_mv")
+        if pe:
+            parts.append(f"市盈率 {pe}")
+        if turnover_rate:
+            parts.append(f"换手率 {turnover_rate}%")
+        if circ_mv_yi:
+            parts.append(f"流通市值 {circ_mv_yi:.0f}亿")
+        if total_mv_yi:
+            parts.append(f"总市值 {total_mv_yi:.0f}亿")
         hi, lo, pc = q.get("high_price"), q.get("low_price"), q.get("prev_close")
         if hi and lo and pc:
             parts.append(f"今日振幅 {(hi - lo) / pc * 100:.2f}%")
-        return ("基本面:" + "，".join(parts)) if parts else ""
+        elif metrics.get("amplitude"):
+            parts.append(f"今日振幅 {metrics['amplitude']}%")
+        if parts:
+            text = "基本面:" + "，".join(parts)
     except Exception as e:
         logger.debug(f"基本面获取失败 {symbol}: {e}")
-        return ""
+
+    try:
+        biz = await asyncio.to_thread(business_summary, symbol)
+        if biz:
+            text += ("\n" if text else "") + f"主营构成:{biz}"
+    except Exception as e:
+        logger.debug(f"主营构成获取失败 {symbol}: {e}")
+
+    return text
 
 
 async def _fetch_message_context(db: Session, symbol: str, market: str) -> str:
@@ -197,6 +233,45 @@ async def _fetch_message_context(db: Session, symbol: str, market: str) -> str:
         pass
 
     return "\n\n".join(parts)
+
+
+@router.get("/business/{symbol}")
+def get_business_composition(symbol: str, market: str = "CN"):
+    """主营构成(按产品/行业/地区),数据来自东财 F10,缓存 6 小时。"""
+    return fetch_business(symbol, market)
+
+
+@router.get("/fundamentals/{symbol}")
+async def get_fundamentals(symbol: str, market: str = "CN"):
+    """财务基本面(营收/净利/同比/毛利率/ROE/负债率/EPS/PB 等)。
+
+    走 marketdata 的 fundamentals 数据类型,由数据源表按优先级选源并自动切换。
+    取不到的字段直接不返回,前端按"有没有值"决定展示哪些行。
+    """
+    market_code = _parse_market(market)
+    data: dict = {}
+    try:
+        from src.platform.marketdata.marketdata_client import get_market_data
+        from src.modules.research.signals.signal_pack import _fundamentals_to_dict
+
+        rows = await asyncio.to_thread(
+            get_market_data().fundamentals, [symbol], market=market_code.value
+        )
+        row = next((r for r in rows if getattr(r, "symbol", "") == symbol), None)
+        if row is not None:
+            data = _fundamentals_to_dict(row)
+    except Exception as e:  # noqa: BLE001 — 基本面不可用不影响弹窗其他部分
+        logger.warning(f"财务基本面获取失败 {symbol}: {e}")
+
+    # 部分数据源不给估值字段,用本地快照补齐(与行情接口同一口径)
+    if market_code.value == "CN":
+        metrics = snapshot_metrics(symbol)
+        if metrics:
+            if data.get("pe_ttm") is None:
+                data["pe_ttm"] = metrics.get("pe_ttm")
+            if data.get("total_market_value") is None:
+                data["total_market_value"] = metrics.get("total_mv")
+    return {"symbol": symbol, "market": market_code.value, **data}
 
 
 @router.post("/add-position-eval")

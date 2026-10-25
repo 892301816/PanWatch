@@ -47,3 +47,7 @@ tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git@v0.5.0
 # OpenTelemetry 导出为「可选依赖组」,不在主依赖内(默认关闭,未装即 no-op)。
 # 需要把 trace 导出到 Jaeger/Tempo/Langfuse 时:pip install -r requirements-otel.txt
 # 详见 requirements-otel.txt 与 README「OTel 导出」。
+# 行情数据集:多源日K(fuyao/tickflow/tdxquant)
+pyarrow>=16.0
+tickflow[all]>=0.1.23
+tdxaidata>=1.3.1

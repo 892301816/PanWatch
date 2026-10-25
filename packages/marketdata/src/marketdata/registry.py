@@ -14,6 +14,9 @@ from __future__ import annotations
 from marketdata.vendors.capital_flow import EastmoneyCapitalFlowVendor, SinaCapitalFlowVendor
 from marketdata.vendors.eastmoney import EastmoneyQuoteVendor
 from marketdata.vendors.events import EventsVendor
+from marketdata.vendors.fuyao import FuyaoKlineVendor, FuyaoQuoteVendor
+from marketdata.vendors.tdxquant import TdxQuantKlineVendor, TdxQuantQuoteVendor
+from marketdata.vendors.tickflow import TickFlowKlineVendor, TickFlowQuoteVendor
 from marketdata.vendors.fundamentals import EastmoneyFundamentalsVendor, TencentFundamentalsVendor
 from marketdata.vendors.flash_news import (
     ClsFlashNewsVendor,
@@ -49,12 +52,18 @@ from marketdata.vendors.yfinance import YFinanceQuoteVendor
 # (可选三方依赖如 yfinance 均在 fetch() 内部惰性 import),模块级导入不会引入重依赖。
 VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
     "quote": {
+        "fuyao": FuyaoQuoteVendor,
+        "tdxquant": TdxQuantQuoteVendor,
+        "tickflow": TickFlowQuoteVendor,
         "tencent": TencentQuoteVendor,
         "sina": SinaQuoteVendor,
         "eastmoney": EastmoneyQuoteVendor,
         "yfinance": YFinanceQuoteVendor,
     },
     "kline": {
+        "fuyao": FuyaoKlineVendor,
+        "tickflow": TickFlowKlineVendor,
+        "tdxquant": TdxQuantKlineVendor,
         "tencent": TencentKlineVendor,
         "stooq": StooqKlineVendor,
         "eastmoney": EastmoneyKlineVendor,

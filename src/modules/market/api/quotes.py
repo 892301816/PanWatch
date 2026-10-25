@@ -1,10 +1,14 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from src.modules.research.stock_overview import snapshot_metrics
 from src.platform.marketdata.marketdata_client import md_quote_rows
 from src.platform.marketdata.models import MarketCode
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -25,7 +29,42 @@ def _parse_market(market: str) -> MarketCode:
         raise HTTPException(400, f"不支持的市场: {market}")
 
 
+def _fill_from_snapshot(quote: dict, market: MarketCode) -> dict:
+    """行情源(腾讯/同花顺快照)通常不带估值字段,用本地全市场快照补齐。
+
+    只在字段缺失时补,已有实时值优先。A 股快照的市值单位是「亿」,
+    与行情接口返回的「元」不同,这里统一换算成元,保持接口口径一致。
+    """
+    if market != MarketCode.CN:
+        return quote
+    symbol = quote.get("symbol") or ""
+    if not symbol:
+        return quote
+    try:
+        metrics = snapshot_metrics(symbol)
+    except Exception as exc:  # noqa: BLE001 — 补数失败不影响行情返回
+        logger.debug(f"快照补数失败 {symbol}: {exc}")
+        return quote
+    if not metrics:
+        return quote
+
+    out = dict(quote)
+    if out.get("turnover_rate") is None:
+        out["turnover_rate"] = metrics.get("turnover_rate")
+    if out.get("pe_ratio") is None:
+        out["pe_ratio"] = metrics.get("pe_ttm")
+    if out.get("total_market_value") is None and metrics.get("total_mv"):
+        out["total_market_value"] = metrics["total_mv"] * 1e8
+    if out.get("circulating_market_value") is None and metrics.get("float_mv"):
+        out["circulating_market_value"] = metrics["float_mv"] * 1e8
+    if out.get("amplitude") is None:
+        out["amplitude"] = metrics.get("amplitude")
+    return out
+
+
 def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> dict:
+    if quote:
+        quote = _fill_from_snapshot(quote, market)
     if not quote:
         return {
             "symbol": symbol,
@@ -44,6 +83,7 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
             "pe_ratio": None,
             "total_market_value": None,
             "circulating_market_value": None,
+            "amplitude": None,
         }
 
     return {
@@ -63,6 +103,7 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
         "pe_ratio": quote.get("pe_ratio"),
         "total_market_value": quote.get("total_market_value"),
         "circulating_market_value": quote.get("circulating_market_value"),
+        "amplitude": quote.get("amplitude"),
     }
 
 

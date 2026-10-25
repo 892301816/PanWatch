@@ -37,6 +37,8 @@ from src.modules.market.api import (
 )
 from src.modules.paper_trading.api import paper_trading
 from src.modules.portfolio.api import accounts, dashboard, history
+from src.modules.screener import api as screener_api
+from src.platform.dataset import api as dataset_api
 from src.modules.research.api import (
     context,
     evaluations,
@@ -200,6 +202,18 @@ app.include_router(
     assistant_api.router,
     prefix="/api/assistant",
     tags=["assistant"],
+    dependencies=protected,
+)
+app.include_router(
+    screener_api.router,
+    prefix="/api/screener",
+    tags=["screener"],
+    dependencies=protected,
+)
+app.include_router(
+    dataset_api.router,
+    prefix="/api/dataset",
+    tags=["dataset"],
     dependencies=protected,
 )
 

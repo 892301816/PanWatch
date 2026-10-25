@@ -1,6 +1,6 @@
 import { Suspense, useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle, Newspaper } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle, Newspaper, ListFilter } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { appApi } from '@panwatch/api/app'
 import { fetchAPI, isAuthenticated } from '@panwatch/api/client'
@@ -18,6 +18,7 @@ const {
   LoginPage,
   DashboardPage,
   OpportunitiesPage,
+  ScreenerPage,
   StocksPage,
   AgentsPage,
   SettingsPage,
@@ -35,6 +36,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页' },
   { to: '/portfolio', icon: List, label: '持仓' },
   { to: '/opportunities', icon: Sparkles, label: '机会' },
+  { to: '/screener', icon: ListFilter, label: '选股' },
   { to: '/messages', icon: Newspaper, label: '消息' },
   { to: '/paper-trading', icon: Activity, label: '模拟盘' },
   { to: '/assistant', icon: MessageCircle, label: '助手' },
@@ -289,6 +291,7 @@ function App() {
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/opportunities" element={<OpportunitiesPage />} />
+              <Route path="/screener" element={<ScreenerPage />} />
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/portfolio" element={<StocksPage />} />
               <Route path="/agents" element={<AgentsPage />} />

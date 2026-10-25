@@ -129,6 +129,7 @@ class IntradayMonitorAgent(BaseAgent):
             portfolio=context.portfolio,
             include_technical=True,
             include_capital_flow=True,
+            include_fundamentals=True,  # 财务基本面(营收/净利/ROE 等)进 prompt
             include_events=True,
             events_days=3,
         )
@@ -437,6 +438,58 @@ class IntradayMonitorAgent(BaseAgent):
                     amp_info += f"（5日平均：{amplitude_avg5:.2f}%）"
                 lines.append(f"- {amp_info}")
 
+        # ── 估值/规模 + 财务 + 业务结构(让 AI 的判断不只看K线) ──────────
+        try:
+            from src.modules.research.stock_overview import (
+                business_summary,
+                snapshot_metrics,
+            )
+
+            metrics = snapshot_metrics(stock.symbol)
+            if metrics:
+                lines.append("\n## 估值与规模")
+                if metrics.get("turnover_rate") is not None:
+                    lines.append(f"- 换手率：{metrics['turnover_rate']:.2f}%")
+                if metrics.get("volume_ratio") is not None:
+                    lines.append(f"- 量比：{metrics['volume_ratio']:.2f}")
+                if metrics.get("pe_ttm") is not None:
+                    lines.append(f"- 市盈率(TTM)：{metrics['pe_ttm']:.2f}")
+                if metrics.get("total_mv") is not None:
+                    lines.append(f"- 总市值：{metrics['total_mv']:.1f} 亿")
+                if metrics.get("float_mv") is not None:
+                    lines.append(f"- 流通市值：{metrics['float_mv']:.1f} 亿")
+
+            fund = getattr(pack, "fundamentals", None) if pack else None
+            if isinstance(fund, dict) and fund:
+                lines.append("\n## 财务基本面")
+                if fund.get("report_date"):
+                    lines.append(f"- 报告期：{fund['report_date']}")
+
+                def _yi(key: str) -> str:
+                    value = fund.get(key)
+                    return f"{float(value) / 1e8:.2f} 亿" if value is not None else "N/A"
+
+                lines.append(f"- 营收：{_yi('revenue')}")
+                lines.append(f"- 归母净利：{_yi('net_profit')}")
+                for key, label, unit in (
+                    ("revenue_yoy", "营收同比", "%"),
+                    ("net_profit_yoy", "净利同比", "%"),
+                    ("gross_margin", "毛利率", "%"),
+                    ("net_margin", "净利率", "%"),
+                    ("roe", "ROE", "%"),
+                    ("debt_ratio", "资产负债率", "%"),
+                ):
+                    value = fund.get(key)
+                    if value is not None:
+                        lines.append(f"- {label}：{float(value):.2f}{unit}")
+
+            biz = business_summary(stock.symbol)
+            if biz:
+                lines.append("\n## 业务与收入结构")
+                lines.append(f"- {biz}")
+        except Exception as exc:  # noqa: BLE001 — 概览数据缺失不影响盘中判断
+            logger.debug(f"[盘中] 概览上下文构建失败 {stock.symbol}: {exc}")
+
         # 账户资金情况
         lines.append(f"\n## 账户资金")
         lines.append(f"- 总可用资金：{context.portfolio.total_available_funds:.0f} 元")
@@ -516,7 +569,9 @@ class IntradayMonitorAgent(BaseAgent):
                 lines.append(f"\n### 今日盘前分析摘要")
                 lines.append(content)
 
-        lines.append("\n请结合技术分析、资金情况和历史分析，给出明确的操作建议。")
+        lines.append(
+            "\n请结合技术分析、资金情况、估值、业务与收入结构以及历史分析，给出明确的操作建议。"
+        )
 
         user_content = "\n".join(lines)
         return system_prompt, user_content

@@ -91,6 +91,7 @@ class Stock(Base):
     quantity = Column(Integer, nullable=True)
     invested_amount = Column(Float, nullable=True)
     sort_order = Column(Integer, default=0)
+    group_name = Column(String, default="")  # 自选分组名,空串=未分组
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -1433,3 +1434,157 @@ class HotTheme(Base):
     news = Column(JSON, default=list)
     ai_comment = Column(String, default="")
     created_at = Column(DateTime, server_default=func.now())
+
+
+class ScreenerSnapshot(Base):
+    """全市场当日快照（选股粗筛用的本地副本）。
+
+    东财 clist 的 pz 上限是 100，一次选股要 50+ 次分页请求。落库后选股只在
+    本地 SQL 上跑，网络只在刷新快照时付出一次。
+    """
+
+    __tablename__ = "screener_snapshots"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "symbol", name="uq_screener_snapshot_symbol"),
+        Index("ix_screener_snapshot_date", "trade_date"),
+        Index("ix_screener_snapshot_symbol", "symbol"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String, nullable=False, default="")  # YYYY-MM-DD
+    symbol = Column(String, nullable=False)
+    name = Column(String, nullable=False, default="")
+    market = Column(String, nullable=False, default="CN")
+
+    price = Column(Float, nullable=True)
+    change_pct = Column(Float, nullable=True)
+    change_amount = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)
+    amount = Column(Float, nullable=True)          # 成交额(元)
+    amplitude = Column(Float, nullable=True)       # 振幅(%)
+    turnover_rate = Column(Float, nullable=True)   # 换手率(%)
+    volume_ratio = Column(Float, nullable=True)    # 量比
+    pe_ttm = Column(Float, nullable=True)
+    pb = Column(Float, nullable=True)
+
+    open_price = Column(Float, nullable=True)
+    high_price = Column(Float, nullable=True)
+    low_price = Column(Float, nullable=True)
+    prev_close = Column(Float, nullable=True)
+
+    total_mv = Column(Float, nullable=True)        # 总市值(元)
+    float_mv = Column(Float, nullable=True)        # 流通市值(元)
+    main_net_inflow = Column(Float, nullable=True)  # 主力净流入(元)
+    speed = Column(Float, nullable=True)           # 涨速(%)
+    industry = Column(String, default="")          # 东财行业板块
+    is_st = Column(Boolean, default=False)
+    is_suspended = Column(Boolean, default=False)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ScreenerConceptMember(Base):
+    """个股 → 概念反查索引。
+
+    东财只有「概念 → 成分股」的正向接口，每选一只股要查板块信息就得反查。
+    每天收盘后按主力净流入取前 N 个概念拉成分股，把正反向都落到这张表，
+    选股时就是一次本地 join。
+    """
+
+    __tablename__ = "screener_concept_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date", "symbol", "concept_code", name="uq_screener_concept_member"
+        ),
+        Index("ix_screener_concept_symbol", "trade_date", "symbol"),
+        Index("ix_screener_concept_code", "trade_date", "concept_code"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String, nullable=False, default="")
+    symbol = Column(String, nullable=False)
+    name = Column(String, default="")
+    concept_code = Column(String, nullable=False, default="")
+    concept_name = Column(String, nullable=False, default="")
+    concept_change_pct = Column(Float, nullable=True)
+    concept_rank = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class DailyBar(Base):
+    """本地日K（原始价，成交量单位=手，与腾讯 K 线口径一致）。"""
+
+    __tablename__ = "daily_bars"
+    __table_args__ = (
+        UniqueConstraint("symbol", "trade_date", name="uq_daily_bar_symbol_date"),
+        Index("ix_daily_bar_date", "trade_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, nullable=False)  # 唯一索引 (symbol, trade_date) 已覆盖 symbol 前缀
+    trade_date = Column(String, nullable=False)  # YYYY-MM-DD
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)   # 手
+    amount = Column(Float, nullable=True)   # 元
+    source = Column(String, default="")     # fuyao / tickflow / tdxquant
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class DatasetSyncState(Base):
+    """数据集同步游标与最近一次结果。"""
+
+    __tablename__ = "dataset_sync_state"
+    __table_args__ = (UniqueConstraint("dataset", name="uq_dataset_sync_dataset"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset = Column(String, nullable=False, default="daily")
+    last_date = Column(String, default="")      # 已同步到的交易日
+    last_mode = Column(String, default="")      # incremental / full
+    rows = Column(Integer, default=0)
+    status = Column(String, default="idle")     # idle / running / ok / error
+    error = Column(String, default="")
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class DatasetProvider(Base):
+    """数据集的数据源与优先级（fuyao → tickflow → tdxquant）。"""
+
+    __tablename__ = "dataset_providers"
+    __table_args__ = (
+        UniqueConstraint("dataset", "provider", name="uq_dataset_provider"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset = Column(String, nullable=False, default="daily")
+    provider = Column(String, nullable=False)
+    priority = Column(Integer, default=100)
+    enabled = Column(Boolean, default=True)
+    config = Column(JSON, default=dict)   # api_key / base_url / lib_root
+    last_ok_at = Column(DateTime, nullable=True)
+    last_error = Column(String, default="")
+    fail_count = Column(Integer, default=0)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ScreenerRule(Base):
+    """用户保存的选股分组（同花顺「分组条件」）。"""
+
+    __tablename__ = "screener_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, default="")
+    market = Column(String, nullable=False, default="CN")
+    conditions = Column(JSON, default=dict)
+    order_by = Column(String, default="change_pct desc")
+    limit_n = Column(Integer, default=100)
+    is_preset = Column(Boolean, default=False)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -446,6 +446,46 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },
+        # 多源日K(移植自 Tick Stock Panel):同花顺 → TickFlow → 通达信
+        {
+            "name": "同花顺K线(fuyao)",
+            "type": "kline",
+            "provider": "fuyao",
+            "config": {
+                "api_key": "",
+                "description": "同花顺官方 REST 日K,原始价。市场级 dump,支持全市场批量回填。",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
+        {
+            "name": "TickFlow 日K",
+            "type": "kline",
+            "provider": "tickflow",
+            "config": {
+                "api_key": "",
+                "description": "TickFlow 官方 SDK 日K。Free 档仅单标的历史;批量需 Starter+。",
+            },
+            "enabled": True,
+            "priority": 5,
+            "supports_batch": False,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
+        {
+            "name": "通达信日K",
+            "type": "kline",
+            "provider": "tdxquant",
+            "config": {
+                "api_key": "",
+                "description": "通达信 TdxAiData 日K(原生 TCP,按积分计费),逐只拉取。",
+            },
+            "enabled": True,
+            "priority": 10,
+            "supports_batch": False,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
         # 资金流向数据源
         {
             "name": "东方财富资金流",
@@ -510,6 +550,37 @@ DATA_SOURCE_SEEDS: list[dict] = [
             },
             "enabled": False,
             "priority": 10,
+            "supports_batch": True,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
+        # 多源实时行情:同花顺 → 通达信 → TickFlow
+        {
+            "name": "同花顺行情(fuyao)",
+            "type": "quote",
+            "provider": "fuyao",
+            "config": {"api_key": "", "description": "同花顺全市场快照,单次 100 只。"},
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": True,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
+        {
+            "name": "通达信行情",
+            "type": "quote",
+            "provider": "tdxquant",
+            "config": {"api_key": "", "description": "通达信全市场快照(600 只/批)+ 五档字段。"},
+            "enabled": True,
+            "priority": 10,
+            "supports_batch": True,
+            "test_symbols": list(DEFAULT_TEST_SYMBOLS),
+        },
+        {
+            "name": "TickFlow 行情",
+            "type": "quote",
+            "provider": "tickflow",
+            "config": {"api_key": "", "description": "TickFlow 实时行情。Free 档标的数有限。"},
+            "enabled": True,
+            "priority": 20,
             "supports_batch": True,
             "test_symbols": list(DEFAULT_TEST_SYMBOLS),
         },
@@ -770,6 +841,57 @@ def _seed_providers_by_type() -> dict[str, set[str]]:
     for source_data in DATA_SOURCE_SEEDS:
         result.setdefault(source_data["type"], set()).add(source_data["provider"])
     return result
+
+
+# 市场数据源优先级:新接入的同花顺/TickFlow/通达信排到最前,原有源依次后移。
+# 只对已知 provider 生效,用户自定义 provider 保持原优先级。
+_MARKET_PRIORITY: dict[str, dict[str, int]] = {
+    "kline": {
+        "fuyao": 0, "tickflow": 5, "tdxquant": 10,
+        "tencent": 20, "eastmoney": 30, "stooq": 40, "yahoo": 50,
+    },
+    "quote": {
+        "fuyao": 0, "tdxquant": 10, "tickflow": 20,
+        "tencent": 30, "eastmoney": 40, "sina": 50, "yfinance": 60,
+    },
+}
+
+
+def reconcile_market_sources(db) -> dict:
+    """把新数据源 Key 从旧 dataset_providers 迁移到 DataSource,并做一次性优先级整理。
+
+    优先级只整理一次(写 app_settings 标记),之后完全尊重用户在页面上的调整。
+    """
+    from src.platform.persistence.models import DatasetProvider
+
+    keys = {
+        row.provider: (row.config or {}).get("api_key")
+        for row in db.query(DatasetProvider).all()
+    }
+    changed = 0
+    # Key 迁移每次都做(只补空值),不会覆盖用户改过的 Key
+    for row in db.query(DataSource).filter(DataSource.type.in_(("kline", "quote"))).all():
+        key = keys.get(row.provider)
+        if key and not (row.config or {}).get("api_key"):
+            row.config = {**(row.config or {}), "api_key": key}
+            changed += 1
+
+    flag_key = "market_source_priority_v2"
+    applied = db.query(AppSettings).filter(AppSettings.key == flag_key).first()
+    flag_added = False
+    if applied is None:
+        for row in db.query(DataSource).filter(DataSource.type.in_(("kline", "quote"))).all():
+            target = _MARKET_PRIORITY.get(row.type, {}).get(row.provider)
+            if target is not None and row.priority != target:
+                row.priority = target
+                changed += 1
+        db.add(AppSettings(key=flag_key, value="1", description="行情数据源优先级已整理"))
+        flag_added = True
+
+    if changed or flag_added:
+        db.commit()
+        logger.info(f"行情数据源整理完成: {changed} 处变更")
+    return {"changed": changed}
 
 
 def reconcile_data_sources(db, *, reset_test_symbols: bool = False) -> dict:
@@ -1551,12 +1673,34 @@ async def lifespan(app):
         db = SessionLocal()
         try:
             reconcile_data_sources(db)
+            reconcile_market_sources(db)
         finally:
             db.close()
     except Exception as e:
         logger.warning(f"数据源对账失败,跳过(不阻断启动): {e}")
     seed_strategies()
     seed_sample_stocks()
+
+    # 选股快照后台预热:首个打开选股页的用户不必等全市场抓取
+    try:
+        from src.modules.screener.snapshot import warmup_async
+
+        warmup_async()
+    except Exception as e:  # noqa: BLE001 — 预热只是优化,失败不影响启动
+        logger.warning(f"选股快照预热启动失败: {e}")
+
+    # 行情数据集:初始化数据源配置 + 每日同步调度
+    try:
+        from src.platform.dataset import scheduler as dataset_scheduler
+        from src.platform.dataset import store as dataset_store
+
+        dataset_store.ensure_defaults()
+        dataset_scheduler.start()
+        from src.platform.dataset import sync as dataset_sync
+
+        dataset_sync.maybe_auto_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"行情数据集定时任务启动失败: {e}")
 
     # 启动时回填历史 TradingAgents 决策到建议池(stock_suggestions)
     # 早期 TA 运行没写建议池,这次启动一次性补齐,让「AI 建议」面板能看到。
@@ -1643,6 +1787,13 @@ async def lifespan(app):
     if context_maintenance_scheduler:
         context_maintenance_scheduler.shutdown()
         logger.info("上下文维护调度器已关闭")
+    try:
+        from src.platform.dataset import scheduler as dataset_scheduler
+
+        dataset_scheduler.shutdown()
+        logger.info("行情数据集调度器已关闭")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # 模块级 app 实例，供 uvicorn reload 使用

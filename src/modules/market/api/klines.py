@@ -100,19 +100,44 @@ def _aggregate_klines(klines, interval: str) -> list:
     return out
 
 
+def _local_daily_klines(symbol: str, days: int) -> list[dict]:
+    """本地日K兜底。数据源全部失败时,详情页/抽屉仍能出图。"""
+    try:
+        from src.platform.dataset.store import bars_for_symbol
+        from src.platform.dataset.symbols import to_std
+
+        return bars_for_symbol(to_std(symbol), days)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _load_klines(symbol: str, market_code: MarketCode, days: int, interval: str) -> tuple[list[dict], str]:
+    """先走网络(含多源转移),为空再读本地库。返回 (序列化K线, 来源)。"""
+    try:
+        klines = KlineCollector(market_code).get_klines(symbol, days=days)
+    except Exception:  # noqa: BLE001
+        klines = []
+    if klines:
+        return _serialize_klines(_aggregate_klines(klines, interval)), "live"
+    if (interval or "1d").lower() in ("1d", "day", "d"):
+        local = _local_daily_klines(symbol, days)
+        if local:
+            return local, "local"
+    return [], "none"
+
+
 @router.get("/{symbol}")
 def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = "1d"):
-    """获取单只股票K线数据"""
+    """获取单只股票K线数据(网络失败自动回退本地 daily_bars)"""
     market_code = _parse_market(market)
-    collector = KlineCollector(market_code)
-    klines = collector.get_klines(symbol, days=days)
-    klines = _aggregate_klines(klines, interval)
+    rows, source = _load_klines(symbol, market_code, days, interval)
     return {
         "symbol": symbol,
         "market": market_code.value,
         "days": days,
         "interval": interval,
-        "klines": _serialize_klines(klines),
+        "source": source,
+        "klines": rows,
     }
 
 
@@ -125,18 +150,17 @@ def get_klines_batch(payload: KlineBatchRequest):
     results = []
     for item in payload.items:
         market_code = _parse_market(item.market)
-        collector = KlineCollector(market_code)
         days = item.days or 60
         interval = item.interval or "1d"
-        klines = collector.get_klines(item.symbol, days=days)
-        klines = _aggregate_klines(klines, interval)
+        rows, source = _load_klines(item.symbol, market_code, days, interval)
         results.append(
             {
                 "symbol": item.symbol,
                 "market": market_code.value,
                 "days": days,
                 "interval": interval,
-                "klines": _serialize_klines(klines),
+                "source": source,
+                "klines": rows,
             }
         )
 
