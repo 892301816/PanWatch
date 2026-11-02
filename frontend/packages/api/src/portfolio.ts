@@ -146,6 +146,11 @@ export const portfolioApi = {
 
   // ── 理财化能力 ──────────────────────────────────────────────────────
   wealthOverview: () => fetchAPI<WealthOverview>('/portfolio/wealth/overview'),
+  wealthAiAdvice: (modelId?: number) =>
+    fetchAPI<{ content: string; generated_at: string; disclaimer: string; empty?: boolean; reason?: string }>(
+      `/portfolio/wealth/ai-advice${modelId ? `?model_id=${modelId}` : ''}`,
+      { method: 'POST', timeoutMs: 90000 },
+    ),
   getGoals: () => fetchAPI<WealthGoals>('/portfolio/wealth/goals'),
   updateGoals: (data: Partial<WealthGoals>) =>
     fetchAPI<WealthGoals>('/portfolio/wealth/goals', {

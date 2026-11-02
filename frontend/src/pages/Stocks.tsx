@@ -23,7 +23,6 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectL
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
-import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import WealthPanel from '@/components/WealthPanel'
 
 interface AgentResult {
@@ -271,17 +270,6 @@ const toQuoteMap = (rows: QuoteResponse[]): Record<string, { current_price: numb
   return map
 }
 
-const toPriceAlertSummaryMap = (rows: PriceAlertRuleSummary[]): Record<string, { total: number; enabled: number }> => {
-  const map: Record<string, { total: number; enabled: number }> = {}
-  for (const row of rows || []) {
-    const key = `${String(row.market || 'CN').toUpperCase()}:${String(row.stock_symbol || '').toUpperCase()}`
-    if (!map[key]) map[key] = { total: 0, enabled: 0 }
-    map[key].total += 1
-    if (row.enabled) map[key].enabled += 1
-  }
-  return map
-}
-
 const round2 = (value: number) => Math.round(value * 100) / 100
 
 const mergePortfolioQuotes = (
@@ -428,7 +416,6 @@ export default function StocksPage() {
   // 建议池建议（来自 /suggestions API）
   const [poolSuggestions, setPoolSuggestions] = useState<Record<string, PoolSuggestion>>({})
   const [poolSuggestionsLoading, setPoolSuggestionsLoading] = useState(false)
-  const [priceAlertSummaryMap, setPriceAlertSummaryMap] = useState<Record<string, { total: number; enabled: number }>>({})
 
   // News Dialog
   const [newsDialogOpen, setNewsDialogOpen] = useState(false)
@@ -731,11 +718,6 @@ export default function StocksPage() {
     }
   }, [buildQuoteItems, requestSuggestions])
 
-  const loadPriceAlertSummaries = useCallback(async () => {
-    const rows = await requestPriceAlerts(buildQuoteItems())
-    setPriceAlertSummaryMap(toPriceAlertSummaryMap(rows))
-  }, [buildQuoteItems, requestPriceAlerts])
-
   const loadConfigAsync = useCallback((signal?: AbortSignal): Promise<void> => {
     if (configLoadedRef.current) return Promise.resolve()
     if (configLoadPromiseRef.current) return configLoadPromiseRef.current
@@ -927,7 +909,6 @@ export default function StocksPage() {
       setQuotes(quoteMap)
       setKlineSummaries({})
       setPoolSuggestions({})
-      setPriceAlertSummaryMap({})
       setPortfolio(mergePortfolioQuotes(coreData.portfolio, quoteMap))
       const nextAccounts = coreData.portfolio.accounts.map(account => ({
         id: account.id,
@@ -959,7 +940,6 @@ export default function StocksPage() {
         setMarketStatus(data.marketStatus)
         setKlineSummaries(data.klines)
         setPoolSuggestions(data.suggestions)
-        setPriceAlertSummaryMap(toPriceAlertSummaryMap(data.priceAlerts))
       }).catch(error => {
         if (!signal.aborted) console.warn('加载持仓页后台数据失败:', error)
       })
@@ -1044,10 +1024,9 @@ export default function StocksPage() {
     await Promise.all([
       refreshQuotes(),
       loadPoolSuggestions(),
-      loadPriceAlertSummaries(),
       refreshKlines(),
     ])
-  }, [loadPoolSuggestions, loadPriceAlertSummaries, refreshKlines, refreshQuotes])
+  }, [loadPoolSuggestions, refreshKlines, refreshQuotes])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -1569,11 +1548,6 @@ export default function StocksPage() {
   // 获取股票的行情信息
   const getStockQuote = (quoteKey: string) => {
     return quotes[quoteKey] || null
-  }
-
-  const getPriceAlertSummary = (symbol: string, market: string) => {
-    const key = `${String(market || 'CN').toUpperCase()}:${String(symbol || '').toUpperCase()}`
-    return priceAlertSummaryMap[key] || { total: 0, enabled: 0 }
   }
 
   // 获取股票的建议信息（优先使用建议池，包含来源和时间信息）
@@ -2330,16 +2304,6 @@ export default function StocksPage() {
                                       {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
                                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
                                       ) : null })()}
-                                      <StockPriceAlertPanel
-                                        mode="icon"
-                                        stockId={pos.stock_id}
-                                        symbol={pos.symbol}
-                                        market={pos.market}
-                                        stockName={pos.name}
-                                        initialTotal={getPriceAlertSummary(pos.symbol, pos.market).total}
-                                        initialEnabled={getPriceAlertSummary(pos.symbol, pos.market).enabled}
-                                        onChanged={loadPriceAlertSummaries}
-                                      />
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)} title="相关资讯"><Newspaper className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
@@ -2506,16 +2470,6 @@ export default function StocksPage() {
                                   {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
                                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
                                   ) : null })()}
-                                  <StockPriceAlertPanel
-                                    mode="icon"
-                                    stockId={pos.stock_id}
-                                    symbol={pos.symbol}
-                                    market={pos.market}
-                                    stockName={pos.name}
-                                    initialTotal={getPriceAlertSummary(pos.symbol, pos.market).total}
-                                    initialEnabled={getPriceAlertSummary(pos.symbol, pos.market).enabled}
-                                    onChanged={loadPriceAlertSummaries}
-                                  />
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)}><Newspaper className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
@@ -2745,16 +2699,6 @@ export default function StocksPage() {
                         >
                           <BarChart3 className="w-3.5 h-3.5" />
                         </Button>
-                        <StockPriceAlertPanel
-                          mode="icon"
-                          stockId={stock.id}
-                          symbol={stock.symbol}
-                          market={stock.market}
-                          stockName={stock.name}
-                          initialTotal={getPriceAlertSummary(stock.symbol, stock.market).total}
-                          initialEnabled={getPriceAlertSummary(stock.symbol, stock.market).enabled}
-                          onChanged={loadPriceAlertSummaries}
-                        />
                         <Button
                           variant="ghost"
                           size="icon"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -460,6 +460,113 @@ def get_goals(db: Session = Depends(get_db)):
 def put_goals(data: GoalsIn, db: Session = Depends(get_db)):
     payload = {k: v for k, v in data.model_dump().items() if v is not None}
     return wealth.set_goals(db, payload)
+
+
+# ── AI 建议 ─────────────────────────────────────────────────────────────
+@router.post("/portfolio/wealth/ai-advice")
+async def wealth_ai_advice(model_id: int | None = None, db: Session = Depends(get_db)):
+    """按账户策略、仓位、定投与分红生成理财建议（只读，不下单）。"""
+    import asyncio
+
+    from src.modules.portfolio.api.accounts import _fetch_quotes_for_stocks
+    from src.platform.ai.ai_failover import get_configured_failover_client
+
+    accounts = db.query(Account).filter(Account.enabled.is_(True)).all()
+    if not accounts:
+        return {"empty": True, "reason": "no_accounts"}
+
+    all_stocks = []
+    for acc in accounts:
+        for pos in acc.positions or []:
+            stock = db.query(Stock).filter(Stock.id == pos.stock_id).first()
+            if stock:
+                all_stocks.append(stock)
+    quotes = {}
+    if all_stocks:
+        try:
+            quotes = await asyncio.to_thread(_fetch_quotes_for_stocks, all_stocks)
+        except Exception:
+            quotes = {}
+
+    goals = wealth.get_goals(db)
+    lines = [
+        f"理财目标：年度被动收入 {goals['annual_passive_income']:.0f} 元，"
+        f"应急金 {goals['emergency_months']:.0f} 个月，目标年化 {goals['annual_return_target']:.1f}%",
+    ]
+    for acc in accounts:
+        risk = wealth.risk_policy_for(acc)
+        positions = []
+        total_mv = 0.0
+        for pos in acc.positions or []:
+            stock = db.query(Stock).filter(Stock.id == pos.stock_id).first()
+            if not stock:
+                continue
+            quote = quotes.get(stock.symbol) or {}
+            price = quote.get("current_price") or float(pos.cost_price or 0)
+            mv = price * int(pos.quantity or 0)
+            total_mv += mv
+            positions.append((pos, stock, price, mv))
+        lines.append("")
+        lines.append(
+            f"账户：{acc.name}，策略 {wealth.STRATEGY_LABELS.get(acc.strategy_type or '', '未设置')}，"
+            f"可用资金 {float(acc.available_funds or 0):.0f} 元，"
+            f"持仓市值 {total_mv:.0f} 元，现金比例 "
+            f"{(float(acc.available_funds or 0) / (float(acc.available_funds or 0) + total_mv) * 100) if (float(acc.available_funds or 0) + total_mv) > 0 else 0:.1f}%"
+        )
+        if risk:
+            lines.append(
+                f"  风控：单仓上限 {float(risk.get('max_single_weight', 0)) * 100:.0f}%，"
+                f"最少 {risk.get('min_positions', '-')} 只，止损 {float(risk.get('stop_loss_pct', 0)) * 100:.0f}%，"
+                f"止盈 {float(risk.get('take_profit_pct', 0)) * 100:.0f}%"
+            )
+        for pos, stock, price, mv in positions:
+            weight = (mv / total_mv * 100) if total_mv > 0 else 0
+            stop = f"{float(pos.stop_loss_price):.2f}" if pos.stop_loss_price else "未设"
+            take = f"{float(pos.take_profit_price):.2f}" if pos.take_profit_price else "未设"
+            lines.append(
+                f"  - {stock.name}({stock.symbol}) 持仓 {int(pos.quantity or 0)} 股，"
+                f"成本 {float(pos.cost_price or 0):.2f}，现价 {float(price):.2f}，"
+                f"市值 {mv:.0f}，账户内权重 {weight:.1f}%，止损 {stop}，止盈 {take}"
+            )
+        plans = (
+            db.query(DcaPlan)
+            .filter(DcaPlan.account_id == acc.id, DcaPlan.enabled.is_(True))
+            .all()
+        )
+        for p in plans:
+            stock = db.query(Stock).filter(Stock.id == p.stock_id).first()
+            lines.append(
+                f"  定投：{stock.name if stock else p.stock_id} 每期 {p.amount:.0f} 元，"
+                f"频率 {p.frequency}，下次 {p.next_run_date or '未设置'}，已投 {p.executed_count} 期"
+            )
+        lines.append(
+            f"  分红处理：{'红利再投资' if acc.dividend_reinvest else '现金分红'}"
+        )
+
+    system_prompt = (
+        "你是个人理财顾问。根据给定的账户策略、持仓、现金比例、止损止盈、定投计划与理财目标，"
+        "给出简洁、可执行的建议。要求：\n"
+        "1) 严格区分‘激进’与‘稳健’账户：激进关注仓位纪律与止损，稳健关注回撤、现金流与定投；\n"
+        "2) 指出超限仓位、现金过低/过高、止损缺失、定投缺口、分红再投是否合理；\n"
+        "3) 建议要具体到账户和标的，给数量或比例范围，不要泛泛而谈；\n"
+        "4) 不推荐具体买卖时点，不承诺收益，不臆造数据；\n"
+        "5) 输出中文纯文本，格式：\n总评: 一句话\n账户建议:\n- 账户名: ...\n风险:\n- ...\n下一步:\n- ..."
+    )
+    user_content = "\n".join(lines)
+    try:
+        content = await get_configured_failover_client(db, model_id).chat(
+            system_prompt, user_content, temperature=0.3
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"AI 建议生成失败: {e}")
+
+    # 部分模型会把换行输出成字面量 \n，前端按纯文本展示，这里统一还原
+    content = (content or "").replace("\\n", "\n")
+    return {
+        "content": content,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "disclaimer": "AI 建议仅供研究参考，不构成投资建议。",
+    }
 
 
 # ── 汇总 ────────────────────────────────────────────────────────────────

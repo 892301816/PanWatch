@@ -65,6 +65,9 @@ export default function WealthPanel({
   const [tab, setTab] = useState<'overview' | 'dca' | 'records'>('overview')
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
+  const [advice, setAdvice] = useState('')
+  const [adviceMeta, setAdviceMeta] = useState<{ generated_at: string; disclaimer: string } | null>(null)
+  const [adviceLoading, setAdviceLoading] = useState(false)
 
   const [goalsOpen, setGoalsOpen] = useState(false)
   const [goals, setGoals] = useState<WealthGoals>({
@@ -247,6 +250,23 @@ export default function WealthPanel({
     }
   }
 
+  const generateAdvice = async () => {
+    setAdviceLoading(true)
+    try {
+      const res = await portfolioApi.wealthAiAdvice()
+      if (res.empty) {
+        showToast('还没有账户，先添加账户再生成建议')
+        return
+      }
+      setAdvice(res.content || '')
+      setAdviceMeta({ generated_at: res.generated_at, disclaimer: res.disclaimer })
+    } catch (e: any) {
+      showToast(e?.message || 'AI 建议生成失败')
+    } finally {
+      setAdviceLoading(false)
+    }
+  }
+
   const runDividends = async () => {
     setBusy(true)
     try {
@@ -380,6 +400,34 @@ export default function WealthPanel({
                   )}
                 </div>
               ))}
+            </div>
+
+            <div className="rounded-lg border border-border/50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] text-muted-foreground">AI 理财建议</div>
+                <button
+                  className="text-[10px] text-primary hover:underline disabled:opacity-50"
+                  onClick={generateAdvice}
+                  disabled={adviceLoading}
+                >
+                  {adviceLoading ? '分析中…' : advice ? '重新生成' : '生成建议'}
+                </button>
+              </div>
+              {advice ? (
+                <>
+                  <div className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-foreground/90">
+                    {advice}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    {adviceMeta?.generated_at && <span>生成于 {adviceMeta.generated_at.replace('T', ' ')}</span>}
+                    <span>{adviceMeta?.disclaimer || '仅供参考，不构成投资建议'}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-2 text-[11px] text-muted-foreground">
+                  按账户策略、仓位、止损止盈、定投与分红生成建议；点击右上角「生成建议」。
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
