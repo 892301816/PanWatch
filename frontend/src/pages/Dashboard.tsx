@@ -102,6 +102,11 @@ const MARKET_BAR_CLS: Record<string, string> = {
 export default function DashboardPage() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
+  // 分区加载：任何一块数据到了就先渲染，不被最慢的接口拖住整页
+  const [scanLoading, setScanLoading] = useState(true)
+  const [diagLoading, setDiagLoading] = useState(true)
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [summaryLoading, setSummaryLoading] = useState(true)
   const [indices, setIndices] = useState<DashboardMarketIndex[]>([])
   const [scan, setScan] = useState<DashboardMonitorStock[]>([])
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null)
@@ -149,30 +154,47 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setScanLoading(true)
+    setDiagLoading(true)
+    setOverviewLoading(true)
+    setSummaryLoading(true)
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
     dashboardApi.indices().then(setIndices).catch(() => {})
-    // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布/组合速览)尽快出来
-    const [sc, ov, dg, ht, td, ps, ms] = await Promise.allSettled([
-      dashboardApi.intradayScan(),
-      dashboardApi.overview({ market: 'ALL', action_limit: 6, risk_limit: 6 }),
-      portfolioApi.diagnostics(),
-      homeApi.alertHitsToday(),
-      homeApi.todos(),
-      dashboardApi.portfolioSummary(),
-      dashboardApi.marketStatus(),
-    ])
-    if (sc.status === 'fulfilled') setScan(sc.value.stocks || [])
-    if (ov.status === 'fulfilled') setOverview(ov.value)
-    if (dg.status === 'fulfilled') setDiag(dg.value)
-    if (ht.status === 'fulfilled') setAlertHits(ht.value)
-    if (td.status === 'fulfilled') setTodos(td.value.todos || [])
-    if (ps.status === 'fulfilled') setPortfolioSummary(ps.value)
-    if (ms.status === 'fulfilled') setMarketStatus(ms.value)
+    // 每个区块各自落地、各自结束 loading,互不阻塞
+    const scanP = dashboardApi
+      .intradayScan()
+      .then((v) => setScan(v.stocks || []))
+      .catch(() => {})
+      .finally(() => setScanLoading(false))
+    const overviewP = dashboardApi
+      .overview({ market: 'ALL', action_limit: 6, risk_limit: 6 })
+      .then((v) => {
+        setOverview(v)
+        return v
+      })
+      .catch(() => null)
+      .finally(() => setOverviewLoading(false))
+    const diagP = portfolioApi
+      .diagnostics()
+      .then(setDiag)
+      .catch(() => {})
+      .finally(() => setDiagLoading(false))
+    const hitsP = homeApi.alertHitsToday().then(setAlertHits).catch(() => {})
+    const todosP = homeApi.todos().then((v) => setTodos(v.todos || [])).catch(() => {})
+    const summaryP = dashboardApi
+      .portfolioSummary()
+      .then(setPortfolioSummary)
+      .catch(() => {})
+      .finally(() => setSummaryLoading(false))
+    const statusP = dashboardApi.marketStatus().then(setMarketStatus).catch(() => {})
+
+    await Promise.allSettled([scanP, overviewP, diagP, hitsP, todosP, summaryP, statusP])
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
 
     // 机会兜底:overview 无机会时再取(不挡首屏)
-    if (ov.status !== 'fulfilled' || !ov.value.action_center?.opportunities?.length) {
+    const ov = await overviewP
+    if (!ov?.action_center?.opportunities?.length) {
       recommendationsApi
         .listStrategySignals({ status: 'active', limit: 5 })
         .then((r) => setOppFallback(r.items || []))
@@ -354,7 +376,7 @@ export default function DashboardPage() {
       <div className="card mb-3 p-4">
         {!hasHoldings ? (
           <div className="py-4 text-center text-[12px] text-muted-foreground">
-            {loading ? '加载中…' : '暂无持仓,添加持仓后这里展示今日盈亏与组合走势'}
+            {summaryLoading ? '加载中…' : '暂无持仓,添加持仓后这里展示今日盈亏与组合走势'}
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -440,7 +462,7 @@ export default function DashboardPage() {
               </button>
             )}
           </div>
-          {loading && candidates.length === 0 ? (
+          {scanLoading && candidates.length === 0 ? (
             <div className="py-6 text-center text-[12px] text-muted-foreground">扫描中…</div>
           ) : candidates.length === 0 ? (
             todos.length > 0 ? (
@@ -517,7 +539,7 @@ export default function DashboardPage() {
           </div>
           {!hasHoldings ? (
             <div className="py-6 text-center text-[12px] text-muted-foreground">
-              {loading ? '加载中…' : '暂无持仓,添加持仓后这里给风险与相对大盘表现'}
+              {diagLoading ? '加载中…' : '暂无持仓,添加持仓后这里给风险与相对大盘表现'}
             </div>
           ) : (
             <div className="space-y-3 text-[12px]">
@@ -663,7 +685,7 @@ export default function DashboardPage() {
             </button>
           </div>
           {opportunities.length === 0 ? (
-            <div className="py-6 text-center text-[12px] text-muted-foreground">{loading ? '加载中…' : '暂无活跃机会信号'}</div>
+            <div className="py-6 text-center text-[12px] text-muted-foreground">{overviewLoading ? '加载中…' : '暂无活跃机会信号'}</div>
           ) : (
             <div className="divide-y divide-border/40">
               {opportunities.slice(0, 3).map((o) => {

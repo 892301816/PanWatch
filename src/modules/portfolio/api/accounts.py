@@ -22,25 +22,24 @@ router = APIRouter()
 _hkd_rate_cache: dict = {"rate": 0.92, "ts": 0}  # 港币默认汇率 0.92
 _usd_rate_cache: dict = {"rate": 7.25, "ts": 0}  # 美元默认汇率 7.25
 EXCHANGE_RATE_TTL = 3600  # 1 小时缓存
+FX_FAIL_RETRY = 600        # 获取失败后 10 分钟内不再重试，避免每个请求都卡超时
+FX_TIMEOUT = 1.5           # 汇率不是关键路径，超时要短
 
 
-def get_hkd_cny_rate() -> float:
-    """获取港币兑人民币汇率"""
-    global _hkd_rate_cache
+def _fx_rate(cache: dict, url: str, label: str) -> float:
+    """取汇率：命中缓存直接返回；失败时负缓存，绝不阻塞业务请求超过 1.5 秒。"""
+    now = time.time()
+    if now - cache["ts"] < EXCHANGE_RATE_TTL:
+        return cache["rate"]
 
-    # 检查缓存
-    if time.time() - _hkd_rate_cache["ts"] < EXCHANGE_RATE_TTL:
-        return _hkd_rate_cache["rate"]
-
-    # 从新浪财经获取汇率
     try:
         resp = httpx.get(
-            "https://hq.sinajs.cn/list=fx_shkdcny",
-            timeout=5,
+            url,
+            timeout=FX_TIMEOUT,
             headers={
                 "User-Agent": "Mozilla/5.0",
-                "Referer": "https://finance.sina.com.cn/"
-            }
+                "Referer": "https://finance.sina.com.cn/",
+            },
         )
         # 格式: var hq_str_fx_shkdcny="时间,汇率,..."
         text = resp.text
@@ -49,47 +48,33 @@ def get_hkd_cny_rate() -> float:
             parts = data.split(",")
             if len(parts) > 1:
                 rate = float(parts[1])
-                _hkd_rate_cache = {"rate": rate, "ts": time.time()}
-                logger.info(f"更新港币汇率: {rate}")
+                cache["rate"] = rate
+                cache["ts"] = now
+                logger.info(f"更新{label}汇率: {rate}")
                 return rate
-    except Exception as e:
-        logger.warning(f"获取港币汇率失败，使用缓存: {e}")
+    except Exception as e:  # noqa: BLE001 — 汇率失败不影响持仓计算
+        logger.warning(f"获取{label}汇率失败，使用缓存: {e}")
 
-    return _hkd_rate_cache["rate"]
+    # 负缓存：失败也推进时间戳，FX_FAIL_RETRY 秒后再试
+    cache["ts"] = now - EXCHANGE_RATE_TTL + FX_FAIL_RETRY
+    return cache["rate"]
 
 
-def get_usd_cny_rate() -> float:
-    """获取美元兑人民币汇率"""
-    global _usd_rate_cache
+def get_hkd_cny_rate(fetch: bool = True) -> float:
+    """获取港币兑人民币汇率。
 
-    # 检查缓存
-    if time.time() - _usd_rate_cache["ts"] < EXCHANGE_RATE_TTL:
+    fetch=False 时只读缓存（无港澳持仓时调用方不该触发任何网络请求）。
+    """
+    if not fetch:
+        return _hkd_rate_cache["rate"]
+    return _fx_rate(_hkd_rate_cache, "https://hq.sinajs.cn/list=fx_shkdcny", "港币")
+
+
+def get_usd_cny_rate(fetch: bool = True) -> float:
+    """获取美元兑人民币汇率。fetch 语义同 get_hkd_cny_rate。"""
+    if not fetch:
         return _usd_rate_cache["rate"]
-
-    # 从新浪财经获取汇率
-    try:
-        resp = httpx.get(
-            "https://hq.sinajs.cn/list=fx_susdcny",
-            timeout=5,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://finance.sina.com.cn/"
-            }
-        )
-        # 格式: var hq_str_fx_susdcny="时间,汇率,..."
-        text = resp.text
-        if "=" in text and "," in text:
-            data = text.split('"')[1]
-            parts = data.split(",")
-            if len(parts) > 1:
-                rate = float(parts[1])
-                _usd_rate_cache = {"rate": rate, "ts": time.time()}
-                logger.info(f"更新美元汇率: {rate}")
-                return rate
-    except Exception as e:
-        logger.warning(f"获取美元汇率失败，使用缓存: {e}")
-
-    return _usd_rate_cache["rate"]
+    return _fx_rate(_usd_rate_cache, "https://hq.sinajs.cn/list=fx_susdcny", "美元")
 
 
 # ========== Pydantic Models ==========
@@ -432,9 +417,11 @@ def get_portfolio_summary(
     # 获取实时行情（可选）
     quotes = _fetch_quotes_for_stocks(stocks) if include_quotes else {}
 
-    # 获取汇率
-    hkd_rate = get_hkd_cny_rate()
-    usd_rate = get_usd_cny_rate()
+    # 获取汇率：只有真的持有港股/美股才需要，纯 A 股不触发任何汇率请求
+    need_hkd = any(s.market == "HK" for s in stocks)
+    need_usd = any(s.market == "US" for s in stocks)
+    hkd_rate = get_hkd_cny_rate(fetch=need_hkd)
+    usd_rate = get_usd_cny_rate(fetch=need_usd)
 
     # 计算各账户持仓
     account_summaries = []
@@ -637,7 +624,8 @@ def _gather_holdings(db: Session) -> list[dict]:
     stocks = db.query(Stock).filter(Stock.id.in_(stock_ids)).all() if stock_ids else []
     stock_map = {s.id: s for s in stocks}
     quotes = _fetch_quotes_for_stocks(stocks) if stocks else {}
-    hkd, usd = get_hkd_cny_rate(), get_usd_cny_rate()
+    hkd = get_hkd_cny_rate(fetch=any(s.market == "HK" for s in stocks))
+    usd = get_usd_cny_rate(fetch=any(s.market == "US" for s in stocks))
 
     out: list[dict] = []
     seen: dict[tuple[str, str], dict] = {}
