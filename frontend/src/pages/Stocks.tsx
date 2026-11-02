@@ -180,6 +180,8 @@ interface PositionForm {
   stock_symbol: string
   stock_name: string
   stock_market: string
+  record_trade: boolean
+  deduct_cash: boolean
 }
 
 // 股票建议信息（来自盘中监控 API）
@@ -472,7 +474,7 @@ export default function StocksPage() {
 
   // Position form
   const [positionDialogOpen, setPositionDialogOpen] = useState(false)
-  const [positionForm, setPositionForm] = useState<PositionForm>({ account_id: 0, stock_id: 0, cost_price: '', quantity: '', invested_amount: '', trading_style: '', stock_symbol: '', stock_name: '', stock_market: 'CN' })
+  const [positionForm, setPositionForm] = useState<PositionForm>({ account_id: 0, stock_id: 0, cost_price: '', quantity: '', invested_amount: '', trading_style: '', stock_symbol: '', stock_name: '', stock_market: 'CN', record_trade: true, deduct_cash: false })
   const [editPositionId, setEditPositionId] = useState<number | null>(null)
   const [positionDialogAccountId, setPositionDialogAccountId] = useState<number | null>(null)
   const [positionSearchQuery, setPositionSearchQuery] = useState('')
@@ -494,6 +496,8 @@ export default function StocksPage() {
     price: '',
     date: new Date().toISOString().slice(0, 10),
     note: '',
+    fee: '',
+    cost: '',
   })
   const [tradeBusy, setTradeBusy] = useState(false)
   const [riskTarget, setRiskTarget] = useState<{
@@ -503,6 +507,7 @@ export default function StocksPage() {
   const [riskForm, setRiskForm] = useState({ stop: '', take: '' })
   const [riskBusy, setRiskBusy] = useState(false)
   const [riskHint, setRiskHint] = useState('')
+  const [wealthRefreshKey, setWealthRefreshKey] = useState(0)
 
   // Agent dialog
   const [agentDialogStock, setAgentDialogStock] = useState<Stock | null>(null)
@@ -803,6 +808,8 @@ export default function StocksPage() {
       price: pos.current_price != null ? pos.current_price.toFixed(2) : '',
       date: new Date().toISOString().slice(0, 10),
       note: '',
+      fee: '',
+      cost: '',
     })
   }
 
@@ -821,8 +828,16 @@ export default function StocksPage() {
     const commission = gross > 0 ? Math.max(gross * Number(p.commission_rate), Number(p.min_commission)) : 0
     const stamp = tradeTarget.action === 'sell' ? gross * Number(p.stamp_duty_rate) : 0
     const transfer = gross * Number(p.transfer_fee_rate)
-    return { gross, commission, stamp, transfer, total: commission + stamp + transfer }
-  }, [tradeTarget, tradeForm.quantity, tradeForm.price])
+    const manualFee = tradeForm.fee !== '' ? Number(tradeForm.fee) : null
+    return {
+      gross,
+      commission,
+      stamp,
+      transfer,
+      manualFee,
+      total: manualFee != null && Number.isFinite(manualFee) ? manualFee : commission + stamp + transfer,
+    }
+  }, [tradeTarget, tradeForm.quantity, tradeForm.price, tradeForm.fee])
 
   const submitTrade = async () => {
     if (!tradeTarget) return
@@ -842,6 +857,8 @@ export default function StocksPage() {
         price,
         trade_date: tradeForm.date || undefined,
         note: tradeForm.note,
+        fee_override: tradeForm.fee !== '' ? Number(tradeForm.fee) : undefined,
+        cost_override: tradeForm.cost !== '' ? Number(tradeForm.cost) : undefined,
       })
       toast(
         `${tradeTarget.action === 'buy' ? '加仓' : '减仓'}已记录，费用 ¥${res.fees.total.toFixed(2)}${res.warning ? '（资金不足）' : ''}`,
@@ -849,6 +866,7 @@ export default function StocksPage() {
       )
       setTradeTarget(null)
       await loadPortfolio()
+      setWealthRefreshKey((k) => k + 1)
     } catch (e) {
       toast(e instanceof Error ? e.message : '交易记录失败', 'error')
     } finally {
@@ -875,6 +893,7 @@ export default function StocksPage() {
       })
       setRiskHint(res.hint)
       await loadPortfolio()
+      setWealthRefreshKey((k) => k + 1)
     } catch (e) {
       toast(e instanceof Error ? e.message : '保存失败', 'error')
     } finally {
@@ -1293,6 +1312,8 @@ export default function StocksPage() {
         stock_symbol: position.symbol,
         stock_name: position.name,
         stock_market: position.market,
+        record_trade: false,
+        deduct_cash: false,
       })
       setEditPositionId(position.id)
     } else {
@@ -1306,6 +1327,8 @@ export default function StocksPage() {
         stock_symbol: '',
         stock_name: '',
         stock_market: 'CN',
+        record_trade: true,
+        deduct_cash: false,
       })
       setEditPositionId(null)
     }
@@ -1393,6 +1416,8 @@ export default function StocksPage() {
         quantity: parseInt(positionForm.quantity),
         invested_amount: positionForm.invested_amount ? parseFloat(positionForm.invested_amount) : null,
         trading_style: positionForm.trading_style,  // 空字符串表示清空
+        record_trade: positionForm.record_trade,
+        deduct_cash: positionForm.deduct_cash,
       }
       if (editPositionId) {
         await fetchAPI(`/positions/${editPositionId}`, { method: 'PUT', body: JSON.stringify(payload) })
@@ -1401,6 +1426,7 @@ export default function StocksPage() {
       }
       setPositionDialogOpen(false)
       loadPortfolio()
+      setWealthRefreshKey((k) => k + 1)
       toast(editPositionId ? '持仓已更新' : '持仓已添加', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : '保存持仓失败', 'error')
@@ -1826,8 +1852,6 @@ export default function StocksPage() {
         </div>
       </div>
 
-      <WealthPanel onChanged={loadPortfolio} />
-
       {/* Portfolio Total Summary */}
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
@@ -1843,31 +1867,16 @@ export default function StocksPage() {
           ))}
         </div>
       ) : portfolio ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-          <div className="card p-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+          <div className="card p-4 border-primary/30 bg-primary/5">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <TrendingUp className="w-4 h-4" />
-              <span className="text-[12px]">总市值</span>
+              <PiggyBank className="w-4 h-4 text-primary" />
+              <span className="text-[12px]">总资产</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
-              {formatMoney(portfolio.total.total_market_value)}
+            <div className="text-[22px] font-bold text-foreground font-mono">
+              {formatMoney(portfolio.total.total_assets)}
             </div>
-          </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              {portfolio.total.total_pnl >= 0 ? (
-                <ArrowUpRight className="w-4 h-4 text-rose-500" />
-              ) : (
-                <ArrowDownRight className="w-4 h-4 text-emerald-500" />
-              )}
-              <span className="text-[12px]">总盈亏</span>
-            </div>
-            <div className={`text-[20px] font-bold font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-              {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
-              <span className="text-[13px] ml-1.5">
-                ({portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%)
-              </span>
-            </div>
+            <div className="text-[10px] text-muted-foreground">现金 + 持仓市值</div>
           </div>
 
           {(() => {
@@ -1879,20 +1888,41 @@ export default function StocksPage() {
             return (
               <div className="card p-4">
                 <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                  {isUp ? (
-                    <ArrowUpRight className="w-4 h-4 text-rose-500" />
-                  ) : (
-                    <ArrowDownRight className="w-4 h-4 text-emerald-500" />
-                  )}
+                  {isUp ? <ArrowUpRight className="w-4 h-4 text-rose-500" /> : <ArrowDownRight className="w-4 h-4 text-emerald-500" />}
                   <span className="text-[12px]">今日盈亏</span>
                 </div>
                 <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
-                  <span className="text-[13px] ml-1.5">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>
+                </div>
+                <div className={`text-[11px] font-mono ${isUp ? 'text-rose-500/80' : 'text-emerald-500/80'}`}>
+                  {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
                 </div>
               </div>
             )
           })()}
+
+          <div className="card p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              {portfolio.total.total_pnl >= 0 ? <ArrowUpRight className="w-4 h-4 text-rose-500" /> : <ArrowDownRight className="w-4 h-4 text-emerald-500" />}
+              <span className="text-[12px]">累计盈亏</span>
+            </div>
+            <div className={`text-[20px] font-bold font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+              {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
+            </div>
+            <div className={`text-[11px] font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500/80' : 'text-emerald-500/80'}`}>
+              {portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <TrendingUp className="w-4 h-4" />
+              <span className="text-[12px]">持仓市值</span>
+            </div>
+            <div className="text-[20px] font-bold text-foreground font-mono">
+              {formatMoney(portfolio.total.total_market_value)}
+            </div>
+          </div>
 
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -1903,30 +1933,23 @@ export default function StocksPage() {
               {formatMoney(portfolio.total.available_funds)}
             </div>
           </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <PiggyBank className="w-4 h-4" />
-              <span className="text-[12px]">总资产</span>
-            </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
-              {formatMoney(portfolio.total.total_assets)}
-            </div>
-          </div>
 
           <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Bell className="w-4 h-4" />
-              <span className="text-[12px]">仓位占比</span>
+            <div className="flex items-center justify-between text-muted-foreground mb-1">
+              <span className="flex items-center gap-2"><Bell className="w-4 h-4" /><span className="text-[12px]">仓位</span></span>
+              <span className="text-[11px] font-mono text-foreground">{positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
-              {positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-2">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, positionRatio?.pct || 0))}%` }} />
             </div>
-            <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
-              {positionRatio ? `持仓市值 ${formatMoney(positionRatio.mv)} / 总资产 ${formatMoney(positionRatio.assets)}` : '—'}
+            <div className="mt-1.5 text-[10px] text-muted-foreground">
+              {positionRatio ? `持仓 ${formatMoney(positionRatio.mv)} / 总资产 ${formatMoney(positionRatio.assets)}` : '—'}
             </div>
           </div>
         </div>
       ) : null}
+
+      <WealthPanel onChanged={loadPortfolio} refreshKey={wealthRefreshKey} />
 
       {/* Tabs: Positions / Watchlist */}
       <div className="mb-4">
@@ -2836,6 +2859,28 @@ export default function StocksPage() {
               />
             </div>
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[11px]">手续费（手动，可空）</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={tradeForm.fee}
+                placeholder={tradeFeePreview ? `自动 ${tradeFeePreview.total.toFixed(2)}` : '自动'}
+                onChange={(e) => setTradeForm({ ...tradeForm, fee: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px]">成交后成本（手动，可空）</Label>
+              <Input
+                type="number"
+                step="0.001"
+                value={tradeForm.cost}
+                placeholder="按券商实际成本"
+                onChange={(e) => setTradeForm({ ...tradeForm, cost: e.target.value })}
+              />
+            </div>
+          </div>
           {tradeFeePreview && (
             <div className="mt-3 rounded-md border border-border/50 bg-muted/30 p-2 text-[11px] text-muted-foreground">
               <div className="flex justify-between"><span>成交金额</span><span className="font-mono">{formatMoney(tradeFeePreview.gross)}</span></div>
@@ -2843,8 +2888,12 @@ export default function StocksPage() {
               <div className="flex justify-between"><span>印花税</span><span className="font-mono">{formatMoney(tradeFeePreview.stamp)}</span></div>
               <div className="flex justify-between"><span>过户费</span><span className="font-mono">{formatMoney(tradeFeePreview.transfer)}</span></div>
               <div className="mt-1 flex justify-between border-t border-border/40 pt-1 text-foreground">
-                <span>费用合计</span><span className="font-mono">{formatMoney(tradeFeePreview.total)}</span>
+                <span>{tradeFeePreview.manualFee != null ? '费用合计（手动）' : '费用合计'}</span>
+                <span className="font-mono">{formatMoney(tradeFeePreview.total)}</span>
               </div>
+              {tradeForm.cost !== '' && (
+                <div className="mt-1 text-[10px] text-amber-600">成交后成本将按你填写的数值覆盖自动摊薄结果。</div>
+              )}
             </div>
           )}
           <div className="mt-4 flex justify-end gap-2">
@@ -2888,19 +2937,8 @@ export default function StocksPage() {
             </div>
           </div>
           {riskHint && (
-            <div className="mt-3 space-y-2">
-              <div className="rounded-md border border-amber-300/60 bg-amber-50 p-2 text-[11px] text-amber-800">
-                {riskHint}
-              </div>
-              {riskTarget && (
-                <StockPriceAlertPanel
-                  mode="inline"
-                  stockId={riskTarget.pos.stock_id}
-                  symbol={riskTarget.pos.symbol}
-                  market={riskTarget.pos.market}
-                  stockName={riskTarget.pos.name}
-                />
-              )}
+            <div className="mt-3 rounded-md border border-amber-300/60 bg-amber-50 p-2 text-[11px] text-amber-800">
+              {riskHint}
             </div>
           )}
           <div className="mt-4 flex justify-end gap-2">
@@ -3161,6 +3199,28 @@ export default function StocksPage() {
                 </Select>
               </div>
             </div>
+            {!editPositionId && (
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-2.5 text-[11px] space-y-1">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={positionForm.record_trade}
+                    onChange={(e) => setPositionForm({ ...positionForm, record_trade: e.target.checked, deduct_cash: e.target.checked ? positionForm.deduct_cash : false })}
+                  />
+                  同时记为一次「建仓买入」（写入交易流水）
+                </label>
+                {positionForm.record_trade && (
+                  <label className="flex items-center gap-2 pl-5">
+                    <input
+                      type="checkbox"
+                      checked={positionForm.deduct_cash}
+                      onChange={(e) => setPositionForm({ ...positionForm, deduct_cash: e.target.checked })}
+                    />
+                    扣减可用资金（实际买入时勾选；录入已有仓位不要勾）
+                  </label>
+                )}
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setPositionDialogOpen(false)}>取消</Button>
               <Button

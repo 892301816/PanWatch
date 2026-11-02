@@ -486,6 +486,7 @@ export default function StockInsightModal(props: {
   const [announcements, setAnnouncements] = useState<NewsItem[]>([])
   const [reports, setReports] = useState<HistoryRecord[]>([])
   const [operationPlan, setOperationPlan] = useState<OperationPlan | null>(null)
+  const [planGenerating, setPlanGenerating] = useState(false)
   const [planModalOpen, setPlanModalOpen] = useState(false)
   const [reportTab, setReportTab] = useState<'premarket_outlook' | 'daily_report' | 'operation_plan'>('premarket_outlook')
   const [deepResult, setDeepResult] = useState<DeepAnalysisResult | null>(null)
@@ -713,6 +714,36 @@ export default function StockInsightModal(props: {
       setOperationPlan(null)
     }
   }, [symbol, market])
+
+  const generateOperationPlan = useCallback(async () => {
+    if (planGenerating) return
+    setPlanGenerating(true)
+    try {
+      const list = await stocksApi.list()
+      const target = list.find(
+        (item) => item.symbol === symbol && (item.market || 'CN').toUpperCase() === market,
+      )
+      if (!target) {
+        toast('该股票不在自选/持仓里，先加入自选再生成操作计划', 'error')
+        return
+      }
+      const res = await stocksApi.triggerAgent(target.id, 'operation_plan', {
+        wait: true,
+        bypass_market_hours: true,
+        allow_unbound: true,
+      })
+      if (!res.success) {
+        toast(res.message || 'AI 操作计划生成失败', 'error')
+        return
+      }
+      await loadOperationPlan()
+      toast('AI 操作计划已生成', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'AI 操作计划生成失败', 'error')
+    } finally {
+      setPlanGenerating(false)
+    }
+  }, [planGenerating, symbol, market, loadOperationPlan, toast])
 
   const loadReports = useCallback(async () => {
     if (!symbol) return
@@ -1944,14 +1975,27 @@ export default function StockInsightModal(props: {
                   <div className="card p-4 h-full flex flex-col">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="text-[12px] text-muted-foreground">操作计划</div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-[11px] text-muted-foreground"
-                        onClick={() => setPlanModalOpen(true)}
-                      >
-                        {operationPlan ? '查看' : '详情'}
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-[11px] text-primary"
+                          onClick={generateOperationPlan}
+                          disabled={planGenerating}
+                          title="让 AI 生成一份操作计划"
+                        >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          {planGenerating ? '生成中…' : 'AI建议'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-[11px] text-muted-foreground"
+                          onClick={() => setPlanModalOpen(true)}
+                        >
+                          {operationPlan ? '查看' : '详情'}
+                        </Button>
+                      </div>
                     </div>
                     {!operationPlan ? (
                       <div className="text-[12px] text-muted-foreground py-3">

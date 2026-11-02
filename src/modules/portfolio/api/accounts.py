@@ -112,6 +112,9 @@ class PositionCreate(BaseModel):
     quantity: int
     invested_amount: float | None = None
     trading_style: str | None = None  # short: 短线, swing: 波段, long: 长线
+    # 新建立即记一笔「建仓」流水；默认不改可用资金（新增持仓多用于录入已有仓位）
+    record_trade: bool = True
+    deduct_cash: bool = False
 
 
 class PositionUpdate(BaseModel):
@@ -270,6 +273,70 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
     ).first()
     if existing:
         raise HTTPException(400, f"账户 {account.name} 已有 {stock.name} 的持仓，请编辑现有持仓")
+
+    if data.record_trade:
+        # 新增持仓 = 一次建仓买入：写入交易流水，保持成本一致
+        from src.modules.portfolio import wealth as wealth_service
+
+        gross = round(float(data.cost_price) * int(data.quantity), 2)
+        zero_fee = {
+            "gross": gross,
+            "commission": 0.0,
+            "stamp_duty": 0.0,
+            "transfer_fee": 0.0,
+            "total_fee": 0.0,
+        }
+        try:
+            wealth_service.execute_trade(
+                db,
+                account=account,
+                stock=stock,
+                action="buy",
+                quantity=int(data.quantity),
+                price=float(data.cost_price),
+                note="新建持仓",
+                source="position_create",
+                fee_override=zero_fee,
+                deduct_cash=bool(data.deduct_cash),
+            )
+            position = (
+                db.query(Position)
+                .filter(
+                    Position.account_id == data.account_id,
+                    Position.stock_id == data.stock_id,
+                )
+                .first()
+            )
+            if position:
+                if data.trading_style is not None:
+                    position.trading_style = data.trading_style or None
+                if data.invested_amount is not None:
+                    position.invested_amount = float(data.invested_amount)
+                if data.deduct_cash:
+                    # 记录真实买入成本（含 0 费用时即成交价）
+                    position.cost_price = float(data.cost_price)
+                    position.invested_amount = gross
+            db.commit()
+            db.refresh(position)
+        except Exception:
+            db.rollback()
+            logger.exception("新建持仓记账失败")
+            raise HTTPException(500, "新建持仓失败")
+        return {
+            "id": position.id,
+            "account_id": position.account_id,
+            "stock_id": position.stock_id,
+            "cost_price": position.cost_price,
+            "quantity": position.quantity,
+            "invested_amount": position.invested_amount,
+            "sort_order": position.sort_order or 0,
+            "trading_style": position.trading_style,
+            "stop_loss_price": position.stop_loss_price,
+            "take_profit_price": position.take_profit_price,
+            "account_name": account.name,
+            "stock_symbol": stock.symbol,
+            "stock_name": stock.name,
+        }
 
     max_order = db.query(func.max(Position.sort_order)).filter(
         Position.account_id == data.account_id

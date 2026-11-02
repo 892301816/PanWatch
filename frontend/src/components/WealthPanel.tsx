@@ -51,7 +51,13 @@ function StrategyBadge({ type }: { type: string }) {
   )
 }
 
-export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
+export default function WealthPanel({
+  onChanged,
+  refreshKey = 0,
+}: {
+  onChanged?: () => void
+  refreshKey?: number
+}) {
   const [data, setData] = useState<WealthOverview | null>(null)
   const [dividends, setDividends] = useState<DividendRecord[]>([])
   const [stocks, setStocks] = useState<StockItem[]>([])
@@ -80,6 +86,14 @@ export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
   const [execPlan, setExecPlan] = useState<DcaPlan | null>(null)
   const [execForm, setExecForm] = useState({ price: 0, quantity: 0, trade_date: '' })
 
+  const [feeAccount, setFeeAccount] = useState<WealthAccount | null>(null)
+  const [feeForm, setFeeForm] = useState({
+    commission: '0.025',
+    min_commission: '5',
+    stamp: '0.05',
+    transfer: '0.001',
+  })
+
   const showToast = useCallback((msg: string) => {
     setToast(msg)
     window.setTimeout(() => setToast(''), 2400)
@@ -106,7 +120,7 @@ export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [load, refreshKey])
 
   const accounts = data?.accounts || []
   const due = data?.dca_due || []
@@ -135,6 +149,39 @@ export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
       showToast(enabled ? '已开启分红再投资' : '已关闭分红再投资')
     } catch {
       showToast('保存失败，请重试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openFee = (account: WealthAccount) => {
+    const p = account.fee_policy || {}
+    setFeeForm({
+      commission: String(((p.commission_rate ?? 0.00025) * 100).toFixed(4)),
+      min_commission: String(p.min_commission ?? 5),
+      stamp: String(((p.stamp_duty_rate ?? 0.0005) * 100).toFixed(4)),
+      transfer: String(((p.transfer_fee_rate ?? 0.00001) * 100).toFixed(4)),
+    })
+    setFeeAccount(account)
+  }
+
+  const saveFee = async () => {
+    if (!feeAccount) return
+    setBusy(true)
+    try {
+      await portfolioApi.updateStrategy(feeAccount.id, {
+        fee_policy: {
+          commission_rate: Number(feeForm.commission) / 100,
+          min_commission: Number(feeForm.min_commission),
+          stamp_duty_rate: Number(feeForm.stamp) / 100,
+          transfer_fee_rate: Number(feeForm.transfer) / 100,
+        },
+      })
+      setFeeAccount(null)
+      await load()
+      showToast('费用设置已保存')
+    } catch {
+      showToast('保存失败，请检查数值')
     } finally {
       setBusy(false)
     }
@@ -299,7 +346,14 @@ export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
                         {STRATEGY_LABEL[type]}
                       </button>
                     ))}
-                    <label className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <button
+                      className="ml-auto text-[10px] text-primary hover:underline"
+                      onClick={() => openFee(account)}
+                      disabled={busy}
+                    >
+                      费用设置
+                    </button>
+                    <label className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                       <input
                         type="checkbox"
                         checked={account.dividend_reinvest}
@@ -497,6 +551,54 @@ export default function WealthPanel({ onChanged }: { onChanged?: () => void }) {
             </Field>
           </div>
           <ModalActions onCancel={() => setGoalsOpen(false)} onSubmit={saveGoals} busy={busy} />
+        </Modal>
+      )}
+
+      {/* 费用设置 */}
+      {feeAccount && (
+        <Modal title={`费用设置 · ${feeAccount.name}`} onClose={() => setFeeAccount(null)}>
+          <div className="text-[11px] text-muted-foreground">
+            按你券商的真实费率填写；交易时仍可手动覆盖单笔费用。
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Field label="佣金费率（%）">
+              <input
+                type="number"
+                step="0.001"
+                className="input"
+                value={feeForm.commission}
+                onChange={(e) => setFeeForm({ ...feeForm, commission: e.target.value })}
+              />
+            </Field>
+            <Field label="最低佣金（元）">
+              <input
+                type="number"
+                step="0.01"
+                className="input"
+                value={feeForm.min_commission}
+                onChange={(e) => setFeeForm({ ...feeForm, min_commission: e.target.value })}
+              />
+            </Field>
+            <Field label="印花税率（%，仅卖出）">
+              <input
+                type="number"
+                step="0.001"
+                className="input"
+                value={feeForm.stamp}
+                onChange={(e) => setFeeForm({ ...feeForm, stamp: e.target.value })}
+              />
+            </Field>
+            <Field label="过户费率（%）">
+              <input
+                type="number"
+                step="0.001"
+                className="input"
+                value={feeForm.transfer}
+                onChange={(e) => setFeeForm({ ...feeForm, transfer: e.target.value })}
+              />
+            </Field>
+          </div>
+          <ModalActions onCancel={() => setFeeAccount(null)} onSubmit={saveFee} busy={busy} />
         </Modal>
       )}
 

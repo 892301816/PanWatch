@@ -46,6 +46,8 @@ class TradeIn(BaseModel):
     price: float
     trade_date: str | None = None
     note: str = ""
+    fee_override: float | None = None
+    cost_override: float | None = None
 
 
 class DcaIn(BaseModel):
@@ -226,6 +228,8 @@ def create_trade(data: TradeIn, db: Session = Depends(get_db)):
             price=data.price,
             trade_date=data.trade_date,
             note=data.note,
+            manual_fee_total=data.fee_override,
+            manual_cost=data.cost_override,
         )
         db.commit()
         return result

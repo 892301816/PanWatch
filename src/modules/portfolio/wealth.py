@@ -171,6 +171,9 @@ def execute_trade(
     note: str = "",
     source: str = "manual",
     fee_override: dict | None = None,
+    deduct_cash: bool = True,
+    manual_fee_total: float | None = None,
+    manual_cost: float | None = None,
 ) -> dict:
     """执行一笔记账交易。
 
@@ -193,6 +196,15 @@ def execute_trade(
     policy = fee_policy_for(account)
     side = "sell" if action == "sell" else "buy"
     fees = fee_override or calc_fees(policy, side, quantity, price)
+    if manual_fee_total is not None and manual_fee_total >= 0:
+        # 用户按券商实际账单手动覆盖：只记一个总额，不再拆佣金/印花税/过户费
+        fees = {
+            "gross": fees.get("gross", round(quantity * price, 2)),
+            "commission": round(float(manual_fee_total), 2),
+            "stamp_duty": 0.0,
+            "transfer_fee": 0.0,
+            "total_fee": round(float(manual_fee_total), 2),
+        }
 
     position = (
         db.query(Position)
@@ -214,6 +226,12 @@ def execute_trade(
             position = _apply_buy(None, account, stock, quantity, price, fees, trade_date)
             db.add(position)
         cash_change = round(-(fees["gross"] + fees["total_fee"]), 2)
+        if not deduct_cash:
+            # 手工录入已有持仓：只留痕，不动可用资金
+            account.available_funds = round(
+                float(account.available_funds or 0) - cash_change, 2
+            )
+            cash_change = 0.0
         action_label = "buy" if action == "buy" else "dca"
 
     elif action == "sell":
@@ -252,6 +270,11 @@ def execute_trade(
 
     else:
         raise ValueError(f"不支持的交易类型: {action}")
+
+    # 用户手动指定成交后成本（按券商实际成本覆盖自动摊薄结果）
+    if manual_cost is not None and position is not None and manual_cost > 0:
+        position.cost_price = round(float(manual_cost), 4)
+        position.invested_amount = round(float(manual_cost) * int(position.quantity or 0), 2)
 
     record = TradeRecord(
         account_id=account.id,

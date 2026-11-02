@@ -182,6 +182,8 @@ export const portfolioApi = {
     price: number
     trade_date?: string
     note?: string
+    fee_override?: number
+    cost_override?: number
   }) =>
     fetchAPI<{
       trade_id: number
