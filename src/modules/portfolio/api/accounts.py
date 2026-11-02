@@ -95,6 +95,11 @@ class AccountResponse(BaseModel):
     name: str
     available_funds: float
     enabled: bool
+    strategy_type: str = ""
+    risk_policy: dict = {}
+    capital_plan: dict = {}
+    fee_policy: dict = {}
+    dividend_reinvest: bool = True
 
     class Config:
         from_attributes = True
@@ -125,6 +130,8 @@ class PositionResponse(BaseModel):
     invested_amount: float | None
     sort_order: int
     trading_style: str | None
+    stop_loss_price: float | None = None
+    take_profit_price: float | None = None
     # 关联信息
     account_name: str | None = None
     stock_symbol: str | None = None
@@ -235,6 +242,8 @@ def list_positions(
             "invested_amount": pos.invested_amount,
             "sort_order": pos.sort_order or 0,
             "trading_style": pos.trading_style,
+            "stop_loss_price": pos.stop_loss_price,
+            "take_profit_price": pos.take_profit_price,
             "account_name": pos.account.name if pos.account else None,
             "stock_symbol": pos.stock.symbol if pos.stock else None,
             "stock_name": pos.stock.name if pos.stock else None,
@@ -289,6 +298,8 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
         "invested_amount": position.invested_amount,
         "sort_order": position.sort_order or 0,
         "trading_style": position.trading_style,
+        "stop_loss_price": position.stop_loss_price,
+        "take_profit_price": position.take_profit_price,
         "account_name": account.name,
         "stock_symbol": stock.symbol,
         "stock_name": stock.name,
@@ -325,6 +336,8 @@ def update_position(position_id: int, data: PositionUpdate, db: Session = Depend
         "invested_amount": position.invested_amount,
         "sort_order": position.sort_order or 0,
         "trading_style": position.trading_style,
+        "stop_loss_price": position.stop_loss_price,
+        "take_profit_price": position.take_profit_price,
         "account_name": position.account.name,
         "stock_symbol": position.stock.symbol,
         "stock_name": position.stock.name,
@@ -494,6 +507,8 @@ def get_portfolio_summary(
                 "invested_amount": pos.invested_amount,
                 "sort_order": pos.sort_order or 0,
                 "trading_style": pos.trading_style,
+                "stop_loss_price": pos.stop_loss_price,
+                "take_profit_price": pos.take_profit_price,
                 "current_price": current_price,
                 "current_price_cny": round(current_price * rate, 2) if current_price else None,
                 "change_pct": change_pct,
@@ -525,6 +540,11 @@ def get_portfolio_summary(
             "total_pnl_pct": round(acc_pnl_pct, 2),
             "total_daily_pnl": round(acc_daily_pnl, 2),
             "total_assets": round(acc_total_assets, 2),
+            "strategy_type": acc.strategy_type or "",
+            "risk_policy": acc.risk_policy or {},
+            "capital_plan": acc.capital_plan or {},
+            "fee_policy": acc.fee_policy or {},
+            "dividend_reinvest": bool(acc.dividend_reinvest),
             "positions": positions_data,
         })
 

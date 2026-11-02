@@ -2139,6 +2139,151 @@ def _m132_stock_group_name(conn: Connection) -> None:
     )
 
 
+def _m133_wealth_accounts(conn: Connection) -> None:
+    """理财化：账户策略、持仓风控线、交易流水、定投计划、分红入账。"""
+    for column, ddl in (
+        (
+            "strategy_type",
+            "ALTER TABLE accounts ADD COLUMN strategy_type VARCHAR DEFAULT ''",
+        ),
+        (
+            "risk_policy",
+            "ALTER TABLE accounts ADD COLUMN risk_policy JSON DEFAULT '{}'",
+        ),
+        (
+            "capital_plan",
+            "ALTER TABLE accounts ADD COLUMN capital_plan JSON DEFAULT '{}'",
+        ),
+        (
+            "fee_policy",
+            "ALTER TABLE accounts ADD COLUMN fee_policy JSON DEFAULT '{}'",
+        ),
+        (
+            "dividend_reinvest",
+            "ALTER TABLE accounts ADD COLUMN dividend_reinvest BOOLEAN DEFAULT 1",
+        ),
+    ):
+        _add_column_if_missing(conn, "accounts", column, ddl)
+
+    for column, ddl in (
+        (
+            "stop_loss_price",
+            "ALTER TABLE positions ADD COLUMN stop_loss_price REAL",
+        ),
+        (
+            "take_profit_price",
+            "ALTER TABLE positions ADD COLUMN take_profit_price REAL",
+        ),
+    ):
+        _add_column_if_missing(conn, "positions", column, ddl)
+
+    conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS trade_records ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, "
+            "stock_id INTEGER REFERENCES stocks(id) ON DELETE SET NULL, "
+            "stock_symbol VARCHAR DEFAULT '', "
+            "stock_name VARCHAR DEFAULT '', "
+            "action VARCHAR NOT NULL DEFAULT 'buy', "
+            "quantity INTEGER DEFAULT 0, "
+            "price REAL DEFAULT 0, "
+            "amount REAL DEFAULT 0, "
+            "commission REAL DEFAULT 0, "
+            "stamp_duty REAL DEFAULT 0, "
+            "transfer_fee REAL DEFAULT 0, "
+            "total_fee REAL DEFAULT 0, "
+            "realized_pnl REAL DEFAULT 0, "
+            "cash_change REAL DEFAULT 0, "
+            "trade_date VARCHAR DEFAULT '', "
+            "note VARCHAR DEFAULT '', "
+            "source VARCHAR DEFAULT 'manual', "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trade_records_account_date "
+            "ON trade_records(account_id, trade_date)"
+        )
+    )
+
+    conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS dca_plans ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, "
+            "stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE, "
+            "amount REAL NOT NULL DEFAULT 0, "
+            "frequency VARCHAR DEFAULT 'monthly', "
+            "day_of_month INTEGER DEFAULT 15, "
+            "day_of_week INTEGER DEFAULT 0, "
+            "start_date VARCHAR DEFAULT '', "
+            "next_run_date VARCHAR DEFAULT '', "
+            "last_notified_date VARCHAR DEFAULT '', "
+            "enabled BOOLEAN DEFAULT 1, "
+            "executed_count INTEGER DEFAULT 0, "
+            "total_invested REAL DEFAULT 0, "
+            "note VARCHAR DEFAULT '', "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_dca_plans_account_enabled "
+            "ON dca_plans(account_id, enabled)"
+        )
+    )
+
+    conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS dividend_events ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "symbol VARCHAR NOT NULL, "
+            "market VARCHAR DEFAULT 'CN', "
+            "report_date VARCHAR DEFAULT '', "
+            "ex_date VARCHAR DEFAULT '', "
+            "record_date VARCHAR DEFAULT '', "
+            "per_share REAL DEFAULT 0, "
+            "plan_profile VARCHAR DEFAULT '', "
+            "fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "UNIQUE(symbol, report_date, ex_date))"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_dividend_events_symbol "
+            "ON dividend_events(symbol)"
+        )
+    )
+
+    conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS dividend_ledger ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "event_id INTEGER NOT NULL REFERENCES dividend_events(id) ON DELETE CASCADE, "
+            "account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, "
+            "stock_id INTEGER REFERENCES stocks(id) ON DELETE SET NULL, "
+            "quantity INTEGER DEFAULT 0, "
+            "per_share REAL DEFAULT 0, "
+            "amount REAL DEFAULT 0, "
+            "action VARCHAR DEFAULT 'cash', "
+            "shares_added INTEGER DEFAULT 0, "
+            "price REAL DEFAULT 0, "
+            "trade_id INTEGER REFERENCES trade_records(id), "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "UNIQUE(event_id, account_id))"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_dividend_ledger_account "
+            "ON dividend_ledger(account_id)"
+        )
+    )
+
+
 def _m131_hot_themes(conn: Connection) -> None:
     """每日炒作题材表。
 
@@ -2212,6 +2357,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(130, "fundamentals_priority", _m130_fundamentals_priority),
     Migration(131, "hot_themes", _m131_hot_themes),
     Migration(132, "stock_group_name", _m132_stock_group_name),
+    Migration(133, "wealth_accounts", _m133_wealth_accounts),
 )
 
 

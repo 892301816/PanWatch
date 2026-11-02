@@ -509,6 +509,20 @@ class IntradayMonitorAgent(BaseAgent):
                 lines.append(f"- 历史记忆主题：{memory.get('latest_history_topic')}")
 
         # 各账户持仓信息
+        strategy_ctx: dict[str, dict] = {}
+        try:
+            from src.modules.portfolio.wealth import strategy_context_for_symbol
+
+            market_value = getattr(stock.market, "value", None) or str(
+                getattr(stock, "market", "CN")
+            )
+            strategy_ctx = {
+                item["account_name"]: item
+                for item in strategy_context_for_symbol(stock.symbol, market_value)
+            }
+        except Exception:  # noqa: BLE001 — 策略上下文缺失不影响盘中判断
+            strategy_ctx = {}
+
         if positions:
             lines.append(f"\n## 持仓情况（共 {len(positions)} 个账户）")
             for i, pos in enumerate(positions, 1):
@@ -529,6 +543,17 @@ class IntradayMonitorAgent(BaseAgent):
 
                 lines.append(f"\n### 持仓 {i}：{pos.account_name}")
                 lines.append(f"- 交易风格：{style_label}")
+                ctx = strategy_ctx.get(pos.account_name) or {}
+                if ctx.get("strategy_label"):
+                    lines.append(f"- 账户策略：{ctx['strategy_label']}")
+                    if ctx.get("max_single_weight") is not None:
+                        lines.append(
+                            f"- 策略单仓上限：{float(ctx['max_single_weight']) * 100:.0f}%"
+                        )
+                if ctx.get("stop_loss_price"):
+                    lines.append(f"- 止损价：{float(ctx['stop_loss_price']):.2f}")
+                if ctx.get("take_profit_price"):
+                    lines.append(f"- 止盈价：{float(ctx['take_profit_price']):.2f}")
                 lines.append(f"- 成本价：{cost_price:.2f}")
                 lines.append(f"- 持仓量：{pos.quantity} 股")
                 lines.append(f"- 持仓市值：{market_value:.0f} 元")
@@ -539,6 +564,10 @@ class IntradayMonitorAgent(BaseAgent):
                     pnl_note = "（触发止盈提醒）"
                 lines.append(f"- 浮动盈亏：{pnl_pct:+.1f}%{pnl_note}")
                 lines.append(f"- 账户可用：{acc_funds:.0f} 元")
+            lines.append(
+                "\n策略要求：激进账户关注短线/波段机会与止损纪律；稳健账户优先控制回撤、"
+                "遵守单仓上限。止损/止盈只作为提示，不自动下单。"
+            )
         else:
             lines.append("\n## 未持仓（仅关注）")
             lines.append(f"- 可用资金充足，可考虑建仓")

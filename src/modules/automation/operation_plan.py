@@ -258,6 +258,30 @@ class OperationPlanAgent(BaseAgent):
             else:
                 lines.append("- 持仓：未持有")
 
+            # 账户策略与个股风控线：让「操作计划」与盘中建议保持一致口径
+            try:
+                from src.modules.portfolio.wealth import strategy_context_for_symbol
+
+                market_val = getattr(getattr(pack, "market", None), "value", None) or str(
+                    getattr(pack, "market", "CN")
+                )
+                for item in strategy_context_for_symbol(pack.symbol, market_val):
+                    extra = []
+                    if item.get("stop_loss_price"):
+                        extra.append(f"止损 {float(item['stop_loss_price']):.2f}")
+                    if item.get("take_profit_price"):
+                        extra.append(f"止盈 {float(item['take_profit_price']):.2f}")
+                    extra.append(f"策略 {item.get('strategy_label') or '未设置'}")
+                    if item.get("max_single_weight") is not None:
+                        extra.append(
+                            f"单仓上限 {float(item['max_single_weight']) * 100:.0f}%"
+                        )
+                    lines.append(
+                        f"- {item['account_name']}：" + "　".join(extra)
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
             # 近期新闻标题(只要标题,正文太长且噪声大)
             news = getattr(pack, "news", None) if pack else None
             items = list(getattr(news, "items", None) or [])[:6]

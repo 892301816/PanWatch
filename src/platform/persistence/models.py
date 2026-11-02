@@ -71,6 +71,16 @@ class Account(Base):
     name = Column(String, nullable=False)  # 账户名称，如 "招商证券"、"华泰证券"
     available_funds = Column(Float, default=0)  # 可用资金
     enabled = Column(Boolean, default=True)
+    # 账户策略：aggr=激进, steady=稳健, 空=未设置（保持原有行为）
+    strategy_type = Column(String, default="")
+    # 风控参数：max_single_weight / min_positions / stop_loss_pct / take_profit_pct
+    risk_policy = Column(JSON, default={})
+    # 资金计划：dca_enabled / dca_amount / dca_frequency / dca_day 等
+    capital_plan = Column(JSON, default={})
+    # 费用参数：commission_rate / min_commission / stamp_duty_rate / transfer_fee_rate
+    fee_policy = Column(JSON, default={})
+    # 红利账户是否默认把现金分红再投资
+    dividend_reinvest = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -125,6 +135,9 @@ class Position(Base):
     trading_style = Column(
         String, default="swing"
     )  # short: 短线, swing: 波段, long: 长线
+    # 个股风控线（仅作为 AI 上下文与手动创建提醒的依据，不自动下单/建提醒）
+    stop_loss_price = Column(Float, nullable=True)
+    take_profit_price = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -1588,3 +1601,112 @@ class ScreenerRule(Base):
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class TradeRecord(Base):
+    """交易流水：加仓/减仓/定投/现金分红/分红再投。
+
+    这是记账数据，不会触发任何真实下单。数量为 0 的现金分红也会记一条，
+    保证现金变动可追溯。
+    """
+
+    __tablename__ = "trade_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(
+        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    stock_id = Column(
+        Integer, ForeignKey("stocks.id", ondelete="SET NULL"), nullable=True
+    )
+    stock_symbol = Column(String, default="")
+    stock_name = Column(String, default="")
+    # buy / sell / dca / dividend / reinvest
+    action = Column(String, nullable=False, default="buy")
+    quantity = Column(Integer, default=0)
+    price = Column(Float, default=0)
+    amount = Column(Float, default=0)
+    commission = Column(Float, default=0)
+    stamp_duty = Column(Float, default=0)
+    transfer_fee = Column(Float, default=0)
+    total_fee = Column(Float, default=0)
+    realized_pnl = Column(Float, default=0)
+    cash_change = Column(Float, default=0)
+    trade_date = Column(String, default="")  # YYYY-MM-DD
+    note = Column(String, default="")
+    source = Column(String, default="manual")  # manual / dca / dividend_auto
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class DcaPlan(Base):
+    """定投计划（记账式，不自动成交）。"""
+
+    __tablename__ = "dca_plans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(
+        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    stock_id = Column(
+        Integer, ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False
+    )
+    amount = Column(Float, nullable=False, default=0)
+    frequency = Column(String, default="monthly")  # monthly / weekly / biweekly
+    day_of_month = Column(Integer, default=15)
+    day_of_week = Column(Integer, default=0)  # 0=周一
+    start_date = Column(String, default="")
+    next_run_date = Column(String, default="")
+    last_notified_date = Column(String, default="")
+    enabled = Column(Boolean, default=True)
+    executed_count = Column(Integer, default=0)
+    total_invested = Column(Float, default=0)
+    note = Column(String, default="")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class DividendEvent(Base):
+    """分红方案（来自东财 F10，按除权日处理）。"""
+
+    __tablename__ = "dividend_events"
+    __table_args__ = (
+        UniqueConstraint("symbol", "report_date", "ex_date", name="uq_dividend_event"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, nullable=False)
+    market = Column(String, default="CN")
+    report_date = Column(String, default="")
+    ex_date = Column(String, default="")
+    record_date = Column(String, default="")
+    per_share = Column(Float, default=0)  # 每股税前现金分红
+    plan_profile = Column(String, default="")
+    fetched_at = Column(DateTime, server_default=func.now())
+
+
+class DividendLedger(Base):
+    """分红入账记录：保证同一方案在同一账户只记一次。"""
+
+    __tablename__ = "dividend_ledger"
+    __table_args__ = (
+        UniqueConstraint("event_id", "account_id", name="uq_dividend_ledger"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(
+        Integer, ForeignKey("dividend_events.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id = Column(
+        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    stock_id = Column(
+        Integer, ForeignKey("stocks.id", ondelete="SET NULL"), nullable=True
+    )
+    quantity = Column(Integer, default=0)
+    per_share = Column(Float, default=0)
+    amount = Column(Float, default=0)
+    action = Column(String, default="cash")  # cash / reinvest
+    shares_added = Column(Integer, default=0)
+    price = Column(Float, default=0)
+    trade_id = Column(Integer, ForeignKey("trade_records.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())

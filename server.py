@@ -1700,7 +1700,15 @@ async def lifespan(app):
 
         dataset_sync.maybe_auto_sync()
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"行情数据集定时任务启动失败: {e}")
+        logger.warning(f"行情数据集调度器启动失败: {e}")
+
+    # 理财账户：定投提醒 + 分红入账
+    try:
+        from src.modules.portfolio import wealth_scheduler
+
+        wealth_scheduler.start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"理财定时任务启动失败: {e}")
 
     # 启动时回填历史 TradingAgents 决策到建议池(stock_suggestions)
     # 早期 TA 运行没写建议池,这次启动一次性补齐,让「AI 建议」面板能看到。
@@ -1792,6 +1800,12 @@ async def lifespan(app):
 
         dataset_scheduler.shutdown()
         logger.info("行情数据集调度器已关闭")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from src.modules.portfolio import wealth_scheduler
+
+        wealth_scheduler.shutdown()
     except Exception:  # noqa: BLE001
         pass
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain } from 'lucide-react'
-import { fetchAPI, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
+import { Plus, Minus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Shield } from 'lucide-react'
+import { fetchAPI, stocksApi, portfolioApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
 import {
@@ -24,6 +24,7 @@ import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
+import WealthPanel from '@/components/WealthPanel'
 
 interface AgentResult {
   success?: boolean
@@ -58,6 +59,10 @@ interface Account {
   name: string
   available_funds: number
   enabled: boolean
+  strategy_type?: string
+  risk_policy?: Record<string, number>
+  fee_policy?: Record<string, number>
+  dividend_reinvest?: boolean
 }
 
 interface Position {
@@ -71,6 +76,8 @@ interface Position {
   quantity: number
   invested_amount: number | null
   trading_style: string  // short: 短线, swing: 波段, long: 长线
+  stop_loss_price?: number | null
+  take_profit_price?: number | null
   current_price: number | null
   current_price_cny: number | null  // 人民币价格（港股换算后）
   change_pct: number | null
@@ -93,6 +100,10 @@ interface AccountSummary {
   total_pnl_pct: number
   total_daily_pnl: number
   total_assets: number
+  strategy_type?: string
+  risk_policy?: Record<string, number>
+  fee_policy?: Record<string, number>
+  dividend_reinvest?: boolean
   positions: Position[]
 }
 
@@ -472,6 +483,27 @@ export default function StocksPage() {
   const positionSearchTimer = useRef<ReturnType<typeof setTimeout>>()
   const positionDropdownRef = useRef<HTMLDivElement>(null)
 
+  // 交易 / 风控弹窗（理财化）
+  const [tradeTarget, setTradeTarget] = useState<{
+    account: AccountSummary
+    pos: Position
+    action: 'buy' | 'sell'
+  } | null>(null)
+  const [tradeForm, setTradeForm] = useState({
+    quantity: '100',
+    price: '',
+    date: new Date().toISOString().slice(0, 10),
+    note: '',
+  })
+  const [tradeBusy, setTradeBusy] = useState(false)
+  const [riskTarget, setRiskTarget] = useState<{
+    account: AccountSummary
+    pos: Position
+  } | null>(null)
+  const [riskForm, setRiskForm] = useState({ stop: '', take: '' })
+  const [riskBusy, setRiskBusy] = useState(false)
+  const [riskHint, setRiskHint] = useState('')
+
   // Agent dialog
   const [agentDialogStock, setAgentDialogStock] = useState<Stock | null>(null)
 
@@ -763,6 +795,92 @@ export default function StocksPage() {
       setPortfolioLoading(false)
     }
   }, [requestKlineSummaries, requestQuotes, quotes, stocks])
+
+  const openTradeDialog = (account: AccountSummary, pos: Position, action: 'buy' | 'sell') => {
+    setTradeTarget({ account, pos, action })
+    setTradeForm({
+      quantity: action === 'sell' ? String(Math.min(pos.quantity, 100)) : '100',
+      price: pos.current_price != null ? pos.current_price.toFixed(2) : '',
+      date: new Date().toISOString().slice(0, 10),
+      note: '',
+    })
+  }
+
+  const tradeFeePreview = useMemo(() => {
+    if (!tradeTarget) return null
+    const qty = Number(tradeForm.quantity) || 0
+    const price = Number(tradeForm.price) || 0
+    const gross = qty * price
+    const p = {
+      commission_rate: 0.00025,
+      min_commission: 5,
+      stamp_duty_rate: 0.0005,
+      transfer_fee_rate: 0.00001,
+      ...(tradeTarget.account.fee_policy || {}),
+    }
+    const commission = gross > 0 ? Math.max(gross * Number(p.commission_rate), Number(p.min_commission)) : 0
+    const stamp = tradeTarget.action === 'sell' ? gross * Number(p.stamp_duty_rate) : 0
+    const transfer = gross * Number(p.transfer_fee_rate)
+    return { gross, commission, stamp, transfer, total: commission + stamp + transfer }
+  }, [tradeTarget, tradeForm.quantity, tradeForm.price])
+
+  const submitTrade = async () => {
+    if (!tradeTarget) return
+    const quantity = Number(tradeForm.quantity)
+    const price = Number(tradeForm.price)
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      toast('请填写有效的数量和价格', 'error')
+      return
+    }
+    setTradeBusy(true)
+    try {
+      const res = await portfolioApi.createTrade({
+        account_id: tradeTarget.account.id,
+        stock_id: tradeTarget.pos.stock_id,
+        action: tradeTarget.action,
+        quantity,
+        price,
+        trade_date: tradeForm.date || undefined,
+        note: tradeForm.note,
+      })
+      toast(
+        `${tradeTarget.action === 'buy' ? '加仓' : '减仓'}已记录，费用 ¥${res.fees.total.toFixed(2)}${res.warning ? '（资金不足）' : ''}`,
+        'success',
+      )
+      setTradeTarget(null)
+      await loadPortfolio()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '交易记录失败', 'error')
+    } finally {
+      setTradeBusy(false)
+    }
+  }
+
+  const openRiskDialog = (account: AccountSummary, pos: Position) => {
+    setRiskTarget({ account, pos })
+    setRiskForm({
+      stop: pos.stop_loss_price != null ? String(pos.stop_loss_price) : '',
+      take: pos.take_profit_price != null ? String(pos.take_profit_price) : '',
+    })
+    setRiskHint('')
+  }
+
+  const submitRisk = async () => {
+    if (!riskTarget) return
+    setRiskBusy(true)
+    try {
+      const res = await portfolioApi.updatePositionRisk(riskTarget.pos.id, {
+        stop_loss_price: riskForm.stop ? Number(riskForm.stop) : null,
+        take_profit_price: riskForm.take ? Number(riskForm.take) : null,
+      })
+      setRiskHint(res.hint)
+      await loadPortfolio()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setRiskBusy(false)
+    }
+  }
 
   const loadInitialData = useCallback((signal: AbortSignal): Promise<void> => {
     if (initialLoadPromiseRef.current) return initialLoadPromiseRef.current
@@ -1708,6 +1826,8 @@ export default function StocksPage() {
         </div>
       </div>
 
+      <WealthPanel onChanged={loadPortfolio} />
+
       {/* Portfolio Total Summary */}
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
@@ -1954,6 +2074,15 @@ export default function StocksPage() {
                   )}
                   <Building2 className="w-4 h-4 text-primary" />
                   <span className="text-[14px] md:text-[15px] font-semibold text-foreground">{account.name}</span>
+                  {account.strategy_type && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      account.strategy_type === 'aggr'
+                        ? 'bg-rose-500/10 text-rose-600'
+                        : 'bg-blue-500/10 text-blue-600'
+                    }`}>
+                      {account.strategy_type === 'aggr' ? '激进' : '稳健'}
+                    </span>
+                  )}
                   <span className="text-[11px] md:text-[12px] text-muted-foreground">
                     {account.positions.length} 只
                   </span>
@@ -2098,7 +2227,16 @@ export default function StocksPage() {
                                   <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${changeColor}`}>
                                     {pos.change_pct != null ? `${pos.change_pct >= 0 ? '+' : ''}${pos.change_pct.toFixed(2)}%` : '—'}
                                   </td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{formatPrice(pos.cost_price)}</td>
+                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
+                                    <div>{formatPrice(pos.cost_price)}</div>
+                                    {(pos.stop_loss_price != null || pos.take_profit_price != null) && (
+                                      <div className="text-[9px] text-muted-foreground/70">
+                                        {pos.stop_loss_price != null && `损 ${formatPrice(pos.stop_loss_price)}`}
+                                        {pos.stop_loss_price != null && pos.take_profit_price != null && ' / '}
+                                        {pos.take_profit_price != null && `盈 ${formatPrice(pos.take_profit_price)}`}
+                                      </div>
+                                    )}
+                                  </td>
                                   <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{pos.quantity}</td>
                                   <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
                                     {pos.market_value != null ? (
@@ -2181,6 +2319,9 @@ export default function StocksPage() {
                                       />
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)} title="相关资讯"><Newspaper className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'sell')} title="减仓"><Minus className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openRiskDialog(account, pos)} title="止损/止盈"><Shield className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
                                     </div>
@@ -2281,6 +2422,13 @@ export default function StocksPage() {
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">成本</div>
                                   <div className="font-mono text-foreground truncate" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
+                                  {(pos.stop_loss_price != null || pos.take_profit_price != null) && (
+                                    <div className="text-[9px] text-muted-foreground/70">
+                                      {pos.stop_loss_price != null && `损 ${formatPrice(pos.stop_loss_price)}`}
+                                      {pos.stop_loss_price != null && pos.take_profit_price != null && ' / '}
+                                      {pos.take_profit_price != null && `盈 ${formatPrice(pos.take_profit_price)}`}
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">数量</div>
@@ -2347,7 +2495,10 @@ export default function StocksPage() {
                                   />
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)}><Newspaper className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'sell')} title="减仓"><Minus className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openRiskDialog(account, pos)} title="止损/止盈"><Shield className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
                                 </div>
                               </div>
@@ -2637,6 +2788,129 @@ export default function StocksPage() {
         hasPosition={klineDialogHasPosition}
         initialSummary={klineDialogInitialSummary as any}
       />
+
+      {/* 加仓 / 减仓（记账，不自动下单） */}
+      <Dialog open={!!tradeTarget} onOpenChange={(open) => !open && setTradeTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {tradeTarget?.action === 'buy' ? '加仓' : '减仓'} · {tradeTarget?.pos.name}
+            </DialogTitle>
+            <DialogDescription>
+              当前持仓 {tradeTarget?.pos.quantity} 股，成本 {tradeTarget ? formatPrice(tradeTarget.pos.cost_price) : '--'}。
+              确认后更新持仓与可用资金，并写入交易记录；不会自动下单。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[11px]">数量（股/份）</Label>
+              <Input
+                type="number"
+                value={tradeForm.quantity}
+                onChange={(e) => setTradeForm({ ...tradeForm, quantity: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px]">成交价</Label>
+              <Input
+                type="number"
+                step="0.001"
+                value={tradeForm.price}
+                onChange={(e) => setTradeForm({ ...tradeForm, price: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px]">日期</Label>
+              <Input
+                type="date"
+                value={tradeForm.date}
+                onChange={(e) => setTradeForm({ ...tradeForm, date: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px]">备注</Label>
+              <Input
+                value={tradeForm.note}
+                placeholder="例如：突破加仓 / 止盈一部分"
+                onChange={(e) => setTradeForm({ ...tradeForm, note: e.target.value })}
+              />
+            </div>
+          </div>
+          {tradeFeePreview && (
+            <div className="mt-3 rounded-md border border-border/50 bg-muted/30 p-2 text-[11px] text-muted-foreground">
+              <div className="flex justify-between"><span>成交金额</span><span className="font-mono">{formatMoney(tradeFeePreview.gross)}</span></div>
+              <div className="flex justify-between"><span>佣金（最低 5 元）</span><span className="font-mono">{formatMoney(tradeFeePreview.commission)}</span></div>
+              <div className="flex justify-between"><span>印花税</span><span className="font-mono">{formatMoney(tradeFeePreview.stamp)}</span></div>
+              <div className="flex justify-between"><span>过户费</span><span className="font-mono">{formatMoney(tradeFeePreview.transfer)}</span></div>
+              <div className="mt-1 flex justify-between border-t border-border/40 pt-1 text-foreground">
+                <span>费用合计</span><span className="font-mono">{formatMoney(tradeFeePreview.total)}</span>
+              </div>
+            </div>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setTradeTarget(null)}>取消</Button>
+            <Button size="sm" onClick={submitTrade} disabled={tradeBusy}>
+              {tradeBusy ? '记录中…' : '确认记录'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 止损 / 止盈（只保存，不自动建提醒） */}
+      <Dialog open={!!riskTarget} onOpenChange={(open) => !open && setRiskTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>止损 / 止盈 · {riskTarget?.pos.name}</DialogTitle>
+            <DialogDescription>
+              保存后会进入 AI 建议上下文；系统不会自动创建价格提醒，需要时请点行内铃铛手动创建。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[11px]">止损价</Label>
+              <Input
+                type="number"
+                step="0.001"
+                value={riskForm.stop}
+                placeholder="留空表示不设"
+                onChange={(e) => setRiskForm({ ...riskForm, stop: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px]">止盈价</Label>
+              <Input
+                type="number"
+                step="0.001"
+                value={riskForm.take}
+                placeholder="留空表示不设"
+                onChange={(e) => setRiskForm({ ...riskForm, take: e.target.value })}
+              />
+            </div>
+          </div>
+          {riskHint && (
+            <div className="mt-3 space-y-2">
+              <div className="rounded-md border border-amber-300/60 bg-amber-50 p-2 text-[11px] text-amber-800">
+                {riskHint}
+              </div>
+              {riskTarget && (
+                <StockPriceAlertPanel
+                  mode="inline"
+                  stockId={riskTarget.pos.stock_id}
+                  symbol={riskTarget.pos.symbol}
+                  market={riskTarget.pos.market}
+                  stockName={riskTarget.pos.name}
+                />
+              )}
+            </div>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setRiskTarget(null)}>关闭</Button>
+            <Button size="sm" onClick={submitRisk} disabled={riskBusy}>
+              {riskBusy ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <StockInsightModal
         open={insightOpen}

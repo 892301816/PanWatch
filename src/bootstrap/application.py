@@ -37,7 +37,7 @@ from src.modules.market.api import (
     themes,
 )
 from src.modules.paper_trading.api import paper_trading
-from src.modules.portfolio.api import accounts, dashboard, history
+from src.modules.portfolio.api import accounts, dashboard, history, wealth
 from src.modules.screener import api as screener_api
 from src.platform.dataset import api as dataset_api
 from src.modules.research.api import (
@@ -94,6 +94,9 @@ app.include_router(
 )
 app.include_router(
     accounts.router, prefix="/api", tags=["accounts"], dependencies=protected
+)
+app.include_router(
+    wealth.router, prefix="/api", tags=["wealth"], dependencies=protected
 )
 app.include_router(
     agents.router, prefix="/api/agents", tags=["agents"], dependencies=protected
