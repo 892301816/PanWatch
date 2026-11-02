@@ -7,6 +7,7 @@ HTTP 中间件、认证依赖和各模块 router；具体业务规则仍由 ``mo
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from src.modules.administration.api import (
     auth,
@@ -63,6 +64,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 最后添加 = 最外层：JS/CSS/JSON 统一压缩（3Mbps 带宽下首屏明显更快）
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 # 认证路由（无需登录）
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
