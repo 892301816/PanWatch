@@ -1153,6 +1153,13 @@ export default function ScreenerPage() {
                 <div className="text-[10px] text-muted-foreground">点击个股查看详情</div>
               )}
             </div>
+            {ladder && ladderConcept && !ladder.groups.length && !ladderFiltering && (
+              <div className="py-10 text-center text-xs text-muted-foreground">
+                {ladder.concept_index_ready
+                  ? `${ladderConcept} 今日没有涨停股`
+                  : '概念索引尚未构建完成，稍后点一次刷新数据再试'}
+              </div>
+            )}
             {(ladder?.groups || []).map((g) => (
               <div key={g.level} className="grid grid-cols-[70px_1fr] gap-2 border-b py-2 last:border-0">
                 <div className="flex items-center justify-center rounded bg-muted/50 text-[11px] font-medium text-amber-600 dark:text-amber-400">

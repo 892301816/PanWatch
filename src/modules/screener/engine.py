@@ -465,6 +465,9 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
     stats = get_market_stats(trade_date)
     pool = get_zt_pool(trade_date)
+    # 板块筛选依赖概念索引:当天还没构建时在这里补一次(异步,构建中则先返回空)
+    if (concept or "").strip():
+        concept_index.ensure_concept_index(trade_date)
     concept_map = concept_index.get_concept_map(trade_date)
 
     def concept_names(symbol: str) -> list[str]:
