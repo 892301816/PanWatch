@@ -461,11 +461,14 @@ def _serialize_item(row: dict) -> dict:
 
 
 # ── 连涨天梯 ──────────────────────────────────────────────────────────
-def get_ladder(date_str: str | None = None) -> dict:
+def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
     stats = get_market_stats(trade_date)
     pool = get_zt_pool(trade_date)
     concept_map = concept_index.get_concept_map(trade_date)
+
+    def concept_names(symbol: str) -> list[str]:
+        return [c.get("name") or "" for c in (concept_map.get(symbol) or [])]
 
     def concept_of(item: dict) -> str:
         cons = concept_map.get(item["symbol"]) or []
@@ -473,12 +476,27 @@ def get_ladder(date_str: str | None = None) -> dict:
             return cons[0].get("name") or ""
         return item.get("industry") or ""
 
+    # 板块筛选:按概念成分归属过滤涨停池,天梯分组保持不变,空分组不返回
+    wanted = (concept or "").strip()
+    if wanted:
+        exact = [x for x in pool if wanted in concept_names(x["symbol"])]
+        pool = exact or [
+            x
+            for x in pool
+            if any(
+                wanted in name or name in wanted
+                for name in concept_names(x["symbol"])
+                if name
+            )
+        ]
+
     buckets: dict[int, list[dict]] = {}
     for item in pool:
         days = int(item.get("limit_up_days") or 0)
         buckets.setdefault(days, []).append(item)
 
-    max_days = stats.get("max_days") or 0
+    # 筛选后「打开高度」按当前可见的最高板算,避免空分组占位
+    max_days = (max(buckets) if wanted and buckets else (stats.get("max_days") or 0))
     groups = []
     for days in sorted(buckets, reverse=True):
         label = "打开高度" if days == max_days and days >= 3 else (f"{days} 板" if days > 1 else "首板")
@@ -514,6 +532,11 @@ def get_ladder(date_str: str | None = None) -> dict:
         "trade_date": trade_date,
         "stats": stats,
         "groups": groups,
+        "filter": {
+            "concept": wanted or None,
+            "count": sum(len(g["items"]) for g in groups),
+            "max_days": max((g["days"] for g in groups), default=0),
+        },
         "concept_index_ready": concept_index.concept_index_status(trade_date)["rows"] > 0,
     }
 

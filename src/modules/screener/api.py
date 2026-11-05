@@ -113,10 +113,13 @@ def run_screen(payload: ScreenIn):
 
 
 @router.get("/ladder")
-def get_ladder(date: str | None = Query(default=None, description="YYYY-MM-DD")):
-    """连涨天梯:按连板数分组 + 板块名。"""
+def get_ladder(
+    date: str | None = Query(default=None, description="YYYY-MM-DD"),
+    concept: str | None = Query(default=None, description="只看该概念板块的涨停股"),
+):
+    """连涨天梯:按连板数分组 + 板块名,可按概念板块过滤。"""
     try:
-        return engine.get_ladder(date)
+        return engine.get_ladder(date, concept=concept)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[选股] 天梯失败")
         raise HTTPException(500, f"天梯加载失败: {exc}")

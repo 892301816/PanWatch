@@ -16,6 +16,7 @@ import {
   screenerApi,
   stocksApi,
   type BoardItem,
+  type LadderItem,
   type LadderResponse,
   type ScreenerCondition,
   type ScreenerField,
@@ -210,6 +211,10 @@ export default function ScreenerPage() {
   const [ladderLoading, setLadderLoading] = useState(false)
   const [boards, setBoards] = useState<BoardItem[]>([])
   const [boardsLoading, setBoardsLoading] = useState(false)
+  // 连涨天梯的板块筛选（只显示该板块的涨停股）
+  const [ladderConcept, setLadderConcept] = useState<string | null>(null)
+  const [ladderFiltering, setLadderFiltering] = useState(false)
+  const [ladderDetailLoading, setLadderDetailLoading] = useState<string | null>(null)
 
   const [detail, setDetail] = useState<ScreenerItem | null>(null)
   const [insightOpen, setInsightOpen] = useState(false)
@@ -315,6 +320,52 @@ export default function ScreenerPage() {
         .finally(() => setBoardsLoading(false))
     }
   }, [view, ladder, boards.length])
+
+  // 点击天梯上方的板块卡片:在当前页把天梯过滤成该板块的涨停股
+  const applyLadderConcept = useCallback(
+    async (name: string | null) => {
+      const next = name && name !== ladderConcept ? name : null
+      setLadderConcept(next)
+      setLadderFiltering(true)
+      setError('')
+      try {
+        const data = await screenerApi.ladder(undefined, next)
+        setLadder(data)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '天梯筛选失败')
+      } finally {
+        setLadderFiltering(false)
+      }
+    },
+    [ladderConcept]
+  )
+
+  // 天梯里的个股卡片:直接打开个股详情,不再跳转选股页
+  const openLadderStock = useCallback(
+    async (it: LadderItem) => {
+      if (ladderDetailLoading) return
+      setLadderDetailLoading(it.symbol)
+      setError('')
+      try {
+        const res = await screenerApi.run({
+          conditions: [{ field: 'symbol', op: 'eq', value: it.symbol }],
+          logic: 'all',
+          exclude: [],
+          order_by: 'change_pct desc',
+          limit: 1,
+          with_spark: false,
+        })
+        const found = res.items[0]
+        if (found) setDetail(found)
+        else setError(`未找到 ${it.name}（${it.symbol}）的行情数据`)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '个股详情加载失败')
+      } finally {
+        setLadderDetailLoading(null)
+      }
+    },
+    [ladderDetailLoading]
+  )
 
   useEffect(() => {
     if (!detail) {
@@ -442,6 +493,7 @@ export default function ScreenerPage() {
       await screenerApi.refresh()
       setLadder(null)
       setBoards([])
+      setLadderConcept(null)
       await loadMeta()
       await run(conditions, { code: activeCode })
     } catch (e) {
@@ -1012,44 +1064,95 @@ export default function ScreenerPage() {
             ) : (
               <>
                 <div>
-                  <div className="text-[10px] text-muted-foreground">涨停</div>
-                  <div className="text-xl font-bold text-stock-up">{ladder.stats.limit_up}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {ladderConcept ? `${ladderConcept} · 涨停` : '涨停'}
+                  </div>
+                  <div className="text-xl font-bold text-stock-up">
+                    {ladderConcept ? (ladder.filter?.count ?? 0) : ladder.stats.limit_up}
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[10px] text-muted-foreground">跌停</div>
-                  <div className="text-xl font-bold text-stock-down">{ladder.stats.limit_down}</div>
-                </div>
+                {!ladderConcept && (
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">跌停</div>
+                    <div className="text-xl font-bold text-stock-down">{ladder.stats.limit_down}</div>
+                  </div>
+                )}
                 <div>
                   <div className="text-[10px] text-muted-foreground">最高连板</div>
-                  <div className="text-sm font-semibold">{ladder.stats.max_days} 板</div>
+                  <div className="text-sm font-semibold">
+                    {ladderConcept ? (ladder.filter?.max_days ?? 0) : ladder.stats.max_days} 板
+                  </div>
                 </div>
+                {ladderFiltering && (
+                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    筛选中
+                  </div>
+                )}
                 <div className="ml-auto text-[11px] text-muted-foreground">{ladder.trade_date}</div>
               </>
             )}
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {boards.slice(0, 6).map((b) => (
-              <button
-                key={b.code}
-                onClick={() => {
-                  setSectorFilter(b.name)
-                  setView('screen')
-                  run(conditions, { code: activeCode })
-                }}
-                className="card p-2 text-left transition hover:border-primary/40"
-              >
-                <div className="text-xs font-medium text-stock-up">
-                  {b.name} <span className="font-normal opacity-70">({b.limit_up_count})</span>
-                </div>
-                <div className="mt-1 text-[10px] text-muted-foreground">
-                  {b.change_pct != null ? `${b.change_pct > 0 ? '+' : ''}${b.change_pct.toFixed(2)}%` : '--'}
-                </div>
-              </button>
-            ))}
-          </div>
+          {boards.length > 0 && (
+            <div className="card p-2 sm:p-3">
+              <div className="mb-2 flex items-center gap-2 px-1">
+                <div className="text-[11px] font-medium">今日强势板块</div>
+                <div className="text-[10px] text-muted-foreground">点击板块只看该板块的涨停股</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                {boards.slice(0, 6).map((b) => {
+                  const active = ladderConcept === b.name
+                  return (
+                    <button
+                      key={b.code}
+                      onClick={() => void applyLadderConcept(b.name)}
+                      className={`rounded-lg border p-2 text-left transition ${
+                        active
+                          ? 'border-primary/60 bg-primary/8 ring-1 ring-primary/20'
+                          : 'border-border/60 hover:border-primary/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span
+                          className={`min-w-0 flex-1 truncate text-[11px] font-medium ${
+                            active ? 'text-primary' : 'text-stock-up'
+                          }`}
+                        >
+                          {b.name}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">{b.limit_up_count} 涨</span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between text-[10px]">
+                        <span className={(b.change_pct || 0) >= 0 ? 'text-stock-up' : 'text-stock-down'}>
+                          {pctText(b.change_pct)}
+                        </span>
+                        <span className="text-muted-foreground">强度 {Math.round(b.score)}</span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="card p-2">
+            <div className="mb-1 flex flex-wrap items-center gap-2 px-1">
+              <div className="text-[11px] font-medium">涨停梯队</div>
+              {ladderConcept ? (
+                <button
+                  onClick={() => void applyLadderConcept(null)}
+                  className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/8 px-2 py-0.5 text-[10px] font-medium text-primary"
+                  title="清除板块筛选"
+                >
+                  {ladderConcept}
+                  {ladderFiltering && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              ) : (
+                <div className="text-[10px] text-muted-foreground">点击个股查看详情</div>
+              )}
+            </div>
             {(ladder?.groups || []).map((g) => (
               <div key={g.level} className="grid grid-cols-[70px_1fr] gap-2 border-b py-2 last:border-0">
                 <div className="flex items-center justify-center rounded bg-muted/50 text-[11px] font-medium text-amber-600 dark:text-amber-400">
@@ -1059,17 +1162,16 @@ export default function ScreenerPage() {
                   {g.items.map((it) => (
                     <button
                       key={it.symbol}
-                      onClick={() => {
-                        setView('screen')
-                        setSectorFilter(null)
-                        const conds: ScreenerCondition[] = it.concept
-                          ? [{ field: 'concept', op: 'contains', value: it.concept }]
-                          : [{ field: 'change_pct', op: 'gte', value: 0 }]
-                        run(conds, { code: 'custom' })
-                      }}
-                      className="relative rounded-md border bg-background p-2 text-left transition hover:border-primary/40"
+                      onClick={() => void openLadderStock(it)}
+                      className="relative rounded-md border bg-background p-2 text-left transition hover:border-primary/40 active:border-primary/60"
                     >
-                      <span className="absolute right-2 top-1 text-[10px] text-muted-foreground">{it.time}</span>
+                      <span className="absolute right-2 top-1 text-[10px] text-muted-foreground">
+                        {ladderDetailLoading === it.symbol ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          it.time
+                        )}
+                      </span>
                       <div className="pr-10 text-xs font-semibold">{it.name}</div>
                       <div className="mt-1 text-[10px] text-stock-up">{it.concept || '--'}</div>
                       {it.stat && <div className="mt-0.5 text-[10px] text-muted-foreground">{it.stat}</div>}
@@ -1087,7 +1189,7 @@ export default function ScreenerPage() {
 
       {view === 'boards' && (
         <div className="card overflow-hidden">
-          <div className="grid grid-cols-[36px_1fr_80px_90px_70px_120px] gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground">
+          <div className="hidden grid-cols-[36px_1fr_80px_90px_70px_120px] gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground sm:grid">
             <div>#</div>
             <div>板块 / 概念</div>
             <div className="text-right">涨跌幅</div>
@@ -1109,12 +1211,23 @@ export default function ScreenerPage() {
                   setView('screen')
                   run(conditions, { code: activeCode })
                 }}
-                className="grid w-full grid-cols-[36px_1fr_80px_90px_70px_120px] items-center gap-2 border-b px-3 py-2 text-left last:border-0 hover:bg-accent/40"
+                className="grid w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-2 border-b px-3 py-2.5 text-left last:border-0 hover:bg-accent/40 sm:grid-cols-[36px_1fr_80px_90px_70px_120px] sm:py-2"
               >
                 <div className="text-[11px] text-muted-foreground">{i + 1}</div>
                 <div className="min-w-0">
                   <div className="truncate text-xs font-medium">{b.name}</div>
-                  <div className="text-[10px] text-muted-foreground">{b.members || '--'} 只成分股</div>
+                  <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground sm:hidden">
+                    <span className="shrink-0">涨停 {b.limit_up_count}</span>
+                    <span className="shrink-0">最高 {b.max_days} 板</span>
+                    <span className="shrink-0">强度 {Math.round(b.score)}</span>
+                    <span className="block h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="block h-full rounded-full bg-stock-up/70"
+                        style={{ width: `${Math.min(100, b.score)}%` }}
+                      />
+                    </span>
+                  </div>
+                  <div className="hidden text-[10px] text-muted-foreground sm:block">{b.members || '--'} 只成分股</div>
                 </div>
                 <div
                   className={`text-right text-[11px] ${
@@ -1123,9 +1236,9 @@ export default function ScreenerPage() {
                 >
                   {pctText(b.change_pct)}
                 </div>
-                <div className="text-right text-[11px]">{b.limit_up_count}</div>
-                <div className="text-right text-[11px]">{b.max_days}</div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="hidden text-right text-[11px] sm:block">{b.limit_up_count}</div>
+                <div className="hidden text-right text-[11px] sm:block">{b.max_days}</div>
+                <div className="hidden h-1.5 overflow-hidden rounded-full bg-muted sm:block">
                   <div
                     className="h-full rounded-full bg-stock-up/70"
                     style={{ width: `${Math.min(100, b.score)}%` }}

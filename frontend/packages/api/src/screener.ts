@@ -103,6 +103,7 @@ export interface LadderResponse {
   trade_date: string
   stats: { trade_date: string; limit_up: number; limit_down: number; max_days: number }
   groups: Array<{ level: string; days: number; items: LadderItem[] }>
+  filter?: { concept: string | null; count: number; max_days: number }
   concept_index_ready: boolean
 }
 
@@ -155,10 +156,13 @@ export const screenerApi = {
       timeoutMs: options?.timeoutMs ?? 60000,
     }),
 
-  ladder: (date?: string) =>
-    fetchAPI<LadderResponse>(
-      date ? `/screener/ladder?date=${encodeURIComponent(date)}` : '/screener/ladder'
-    ),
+  ladder: (date?: string, concept?: string | null) => {
+    const qs = new URLSearchParams()
+    if (date) qs.set('date', date)
+    if (concept) qs.set('concept', concept)
+    const query = qs.toString()
+    return fetchAPI<LadderResponse>(query ? `/screener/ladder?${query}` : '/screener/ladder')
+  },
 
   boards: (date?: string, limit = 30) => {
     const qs = new URLSearchParams({ limit: String(limit) })

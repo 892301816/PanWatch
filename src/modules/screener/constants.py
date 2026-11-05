@@ -43,7 +43,7 @@ FIELD_CATALOG: list[dict] = [
     {"key": "is_st", "label": "是否 ST", "unit": "", "group": "其他", "type": "boolean"},
 ]
 
-FIELD_KEYS = {f["key"] for f in FIELD_CATALOG}
+FIELD_KEYS = {f["key"] for f in FIELD_CATALOG} | {"symbol"}
 
 # 封板资金也按亿元展示,但存储时来自涨停池(元)
 FIELD_SCALE["seal_fund"] = 1e8
