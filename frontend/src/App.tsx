@@ -34,7 +34,7 @@ const {
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页' },
-  { to: '/portfolio', icon: List, label: '持仓' },
+  { to: '/portfolio', icon: List, label: '理财' },
   { to: '/opportunities', icon: Sparkles, label: '机会' },
   { to: '/screener', icon: ListFilter, label: '选股' },
   { to: '/messages', icon: Newspaper, label: '消息' },

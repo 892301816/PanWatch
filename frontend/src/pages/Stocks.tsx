@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Minus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Shield } from 'lucide-react'
-import { fetchAPI, stocksApi, portfolioApi, type AIService, type NotifyChannel } from '@panwatch/api'
+import { useSearchParams } from 'react-router-dom'
+import WealthActionMenu from '@/components/WealthActionMenu'
+import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink } from 'lucide-react'
+import { fetchAPI, stocksApi, portfolioApi, type WealthOverview, type AIService, type NotifyChannel } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
 import {
@@ -24,6 +26,8 @@ import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import WealthPanel from '@/components/WealthPanel'
+import WealthSummary from '@/components/WealthSummary'
+import '@/styles/wealth-workspace.css'
 
 interface AgentResult {
   success?: boolean
@@ -408,8 +412,36 @@ export default function StocksPage() {
   // Alerts / Scanning
   const [scanning, setScanning] = useState(false)
 
-  type ViewTab = 'positions' | 'watchlist'
-  const [viewTab, setViewTab] = useLocalStorage<ViewTab>('panwatch_stocks_viewTab', 'positions')
+  type ViewTab = 'positions' | 'watchlist' | 'plans'
+  const [savedView, setSavedView] = useLocalStorage<string>('panwatch_stocks_viewTab', 'positions')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const resolveView = (value: string | null): ViewTab => value === 'watchlist' ? 'watchlist' : ['plans', 'dca', 'goals'].includes(value || '') ? 'plans' : 'positions'
+  const viewTab = resolveView(searchParams.get('view') || savedView)
+  const setViewTab = (view: ViewTab) => {
+    setSavedView(view)
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.set('view', view); return next })
+  }
+  const [accountFilter, setAccountFilter] = useState<number | null>(null)
+  const [recordPickerOpen, setRecordPickerOpen] = useState(false)
+  const [privateMode, setPrivateMode] = useLocalStorage('panwatch_wealth_private', false)
+  const [workspacePanel, setWorkspacePanel] = useState<'analysis' | 'records' | 'accounts' | null>(null)
+  const [panelAccountId, setPanelAccountId] = useState<number | null>(null)
+  const [duePlans, setDuePlans] = useState<WealthOverview['dca_due']>([])
+  const [dueError, setDueError] = useState(false)
+  const [dueRetry, setDueRetry] = useState(0)
+  const [focusPlanId, setFocusPlanId] = useState<number | null>(null)
+  const [tasksExpanded, setTasksExpanded] = useState(false)
+  const [positionSearch, setPositionSearch] = useState('')
+  const [watchSearch, setWatchSearch] = useState('')
+  const [detailedColumns, setDetailedColumns] = useLocalStorage('panwatch_wealth_detailed_columns', false)
+  const panelFallbackRef = useRef<HTMLButtonElement>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const normalized = resolveView(savedView)
+    if (savedView !== normalized) setSavedView(normalized)
+  }, [savedView])
+
 
   // 股票 AI 建议（来自盘中监控 API）
   const [suggestions] = useState<Record<string, StockSuggestionData>>({})
@@ -495,6 +527,18 @@ export default function StocksPage() {
   const [riskBusy, setRiskBusy] = useState(false)
   const [riskHint, setRiskHint] = useState('')
   const [wealthRefreshKey, setWealthRefreshKey] = useState(0)
+  useEffect(() => {
+    if (viewTab !== 'positions') return
+    let cancelled = false
+    setDueError(false)
+    portfolioApi.dcaDue(1).then(rows => {
+      if (!cancelled) setDuePlans(rows)
+    }).catch(() => {
+      if (!cancelled) { setDuePlans([]); setDueError(true) }
+    })
+    return () => { cancelled = true }
+  }, [viewTab, wealthRefreshKey, dueRetry])
+
 
   // Agent dialog
   const [agentDialogStock, setAgentDialogStock] = useState<Stock | null>(null)
@@ -1605,17 +1649,44 @@ export default function StocksPage() {
     return { suggestion: null, kline: null }
   }
 
-  const positionRatio = useMemo(() => {
-    if (!portfolio) return null
-    const mv = portfolio.total.total_market_value || 0
-    const assets = portfolio.total.total_assets || 0
-    const pct = assets > 0 ? (mv / assets * 100) : 0
-    return { mv, assets, pct }
-  }, [portfolio])
-
   const positionsCount = useMemo(() => {
     return (portfolio?.accounts || []).reduce((acc, a) => acc + (a.positions?.length || 0), 0)
   }, [portfolio])
+
+  const scopedAccounts = (portfolio?.accounts || []).filter(a => accountFilter === null || a.id === accountFilter)
+  const selectedAccount = portfolio?.accounts.find(a => a.id === accountFilter)
+  const scopedDue = duePlans.filter(p => accountFilter === null || p.account_id === accountFilter)
+  const riskChecks = scopedAccounts.flatMap(account => account.positions.flatMap(pos => {
+    if (!pos.current_price || pos.current_price <= 0) return []
+    if (pos.stop_loss_price && pos.stop_loss_price > 0 && pos.current_price <= pos.stop_loss_price * 1.03) {
+      return [{ account, pos, reason: pos.current_price <= pos.stop_loss_price ? '已触及止损计划价' : `距止损计划价 ${((pos.current_price / pos.stop_loss_price - 1) * 100).toFixed(1)}%` }]
+    }
+    if (pos.take_profit_price && pos.take_profit_price > 0 && pos.current_price >= pos.take_profit_price * 0.97) {
+      return [{ account, pos, reason: pos.current_price >= pos.take_profit_price ? '已达到止盈计划价' : `距止盈计划价 ${((1 - pos.current_price / pos.take_profit_price) * 100).toFixed(1)}%` }]
+    }
+    return []
+  }))
+  const missingQuoteCount = scopedAccounts.reduce((sum, a) => sum + a.positions.filter(p => !p.current_price || p.current_price <= 0).length, 0)
+  const openWorkspacePanel = (panel: 'analysis' | 'records' | 'accounts', scope = accountFilter) => {
+    setPanelAccountId(panel === 'analysis' ? null : scope)
+    setWorkspacePanel(panel)
+  }
+  const handleWealthChanged = () => { loadPortfolio(); setWealthRefreshKey(v => v + 1) }
+  const positionActions = (account: AccountSummary, pos: Position) => [
+    { label: '止损 / 止盈计划', onSelect: () => openRiskDialog(account, pos) },
+    { label: 'K 线与技术指标', onSelect: () => openKlineDialog(pos.symbol, pos.market, pos.name, true) },
+    { label: '相关新闻', onSelect: () => openNewsDialog(pos.name) },
+    { label: '深度分析', onSelect: () => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name) },
+    { label: 'Agent 配置与运行', onSelect: () => { const stock = stocks.find(s => s.id === pos.stock_id); if (stock) setAgentDialogStock(stock) }, disabled: !stocks.some(s => s.id === pos.stock_id) },
+    { label: '编辑持仓', onSelect: () => openPositionDialog(account.id, pos) },
+    { label: '查看账户流水', onSelect: () => openWorkspacePanel('records', account.id) },
+    { label: '删除持仓', destructive: true, onSelect: () => handleDeletePosition(pos.id) },
+  ]
+
+  useEffect(() => {
+    if (portfolio && accountFilter !== null && !portfolio.accounts.some(a => a.id === accountFilter)) setAccountFilter(null)
+    if (portfolio && panelAccountId !== null && !portfolio.accounts.some(a => a.id === panelAccountId)) setPanelAccountId(null)
+  }, [portfolio, accountFilter, panelAccountId])
 
   const watchGroups = useMemo(() => {
     const map = new Map<string, number>()
@@ -1631,6 +1702,13 @@ export default function StocksPage() {
   const watchlistCount = useMemo(() => {
     return stocks.length
   }, [stocks])
+
+  const filteredWatchStocks = stocks
+    .filter(stock => !watchSearch || `${stock.name} ${stock.symbol}`.toLowerCase().includes(watchSearch.toLowerCase()))
+    .filter(stock => !stockListFilter || stock.market === stockListFilter)
+    .filter(stock => watchGroupFilter === '__all__' || (stock.group_name || '') === watchGroupFilter)
+    .filter(stock => !watchlistOnlyAlerts || !!getSuggestionForStock(stock.symbol, stock.market, false).suggestion?.should_alert)
+    .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.id - b.id)
 
   const toggleAccountExpanded = (id: number) => {
     setExpandedAccounts(prev => {
@@ -1690,266 +1768,50 @@ export default function StocksPage() {
   }
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex flex-col gap-2 md:gap-3 mb-5 md:mb-6">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-[18px] md:text-[22px] font-bold text-foreground tracking-tight shrink-0">持仓</h1>
-          {/* Desktop buttons + controls */}
-          <div className="hidden md:flex items-center gap-3">
-            {/* Controls */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-accent/30">
-              <div className="flex items-center gap-1.5">
-                <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} className="scale-90" />
-                <span className="text-[11px] text-muted-foreground">自动刷新</span>
-                {autoRefresh && (
-                  <Select value={refreshInterval.toString()} onValueChange={v => setRefreshInterval(parseInt(v))}>
-                    <SelectTrigger className="h-6 w-14 text-[10px] px-1.5">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10s</SelectItem>
-                      <SelectItem value="30">30s</SelectItem>
-                      <SelectItem value="60">1分钟</SelectItem>
-                      <SelectItem value="120">2分钟</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-              {(poolSuggestionsLoading || Object.keys(poolSuggestions).length > 0) && (
-                <>
-                  <div className="w-px h-4 bg-border" />
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    {poolSuggestionsLoading && (
-                      <span className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                    )}
-                    {!poolSuggestionsLoading && Object.keys(poolSuggestions).length > 0 && (
-                      <span className="text-[10px] text-primary">
-                        {Object.keys(poolSuggestions).length}
-                      </span>
-                    )}
-                  </div>
-                </>
-              )}
-              {lastRefreshTime && (
-                <>
-                  <div className="w-px h-4 bg-border" />
-                  <span className="text-[10px] text-muted-foreground/60">
-                    {lastRefreshTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                </>
-              )}
-            </div>
-            {/* Buttons */}
-            <Button variant="secondary" onClick={handleRefresh} disabled={quotesLoading}>
-              <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
-              刷新
-            </Button>
-            <Button variant="secondary" onClick={scanAndReload} disabled={scanning}>
-              <Bot className="w-4 h-4" /> 扫描
-            </Button>
-            <Button variant="secondary" onClick={() => openAccountDialog()}>
-              <Building2 className="w-4 h-4" /> 添加账户
-            </Button>
-            <Button onClick={() => { setStockForm(emptyStockForm); setSearchQuery(''); setShowStockForm(true) }}>
-              <Plus className="w-4 h-4" /> 添加股票
-            </Button>
-          </div>
-          {/* Mobile buttons */}
-          <div className="flex md:hidden items-center gap-1.5">
-            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={handleRefresh} disabled={quotesLoading}>
-              <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={scanAndReload} disabled={scanning}>
-              <Bot className="w-4 h-4" />
-            </Button>
-            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => openAccountDialog()}>
-              <Building2 className="w-4 h-4" />
-            </Button>
-            <Button size="sm" className="h-8 w-8 p-0" onClick={() => { setStockForm(emptyStockForm); setSearchQuery(''); setShowStockForm(true) }}>
-              <Plus className="w-4 h-4" />
-            </Button>
-          </div>
+    <div className="wealth-workspace" ref={workspaceRef}>
+      <header className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div><h1 className="text-xl md:text-2xl font-semibold tracking-tight">理财工作台</h1><p className="text-xs text-muted-foreground mt-1">持有有计划，记录有归属。</p></div>
+        <div className="flex items-center gap-2">
+          {viewTab !== 'watchlist' && <Button ref={panelFallbackRef} variant="ghost" onClick={() => openWorkspacePanel('records')}>记录</Button>}
+          <WealthActionMenu label="工作台管理" triggerText="管理" actions={[
+            { label: '管理账户', onSelect: () => openWorkspacePanel('accounts', viewTab === 'watchlist' ? null : accountFilter) },
+            { label: '新增账户', onSelect: () => openAccountDialog() },
+          ]} />
         </div>
-
-        {/* 移动端 row 2：市场状态 + 自动刷新 + 时间戳合并到同一行,横向滚动避免换行；桌面端只展示市场 pills (auto-refresh 在桌面顶部已展示) */}
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none -mx-1 px-1 md:flex-wrap md:overflow-visible">
-          {marketStatus.map(m => {
-            const statusColors: Record<string, string> = {
-              trading: 'bg-emerald-500',
-              pre_market: 'bg-amber-500',
-              break: 'bg-amber-500',
-              after_hours: 'bg-slate-400',
-              closed: 'bg-slate-400',
-            }
-            return (
-              <div
-                key={m.code}
-                className="shrink-0 flex items-center gap-1 md:gap-1.5"
-                title={`${m.sessions.join(', ')} (${m.local_time}) · ${m.status_text}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${statusColors[m.status] || 'bg-slate-400'}`} />
-                <span className="text-[11px] text-muted-foreground">{m.name}</span>
-                <span className={`text-[10px] ${m.is_trading ? 'text-emerald-600' : 'text-muted-foreground/60'} hidden sm:inline`}>
-                  {m.status_text}
-                </span>
-              </div>
-            )
-          })}
-          {/* 移动端紧凑型自动刷新控件 */}
-          <div className="flex md:hidden shrink-0 items-center gap-1 px-2 py-0.5 rounded-full bg-accent/30 ml-1">
-            <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} className="scale-75" />
-            {autoRefresh ? (
-              <Select value={refreshInterval.toString()} onValueChange={v => setRefreshInterval(parseInt(v))}>
-                <SelectTrigger className="h-5 w-12 text-[10px] px-1 border-0 bg-transparent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10s</SelectItem>
-                  <SelectItem value="30">30s</SelectItem>
-                  <SelectItem value="60">1分钟</SelectItem>
-                  <SelectItem value="120">2分钟</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <span className="text-[10px] text-muted-foreground">自动刷新</span>
-            )}
-            {poolSuggestionsLoading && (
-              <span className="w-2.5 h-2.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-            )}
-          </div>
-          {lastRefreshTime && (
-            <span className="md:hidden shrink-0 text-[10px] text-muted-foreground/60 font-mono ml-1">
-              {lastRefreshTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-            </span>
-          )}
-        </div>
+      </header>
+      <div className="flex flex-wrap justify-between items-center gap-x-6 gap-y-2 mb-4 border-b border-border">
+        <nav className="wealth-tabs !mb-0 !border-0" aria-label="理财工作台视图">
+          {([['positions', `持仓 ${positionsCount}`], ['watchlist', `关注 ${watchlistCount}`], ['plans', '计划']] as const).map(([key, label]) => <button key={key} type="button" aria-current={viewTab === key ? 'page' : undefined} onClick={() => setViewTab(key)}>{label}</button>)}
+        </nav>
+        {viewTab !== 'watchlist' && <label className="flex items-center gap-2 text-xs text-muted-foreground pb-2">统计账户<select aria-label="统计账户" className="bg-card text-foreground border border-border rounded-lg py-2 px-3 max-w-[200px]" value={accountFilter ?? ''} onChange={e => { setAccountFilter(e.target.value ? Number(e.target.value) : null); setTasksExpanded(false) }}><option value="">全部账户</option>{portfolio?.accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
       </div>
-
-      {/* Portfolio Total Summary */}
-      {portfolioLoading && !portfolio ? (
-        // 首次加载时显示骨架屏
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="card p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Skeleton className="h-4 w-4 rounded" />
-                <Skeleton className="h-3 w-12" />
-              </div>
-              <Skeleton className="h-6 w-20" />
-            </div>
-          ))}
+      {viewTab === 'positions' && (portfolio ? <WealthSummary total={selectedAccount || portfolio.total} accounts={scopedAccounts.length} positions={scopedAccounts.reduce((n, a) => n + a.positions.length, 0)} scopeLabel={selectedAccount?.name || '全部账户'} privateMode={privateMode} onPrivacyChange={setPrivateMode} /> : portfolioLoading ? <div className="card p-5 mb-4" role="status">资产概况加载中…</div> : <p className="text-sm text-muted-foreground mb-4">资产数据暂不可用，请刷新重试。</p>)}
+      {viewTab === 'positions' && (scopedDue.length > 0 || riskChecks.length > 0 || dueError || missingQuoteCount > 0) && <section className="mb-4 border-b border-border pb-3" aria-label="待处理事项">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span>{scopedDue.length ? `${scopedDue.length} 笔定投待确认` : ''}{scopedDue.length && riskChecks.length ? ' · ' : ''}{riskChecks.length ? `${riskChecks.length} 项持有计划需检查` : ''}</span>
+          {missingQuoteCount > 0 && <span className="text-xs text-muted-foreground">{missingQuoteCount} 只持仓行情缺失，暂未检查计划价</span>}
+          {dueError && <button className="text-xs text-primary" onClick={() => setDueRetry(v => v + 1)}>定投待办加载失败，重试</button>}
+          {(scopedDue.length > 0 || riskChecks.length > 0) && <Button variant="ghost" size="sm" aria-expanded={tasksExpanded} onClick={() => setTasksExpanded(v => !v)}>{tasksExpanded ? '收起事项' : '查看事项'}</Button>}
         </div>
-      ) : portfolio ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-          <div className="card p-4 border-primary/30 bg-primary/5">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <PiggyBank className="w-4 h-4 text-primary" />
-              <span className="text-[12px]">总资产</span>
-            </div>
-            <div className="text-[22px] font-bold text-foreground font-mono">
-              {formatMoney(portfolio.total.total_assets)}
-            </div>
-            <div className="text-[10px] text-muted-foreground">现金 + 持仓市值</div>
-          </div>
-
-          {(() => {
-            const dayPnl = portfolio.total.total_daily_pnl
-            const totalMv = portfolio.total.total_market_value
-            const prevMv = totalMv - dayPnl
-            const pct = prevMv > 0 ? (dayPnl / prevMv * 100) : 0
-            const isUp = dayPnl >= 0
-            return (
-              <div className="card p-4">
-                <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                  {isUp ? <ArrowUpRight className="w-4 h-4 text-rose-500" /> : <ArrowDownRight className="w-4 h-4 text-emerald-500" />}
-                  <span className="text-[12px]">今日盈亏</span>
-                </div>
-                <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
-                  {isUp ? '+' : ''}{formatMoney(dayPnl)}
-                </div>
-                <div className={`text-[11px] font-mono ${isUp ? 'text-rose-500/80' : 'text-emerald-500/80'}`}>
-                  {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
-                </div>
-              </div>
-            )
-          })()}
-
-          <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              {portfolio.total.total_pnl >= 0 ? <ArrowUpRight className="w-4 h-4 text-rose-500" /> : <ArrowDownRight className="w-4 h-4 text-emerald-500" />}
-              <span className="text-[12px]">累计盈亏</span>
-            </div>
-            <div className={`text-[20px] font-bold font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-              {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
-            </div>
-            <div className={`text-[11px] font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500/80' : 'text-emerald-500/80'}`}>
-              {portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%
-            </div>
-          </div>
-
-          <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <TrendingUp className="w-4 h-4" />
-              <span className="text-[12px]">持仓市值</span>
-            </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
-              {formatMoney(portfolio.total.total_market_value)}
-            </div>
-          </div>
-
-          <div className="card p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Wallet className="w-4 h-4" />
-              <span className="text-[12px]">可用资金</span>
-            </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
-              {formatMoney(portfolio.total.available_funds)}
-            </div>
-          </div>
-
-          <div className="card p-4">
-            <div className="flex items-center justify-between text-muted-foreground mb-1">
-              <span className="flex items-center gap-2"><Bell className="w-4 h-4" /><span className="text-[12px]">仓位</span></span>
-              <span className="text-[11px] font-mono text-foreground">{positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-2">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, positionRatio?.pct || 0))}%` }} />
-            </div>
-            <div className="mt-1.5 text-[10px] text-muted-foreground">
-              {positionRatio ? `持仓 ${formatMoney(positionRatio.mv)} / 总资产 ${formatMoney(positionRatio.assets)}` : '—'}
-            </div>
-          </div>
+        {tasksExpanded && <div className="mt-3 divide-y divide-border">
+          {scopedDue.map(plan => <div key={plan.id} className="flex justify-between items-center gap-3 py-3"><div><b className="text-sm">{plan.name} · 定投待确认</b><p className="text-xs text-muted-foreground">{plan.account_name} · {plan.next_run_date}{plan.overdue ? ' · 已逾期' : ''} · {privateMode ? '••••' : `¥${plan.amount.toFixed(2)}`}</p></div><Button size="sm" onClick={() => { setFocusPlanId(plan.id); setViewTab('plans') }}>记录成交</Button></div>)}
+          {riskChecks.map(({ account, pos, reason }) => <div key={`${account.id}-${pos.id}`} className="flex justify-between items-center gap-3 py-3"><div><b className="text-sm">{pos.name} · {privateMode ? '检查持有计划' : reason}</b><p className="text-xs text-muted-foreground">{account.name} · 接近范围为计划价的 3%，不代表自动交易指令</p></div><Button size="sm" variant="secondary" onClick={() => openRiskDialog(account, pos)}>查看计划</Button></div>)}
+        </div>}
+      </section>}
+      {viewTab !== 'plans' && <div className="wealth-toolbar mb-4">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
+          {viewTab === 'positions' && <Input className="w-44" aria-label="搜索持仓" placeholder="搜索名称 / 代码" value={positionSearch} onChange={e => setPositionSearch(e.target.value)} />}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} aria-label="自动刷新行情" />自动刷新</label>
+          {autoRefresh && <select className="bg-card border border-border rounded px-2 py-1 text-xs" aria-label="行情刷新间隔" value={refreshInterval} onChange={e => setRefreshInterval(Number(e.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>1 分钟</option><option value={120}>2 分钟</option></select>}
+          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={quotesLoading}><RefreshCw className={`w-3.5 h-3.5 ${quotesLoading ? 'animate-spin' : ''}`} />刷新</Button>
+          <span className="text-xs text-muted-foreground">{lastRefreshTime ? `更新于 ${lastRefreshTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '行情更新中'}</span>
+          {poolSuggestionsLoading && <span className="text-xs text-muted-foreground" role="status">更新分析中…</span>}
         </div>
-      ) : null}
-
-      <WealthPanel onChanged={loadPortfolio} refreshKey={wealthRefreshKey} />
-
-      {/* Tabs: Positions / Watchlist */}
-      <div className="mb-4">
-        <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-accent/30">
-          <button
-            onClick={() => setViewTab('positions')}
-            className={`px-3 py-1.5 rounded-md text-[12px] transition-colors ${
-              viewTab === 'positions'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            持仓 <span className="ml-1 font-mono text-[11px] opacity-70">{positionsCount}</span>
-          </button>
-          <button
-            onClick={() => setViewTab('watchlist')}
-            className={`px-3 py-1.5 rounded-md text-[12px] transition-colors ${
-              viewTab === 'watchlist'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            关注 <span className="ml-1 font-mono text-[11px] opacity-70">{watchlistCount}</span>
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {viewTab === 'positions' ? <><Button variant="secondary" onClick={() => openWorkspacePanel('analysis', null)}>组合分析</Button><WealthActionMenu label="持仓显示与扫描" actions={[{ label: detailedColumns ? '切换精简列' : '显示完整列', onSelect: () => setDetailedColumns(v => !v) }, { label: scanning ? '扫描中…' : '扫描并分析持仓', onSelect: scanAndReload, disabled: scanning }]} /><Button onClick={() => setRecordPickerOpen(true)}>＋ 记一笔</Button></> : <><Button variant="secondary" onClick={scanAndReload} disabled={scanning}>{scanning ? '扫描中…' : '扫描分析'}</Button><Button onClick={() => { setStockForm(emptyStockForm); setSearchQuery(''); setShowStockForm(true) }}>＋ 添加关注</Button></>}
         </div>
-      </div>
+        <div className="flex gap-3 flex-wrap basis-full text-xs text-muted-foreground">{marketStatus.map(m => <span key={m.code} title={`${m.sessions.join(', ')} (${m.local_time})`}>{m.name} · {m.status_text}</span>)}</div>
+      </div>}
 
       {/* Add Stock Dialog */}
       <Dialog open={showStockForm} onOpenChange={(open) => { setShowStockForm(open); if (!open) { setSearchQuery(''); setSearchMarket('') } }}>
@@ -2044,6 +1906,8 @@ export default function StocksPage() {
         </DialogContent>
       </Dialog>
 
+      <div className={privateMode ? 'wealth-holdings wealth-private' : 'wealth-holdings'} data-details={detailedColumns}>
+      {viewTab === 'positions' && positionSearch && !scopedAccounts.some(a => a.positions.some(p => `${p.name} ${p.symbol}`.toLowerCase().includes(positionSearch.toLowerCase()))) && <p className="text-sm text-muted-foreground py-4">当前账户范围没有匹配的持仓，请调整搜索。</p>}
       {/* Accounts & Positions */}
       {viewTab === 'positions' && (
         portfolio && portfolio.accounts.length === 0 ? (
@@ -2052,11 +1916,12 @@ export default function StocksPage() {
               <Building2 className="w-6 h-6 text-primary" />
             </div>
             <p className="text-[15px] font-semibold text-foreground">还没有账户</p>
-            <p className="text-[13px] text-muted-foreground mt-1.5">点击"添加账户"创建你的第一个交易账户</p>
+            <p className="text-[13px] text-muted-foreground mt-1.5 mb-4">创建账户后记录你的第一笔持仓</p>
+            <Button onClick={() => openAccountDialog()}>新增账户</Button>
           </div>
         ) : (
           <div className="space-y-4">
-            {portfolio?.accounts.map(account => (
+            {scopedAccounts.map(account => (
               <div key={account.id} className="card overflow-hidden">
               {/* Account Header */}
               <div
@@ -2085,7 +1950,7 @@ export default function StocksPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between md:justify-end gap-2 md:gap-6 pl-6 md:pl-0">
-                  <div className="flex items-center gap-2.5 md:gap-6 min-w-0">
+                  <div className="wealth-sensitive wealth-account-metrics flex items-center gap-2.5 md:gap-6 min-w-0">
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">市值</div>
                       <div className="text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap">{formatMoney(account.total_market_value)}</div>
@@ -2108,16 +1973,14 @@ export default function StocksPage() {
                       <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap">{formatMoney(account.available_funds)}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-0 md:gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 md:h-8 md:w-8" onClick={() => openPositionDialog(account.id)}>
-                      <Plus className="w-3 md:w-3.5 h-3 md:h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 md:h-8 md:w-8" onClick={() => openAccountDialog(accounts.find(a => a.id === account.id))}>
-                      <Pencil className="w-3 md:w-3.5 h-3 md:h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 md:h-8 md:w-8 hover:text-destructive" onClick={() => handleDeleteAccount(account.id)}>
-                      <Trash2 className="w-3 md:w-3.5 h-3 md:h-3.5" />
-                    </Button>
+                  <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                    <Button variant="ghost" size="sm" onClick={() => openPositionDialog(account.id)}>新增持仓</Button>
+                    <WealthActionMenu label={`${account.name}账户管理`} actions={[
+                      { label: '策略、费用与分红设置', onSelect: () => openWorkspacePanel('accounts', account.id) },
+                      { label: '编辑账户名称与余额', onSelect: () => openAccountDialog(accounts.find(a => a.id === account.id)) },
+                      { label: '账户流水', onSelect: () => openWorkspacePanel('records', account.id) },
+                      { label: '删除账户', destructive: true, onSelect: () => handleDeleteAccount(account.id) },
+                    ]} />
                   </div>
                 </div>
               </div>
@@ -2130,7 +1993,7 @@ export default function StocksPage() {
                   ) : (
                     <>
                       {/* Desktop Table */}
-                      <div className="hidden md:block overflow-x-auto">
+                      <div className="hidden md:block overflow-x-auto wealth-position-table">
                         <table className="w-full">
                           <thead>
                             <tr className="border-b border-border/30 bg-accent/20">
@@ -2142,13 +2005,13 @@ export default function StocksPage() {
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">市值</th>
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">盈亏</th>
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">今日</th>
-                              <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
+                              <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">持有计划</th>
                               <th className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
                               <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">操作</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {account.positions.map((pos, i) => {
+                            {account.positions.filter(pos => !positionSearch || `${pos.name} ${pos.symbol}`.toLowerCase().includes(positionSearch.toLowerCase())).map((pos, i) => {
                               const stock = stocks.find(s => s.id === pos.stock_id)
                               const badge = marketBadge(pos.market)
                               const isForeign = pos.market === 'HK' || pos.market === 'US'
@@ -2224,7 +2087,7 @@ export default function StocksPage() {
                                   <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${changeColor}`}>
                                     {pos.change_pct != null ? `${pos.change_pct >= 0 ? '+' : ''}${pos.change_pct.toFixed(2)}%` : '—'}
                                   </td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
+                                  <td className="wealth-sensitive px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
                                     <div>{formatPrice(pos.cost_price)}</div>
                                     {(pos.stop_loss_price != null || pos.take_profit_price != null) && (
                                       <div className="text-[9px] text-muted-foreground/70">
@@ -2234,8 +2097,8 @@ export default function StocksPage() {
                                       </div>
                                     )}
                                   </td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{pos.quantity}</td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
+                                  <td className="wealth-sensitive px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{pos.quantity}</td>
+                                  <td className="wealth-sensitive px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
                                     {pos.market_value != null ? (
                                       <div className="flex flex-col items-end">
                                         {isForeign ? (
@@ -2247,7 +2110,7 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${pnlColor}`}>
+                                  <td className={`wealth-sensitive px-4 py-2.5 text-right font-mono text-[12px] ${pnlColor}`}>
                                     {pos.pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.pnl >= 0 ? '+' : ''}{formatMoney(pos.pnl)}</span>
@@ -2255,7 +2118,7 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}>
+                                  <td className={`wealth-sensitive px-4 py-2.5 text-right font-mono text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}>
                                     {pos.daily_pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.daily_pnl >= 0 ? '+' : ''}{formatMoney(pos.daily_pnl)}</span>
@@ -2271,6 +2134,9 @@ export default function StocksPage() {
                                     ) : (
                                       <span className="text-[10px] text-muted-foreground/50">-</span>
                                     )}
+                                    <button className="block text-xs text-muted-foreground mt-1 hover:text-primary whitespace-nowrap" onClick={() => openRiskDialog(account, pos)}>
+                                      {pos.stop_loss_price || pos.take_profit_price ? <span className="wealth-sensitive">{pos.stop_loss_price ? `止损 ${formatPrice(pos.stop_loss_price)}` : ''}{pos.stop_loss_price && pos.take_profit_price ? ' / ' : ''}{pos.take_profit_price ? `止盈 ${formatPrice(pos.take_profit_price)}` : ''}</span> : '设置止损止盈'}
+                                    </button>
                                   </td>
                                   <td className="px-4 py-2.5">
                                     {stock && (
@@ -2300,17 +2166,11 @@ export default function StocksPage() {
                                     )}
                                   </td>
                                   <td className="px-4 py-2.5 text-center">
-                                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                      ) : null })()}
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)} title="相关资讯"><Newspaper className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'sell')} title="减仓"><Minus className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openRiskDialog(account, pos)} title="止损/止盈"><Shield className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
+                                    <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                                      <Button variant="ghost" size="sm" onClick={() => openStockDetail(pos.symbol, pos.market, pos.name, true)}>详情</Button>
+                                      <Button variant="ghost" size="sm" onClick={() => openTradeDialog(account, pos, 'buy')}>加仓</Button>
+                                      <Button variant="ghost" size="sm" onClick={() => openTradeDialog(account, pos, 'sell')}>减仓</Button>
+                                      <WealthActionMenu label={`${pos.name}更多操作`} actions={positionActions(account, pos)} />
                                     </div>
                                   </td>
                                 </tr>
@@ -2322,7 +2182,7 @@ export default function StocksPage() {
 
                       {/* Mobile Cards */}
                       <div className="md:hidden divide-y divide-border/30">
-                        {account.positions.map(pos => {
+                        {account.positions.filter(pos => !positionSearch || `${pos.name} ${pos.symbol}`.toLowerCase().includes(positionSearch.toLowerCase())).map(pos => {
                           const stock = stocks.find(s => s.id === pos.stock_id)
                           const badge = marketBadge(pos.market)
                           const changeColor = pos.change_pct != null
@@ -2405,7 +2265,7 @@ export default function StocksPage() {
                                 ) : null
                               })()}
                               {/* Row 3: Stats grid (4 cols, whitespace-nowrap to prevent "万" wrapping) */}
-                              <div className="grid grid-cols-4 gap-2 text-[11px]">
+                              <div className="wealth-sensitive grid grid-cols-4 gap-2 text-[11px]">
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">成本</div>
                                   <div className="font-mono text-foreground truncate" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
@@ -2466,18 +2326,12 @@ export default function StocksPage() {
                                     </button>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                  ) : null })()}
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)}><Newspaper className="w-3 h-3" /></Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'buy')} title="加仓"><Plus className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTradeDialog(account, pos, 'sell')} title="减仓"><Minus className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openRiskDialog(account, pos)} title="止损/止盈"><Shield className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
-                                </div>
+                                <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                                      <Button variant="ghost" size="sm" onClick={() => openStockDetail(pos.symbol, pos.market, pos.name, true)}>详情</Button>
+                                      <Button variant="ghost" size="sm" onClick={() => openTradeDialog(account, pos, 'buy')}>加仓</Button>
+                                      <Button variant="ghost" size="sm" onClick={() => openTradeDialog(account, pos, 'sell')}>减仓</Button>
+                                      <WealthActionMenu label={`${pos.name}更多操作`} actions={positionActions(account, pos)} />
+                                    </div>
                               </div>
                             </div>
                           )
@@ -2496,6 +2350,7 @@ export default function StocksPage() {
       {/* Watchlist */}
       {viewTab === 'watchlist' && (
         <div className="card p-4">
+          <Input className="w-full sm:w-60 mb-4" aria-label="搜索关注" placeholder="搜索名称 / 代码" value={watchSearch} onChange={e => setWatchSearch(e.target.value)} />
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-[13px] font-semibold text-foreground">关注列表</h3>
             <div className="flex items-center gap-1">
@@ -2568,20 +2423,16 @@ export default function StocksPage() {
           {stocks.length === 0 ? (
             <div className="py-12 text-center">
               <div className="text-[13px] text-muted-foreground">还没有添加关注股票</div>
-              <div className="mt-2 text-[11px] text-muted-foreground/70">点击右上角“添加股票”开始</div>
+              <div className="mt-2 text-[11px] text-muted-foreground/70">点击“添加关注”开始</div>
+            </div>
+          ) : filteredWatchStocks.length === 0 ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              <p>当前筛选下没有匹配的关注标的。</p>
+              <Button variant="ghost" className="mt-2" onClick={() => { setWatchSearch(''); setStockListFilter(''); setWatchGroupFilter('__all__'); setWatchlistOnlyAlerts(false) }}>清除筛选</Button>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {stocks
-                .filter(s => !stockListFilter || s.market === stockListFilter)
-                .filter(s => watchGroupFilter === '__all__' || (s.group_name || '') === watchGroupFilter)
-                .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.id - b.id)
-                .filter(stock => {
-                  if (!watchlistOnlyAlerts) return true
-                  const { suggestion } = getSuggestionForStock(stock.symbol, stock.market, false)
-                  return !!suggestion?.should_alert
-                })
-                .map((stock) => {
+              {filteredWatchStocks.map((stock) => {
                 const quote = getStockQuote(`${stock.market}:${stock.symbol}`)
                 const changeColor = quote?.change_pct != null
                   ? (quote.change_pct > 0 ? 'text-rose-500' : quote.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
@@ -2590,15 +2441,15 @@ export default function StocksPage() {
                 return (
                   <div
                     key={stock.id}
-                    draggable={stockListFilter === '' && !watchlistOnlyAlerts && watchGroupFilter === '__all__'}
+                    draggable={!watchSearch && stockListFilter === '' && !watchlistOnlyAlerts && watchGroupFilter === '__all__'}
                     onDragStart={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
+                      if (watchSearch || stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       watchDragSnapshotRef.current = stocks
                       setDraggingWatchStockId(stock.id)
                       e.dataTransfer.effectAllowed = 'move'
                     }}
                     onDragOver={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
+                      if (watchSearch || stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       e.preventDefault()
                       e.dataTransfer.dropEffect = 'move'
                       if (draggingWatchStockId != null) {
@@ -2606,7 +2457,7 @@ export default function StocksPage() {
                       }
                     }}
                     onDrop={(e) => {
-                      if (stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
+                      if (watchSearch || stockListFilter !== '' || watchlistOnlyAlerts || watchGroupFilter !== '__all__') return
                       e.preventDefault()
                       if (draggingWatchStockId != null) commitWatchlistReorder()
                       setDraggingWatchStockId(null)
@@ -2619,7 +2470,7 @@ export default function StocksPage() {
                     className={`group rounded-xl border border-border/40 bg-background/30 hover:bg-accent/20 transition-colors p-3 cursor-pointer ${draggingWatchStockId === stock.id ? 'opacity-60' : ''}`}
                     onClick={() => {
                       if (isSuppressCardClick()) return
-                      setAgentDialogStock(stock)
+                      openStockDetail(stock.symbol, stock.market, stock.name, false)
                     }}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -2686,55 +2537,15 @@ export default function StocksPage() {
                           </span>
                         )}
                       </div>
-                      <div
-                        className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => openKlineDialog(stock.symbol, stock.market, stock.name, false)}
-                          title="K线指标"
-                        >
-                          <BarChart3 className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => openNewsDialog(stock.name)}
-                          title="相关资讯"
-                        >
-                          <Newspaper className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 hover:text-primary"
-                          title="深度分析(TradingAgents)"
-                          onClick={() => openDeepAnalysis(stock.id, stock.symbol, stock.name)}
-                        >
-                          <Brain className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => openStockDetail(stock.symbol, stock.market, stock.name, false)}
-                          title="详情"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 hover:text-destructive"
-                          onClick={() => setRemoveWatchStock(stock)}
-                          title="删除股票"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
+                      <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                        <Button variant="ghost" size="sm" onClick={() => openStockDetail(stock.symbol, stock.market, stock.name, false)}>详情</Button>
+                        <WealthActionMenu label={`${stock.name}更多操作`} actions={[
+                          { label: 'K 线与技术指标', onSelect: () => openKlineDialog(stock.symbol, stock.market, stock.name, false) },
+                          { label: '相关新闻', onSelect: () => openNewsDialog(stock.name) },
+                          { label: '深度分析', onSelect: () => openDeepAnalysis(stock.id, stock.symbol, stock.name) },
+                          { label: 'Agent 配置与运行', onSelect: () => setAgentDialogStock(stock) },
+                          { label: '移除关注', destructive: true, onSelect: () => setRemoveWatchStock(stock) },
+                        ]} />
                       </div>
                     </div>
                   </div>
@@ -2745,6 +2556,27 @@ export default function StocksPage() {
         </div>
       )}
 
+      </div>
+      {viewTab === 'plans' && <div>
+        <WealthPanel mode="dca" accountId={accountFilter} privateMode={privateMode} focusPlanId={focusPlanId} onFocusPlanHandled={() => setFocusPlanId(null)} onOpenRecords={() => openWorkspacePanel('records')} onChanged={handleWealthChanged} refreshKey={wealthRefreshKey} />
+      </div>}
+      <Dialog open={workspacePanel !== null} onOpenChange={open => { if (!open) setWorkspacePanel(null) }}>
+        <DialogContent className="wealth-workspace wealth-action-panel" onCloseAutoFocus={e => {
+          e.preventDefault()
+          const returnTarget = panelFallbackRef.current || workspaceRef.current?.querySelector<HTMLButtonElement>('.wealth-tabs [aria-current]')
+          returnTarget?.focus()
+        }}>
+          <DialogHeader><DialogTitle>{workspacePanel === 'analysis' ? '全账户组合分析' : workspacePanel === 'records' ? '统一账本' : '账户管理'}</DialogTitle><DialogDescription>{workspacePanel === 'analysis' ? '分析范围为全部账户，按需生成建议并显示生成时间。' : '在当前账户范围内查看记录或管理设置。'}</DialogDescription></DialogHeader>
+          {workspacePanel !== 'analysis' && <label className="flex items-center gap-3 text-sm mb-4">账户<select aria-label="侧栏账户" className="border border-border rounded-lg p-2 bg-card" value={panelAccountId ?? ''} onChange={e => setPanelAccountId(e.target.value ? Number(e.target.value) : null)}><option value="">全部账户</option>{portfolio?.accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
+          {workspacePanel === 'accounts' && <div className="flex flex-wrap gap-2 mb-4"><Button onClick={() => { setWorkspacePanel(null); openAccountDialog() }}>新增账户</Button>{panelAccountId !== null && <Button variant="secondary" onClick={() => { setWorkspacePanel(null); openAccountDialog(accounts.find(a => a.id === panelAccountId)) }}>编辑名称与余额</Button>}</div>}
+          {workspacePanel && <WealthPanel embedded mode={workspacePanel === 'analysis' ? 'overview' : workspacePanel} accountId={panelAccountId} privateMode={privateMode} onChanged={handleWealthChanged} refreshKey={wealthRefreshKey} onOpenRecords={() => setWorkspacePanel('records')} />}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={recordPickerOpen} onOpenChange={setRecordPickerOpen}>
+        <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>记一笔交易</DialogTitle><DialogDescription>选择账户与持仓，进入原有加仓或减仓表单。</DialogDescription></DialogHeader>
+          <div className="max-h-[55vh] overflow-y-auto space-y-3">{scopedAccounts.map(a => <div key={a.id}><h3 className="text-sm font-semibold mb-2">{a.name}</h3>{a.positions.map(p => <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-border"><span>{p.name} <span className="text-xs text-muted-foreground">{p.symbol}</span></span><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'buy') }}>加仓</Button><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'sell') }}>减仓</Button></div></div>)}<Button variant="ghost" onClick={() => { setRecordPickerOpen(false); openPositionDialog(a.id) }}>＋ 新增持仓</Button></div>)}{!portfolio?.accounts.length && <Button onClick={() => { setRecordPickerOpen(false); openAccountDialog() }}>先添加账户</Button>}</div>
+        </DialogContent>
+      </Dialog>
       {/* Kline Dialog */}
       <KlineSummaryDialog
         open={klineDialogOpen}
@@ -2855,7 +2687,7 @@ export default function StocksPage() {
           <DialogHeader>
             <DialogTitle>止损 / 止盈 · {riskTarget?.pos.name}</DialogTitle>
             <DialogDescription>
-              保存后会进入 AI 建议上下文；系统不会自动创建价格提醒，需要时请点行内铃铛手动创建。
+              保存后会进入 AI 建议上下文；系统不会自动创建价格提醒，需要时请前往「提醒」页面创建。
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3">
