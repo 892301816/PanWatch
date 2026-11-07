@@ -26,6 +26,7 @@ from src.platform.ai.ai_client import AIClient
 from src.platform.ai.ai_failover import build_failover_client
 from src.platform.notifications.notifier import NotifierManager
 from src.modules.automation.agent_scheduler import AgentScheduler
+from src.modules.market.news_brief_scheduler import NewsBriefScheduler
 from src.modules.market.price_alert_scheduler import PriceAlertScheduler
 from src.modules.paper_trading.paper_trading_scheduler import PaperTradingScheduler
 from src.modules.research.context_scheduler import ContextMaintenanceScheduler
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 # 全局 scheduler 实例，供 agents API 调用
 scheduler: AgentScheduler | None = None
 price_alert_scheduler: PriceAlertScheduler | None = None
+news_brief_scheduler: NewsBriefScheduler | None = None
 paper_trading_scheduler: PaperTradingScheduler | None = None
 context_maintenance_scheduler: ContextMaintenanceScheduler | None = None
 
@@ -1741,6 +1743,7 @@ async def lifespan(app):
         logger.warning(f"交易日历预热调度失败(降级为只判周末): {e}")
 
     global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler
+    global news_brief_scheduler
     scheduler = build_scheduler()
     scheduler.start()
     logger.info("Agent 调度器已启动")
@@ -1764,6 +1767,17 @@ async def lifespan(app):
         logger.info("模拟盘调度器已启动")
     except Exception as e:
         logger.error(f"模拟盘调度器启动失败: {e}")
+    try:
+        settings = Settings()
+        news_brief_scheduler = NewsBriefScheduler(
+            timezone=settings.app_timezone,
+            hour=8,
+            minute=0,
+        )
+        news_brief_scheduler.start()
+        logger.info("早间消息汇总调度器已启动")
+    except Exception as e:
+        logger.error(f"早间消息汇总调度器启动失败: {e}")
     try:
         settings = Settings()
         context_maintenance_scheduler = ContextMaintenanceScheduler(
@@ -1795,6 +1809,9 @@ async def lifespan(app):
     if context_maintenance_scheduler:
         context_maintenance_scheduler.shutdown()
         logger.info("上下文维护调度器已关闭")
+    if news_brief_scheduler:
+        news_brief_scheduler.shutdown()
+        logger.info("早间消息汇总调度器已关闭")
     try:
         from src.platform.dataset import scheduler as dataset_scheduler
 

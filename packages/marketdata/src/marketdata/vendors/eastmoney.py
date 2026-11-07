@@ -18,6 +18,7 @@ from marketdata.vendors.base import QuoteVendor
 logger = logging.getLogger(__name__)
 
 _URL = "https://push2.eastmoney.com/api/qt/stock/get"
+_INDEX_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 _HOST = "push2.eastmoney.com"
 _MIN_INTERVAL_S = 0.2
 # f43 最新价 / f44 最高 / f45 最低 / f46 今开 / f47 成交量 / f48 成交额 / f50 量比 /
@@ -92,6 +93,55 @@ def _parse_one(data: dict | None, market: str, fallback_code: str) -> Quote | No
         circulating_market_value=(circ_mv / 1e8) if circ_mv is not None else None,
         total_market_value=(total_mv / 1e8) if total_mv is not None else None,
     )
+
+
+# f2 最新价 / f3 涨跌幅 / f4 涨跌额 / f12 代码 / f14 名称 / f18 昨收
+_INDEX_FIELDS = "f2,f3,f4,f12,f14,f18"
+# 网页端公开的固定 ut(非用户凭证)
+_UT = "fa5fd1943c7b386f172d6893dbfba10b"
+
+
+def fetch_index_quotes(secids: list[str], *, timeout: float = 8) -> list[dict]:
+    """全球指数行情(东财 ``ulist.np``,一次请求多个 secid)。
+
+    腾讯 ``fetch_raw`` 只覆盖 A 股/港股/美股指数,日经、韩国综合这类亚洲指数
+    只能走东财。返回结构与 ``index_quotes`` 保持一致,调用方按 ``symbol`` 匹配。
+
+    指数报价固定两位小数,故价格类字段一律 /100(与个股的 f59 小数位无关)。
+    """
+    if not secids:
+        return []
+    payload = market_get(
+        _INDEX_URL,
+        host_key=_HOST,
+        min_interval_s=_MIN_INTERVAL_S,
+        params={"secids": ",".join(secids), "fields": _INDEX_FIELDS, "ut": _UT},
+        headers=_HEADERS,
+        timeout=timeout,
+        retries=1,
+        parse="json",
+        log_label="东财指数",
+    )
+    rows = ((payload or {}).get("data") or {}).get("diff") or []
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    out: list[dict] = []
+    for row in rows:
+        code = str(row.get("f12") or "").strip()
+        price = _scaled(row.get("f2"), 2)
+        if not code or price is None or price <= 0:
+            continue
+        out.append(
+            {
+                "symbol": code,
+                "name": str(row.get("f14") or "").strip(),
+                "current_price": price,
+                "change_pct": _pct(row.get("f3")),
+                "change_amount": _scaled(row.get("f4"), 2),
+                "prev_close": _scaled(row.get("f18"), 2),
+            }
+        )
+    return out
 
 
 class EastmoneyQuoteVendor(QuoteVendor):

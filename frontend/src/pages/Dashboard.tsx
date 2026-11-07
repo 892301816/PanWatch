@@ -122,6 +122,10 @@ export default function DashboardPage() {
   const [aiReviewLoading, setAiReviewLoading] = useState(false)
   const [brief, setBrief] = useState<DashboardBrief | null>(null)
   const [briefOpen, setBriefOpen] = useState(false)
+  // 早间消息汇总(每日 08:00 生成,首页「今日要紧事」置顶展示)
+  const [morningBrief, setMorningBrief] = useState<DashboardBrief | null>(null)
+  const [morningOpen, setMorningOpen] = useState(false)
+  const [morningLoading, setMorningLoading] = useState(false)
   const [portfolioSummary, setPortfolioSummary] = useState<DashboardPortfolioSummary | null>(null)
   const [marketStatus, setMarketStatus] = useState<DashboardMarketStatus[]>([])
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
@@ -212,6 +216,11 @@ export default function DashboardPage() {
       briefs.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
       setBrief(briefs[0] || null)
     })
+
+    dashboardApi
+      .brief('morning')
+      .then((b) => setMorningBrief(b.empty ? null : b))
+      .catch(() => {})
   }, [loadBench])
 
   useEffect(() => {
@@ -226,6 +235,25 @@ export default function DashboardPage() {
 
   const openStock = (symbol: string, market: string, name = '', hasPosition = false) =>
     setModal({ open: true, symbol, market: market || 'CN', name, hasPosition })
+
+  const generateMorningBrief = async () => {
+    setMorningLoading(true)
+    try {
+      const res = await dashboardApi.generateMorningBrief(false)
+      setMorningBrief({
+        type: 'morning',
+        title: res.date,
+        content: res.brief,
+        date: res.date,
+        empty: false,
+      })
+      setMorningOpen(true)
+    } catch {
+      // 失败保持原样,不打断首页其他卡片
+    } finally {
+      setMorningLoading(false)
+    }
+  }
 
   const runAiReview = async () => {
     setAiReviewLoading(true)
@@ -419,8 +447,8 @@ export default function DashboardPage() {
       </div>
 
       {/* 指数走势 pills */}
-      <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
-        {indices.slice(0, 5).map((ix) => (
+      <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        {indices.slice(0, 8).map((ix) => (
           <div key={`${ix.market}:${ix.symbol}`} className="card-subtle relative p-2.5">
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0">
@@ -462,6 +490,48 @@ export default function DashboardPage() {
               </button>
             )}
           </div>
+          {/* 早间消息汇总：每个交易日 08:00 生成并推送 */}
+          <div className="mb-2.5 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
+            <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              早间消息汇总
+              {morningBrief?.date && (
+                <span className="font-normal text-muted-foreground">{morningBrief.date}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => void generateMorningBrief()}
+                disabled={morningLoading}
+                className="ml-auto text-[11px] font-normal text-muted-foreground transition-colors hover:text-primary disabled:opacity-50"
+                title="立即汇总最近 24 小时消息"
+              >
+                {morningLoading ? '生成中…' : morningBrief ? '重新生成' : '立即生成'}
+              </button>
+            </div>
+            {morningBrief?.content ? (
+              <>
+                <p
+                  className={`whitespace-pre-wrap text-[12px] leading-relaxed ${
+                    morningOpen ? '' : 'line-clamp-3'
+                  }`}
+                >
+                  {morningBrief.content}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setMorningOpen((v) => !v)}
+                  className="mt-1 text-[11px] text-primary"
+                >
+                  {morningOpen ? '收起' : '展开全文'}
+                </button>
+              </>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">
+                每个交易日 08:00 自动汇总最近 24 小时消息并推送到通知渠道；非交易日不生成。
+              </div>
+            )}
+          </div>
+
           {scanLoading && candidates.length === 0 ? (
             <div className="py-6 text-center text-[12px] text-muted-foreground">扫描中…</div>
           ) : candidates.length === 0 ? (

@@ -455,8 +455,26 @@ async def curate_today(req: CurateRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/brief")
-def get_brief(type: str = Query("eod", description="premarket | eod"), db: Session = Depends(get_db)):
-    """盘前/盘后 AI 简报(复用 premarket_outlook / daily_report agent 的最新报告)。"""
+def get_brief(type: str = Query("eod", description="premarket | eod | morning"), db: Session = Depends(get_db)):
+    """盘前/盘后 AI 简报(复用 premarket_outlook / daily_report agent 的最新报告)。
+
+    ``morning`` 返回「早间消息汇总」(每日 08:00 由 news_brief_scheduler 生成)。
+    """
+    if type == "morning":
+        from src.modules.market.news_brief import get_news_brief
+
+        row = get_news_brief()
+        if not row:
+            return {"empty": True, "type": "morning", "agent_label": "早间消息汇总"}
+        return {
+            "type": "morning",
+            "agent_label": "早间消息汇总",
+            "title": row.get("title") or "",
+            "content": row.get("content") or "",
+            "date": row.get("date") or "",
+            "updated_at": row.get("updated_at") or "",
+        }
+
     agent = "premarket_outlook" if type == "premarket" else "daily_report"
     label = "盘前分析" if type == "premarket" else "收盘复盘"
     row = (

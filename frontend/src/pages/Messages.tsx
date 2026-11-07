@@ -15,6 +15,7 @@ interface MessageItem {
   importance: number
   symbols: string[]
   in_watchlist: boolean
+  in_position: boolean
 }
 
 interface FeedResponse {
@@ -23,6 +24,8 @@ interface FeedResponse {
   hours: number
   watchlist_size: number
   watchlist_hits: number
+  position_size: number
+  position_hits: number
   category_counts: Record<string, number>
   source_counts: Record<string, number>
   items: MessageItem[]
@@ -53,6 +56,7 @@ export default function MessagesPage() {
   const [hours, setHours] = useState(24)
   const [category, setCategory] = useState<string>('')
   const [watchlistOnly, setWatchlistOnly] = useState(false)
+  const [positionOnly, setPositionOnly] = useState(false)
   const [briefLoading, setBriefLoading] = useState(false)
   const [modal, setModal] = useState<{ open: boolean; symbol: string; name: string }>({
     open: false,
@@ -67,6 +71,7 @@ export default function MessagesPage() {
         const qs = new URLSearchParams({ hours: String(hours), limit: '300' })
         if (category) qs.set('category', category)
         if (watchlistOnly) qs.set('watchlist_only', 'true')
+        if (positionOnly) qs.set('position_only', 'true')
         if (withBrief) qs.set('with_brief', 'true')
         const res = await fetchAPI<FeedResponse>(`/messages/feed?${qs.toString()}`)
         setData(res)
@@ -77,7 +82,7 @@ export default function MessagesPage() {
         setBriefLoading(false)
       }
     },
-    [hours, category, watchlistOnly],
+    [hours, category, watchlistOnly, positionOnly],
   )
 
   useEffect(() => {
@@ -145,6 +150,17 @@ export default function MessagesPage() {
             只看自选股{data ? `（${data.watchlist_hits}）` : ''}
           </button>
 
+          <button
+            type="button"
+            onClick={() => setPositionOnly(v => !v)}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 transition-colors ${
+              positionOnly ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-accent'
+            }`}
+            title="只看命中持仓股的消息"
+          >
+            只看持仓{data ? `（${data.position_hits}）` : ''}
+          </button>
+
           <div className="flex flex-wrap gap-1">
             <button
               type="button"
@@ -194,7 +210,8 @@ export default function MessagesPage() {
 
         {data && (
           <div className="mt-2 text-[11px] text-muted-foreground">
-            时间窗 {data.hours}h · 共 {data.total} 条 · 自选股 {data.watchlist_size} 只，命中 {data.watchlist_hits} 条
+            时间窗 {data.hours}h · 共 {data.total} 条 · 自选 {data.watchlist_size} 只/命中 {data.watchlist_hits} 条 · 持仓{' '}
+            {data.position_size} 只/命中 {data.position_hits} 条
           </div>
         )}
       </div>
@@ -217,7 +234,10 @@ export default function MessagesPage() {
         <div className="card py-10 text-center text-[12px] text-muted-foreground">加载中…</div>
       ) : !data || data.items.length === 0 ? (
         <div className="card py-10 text-center text-[12px] text-muted-foreground">
-          该条件下暂无消息{watchlistOnly ? ' · 试试取消「只看自选股」' : ''}
+          该条件下暂无消息
+          {watchlistOnly || positionOnly
+            ? ` · 试试取消「${positionOnly ? '只看持仓' : '只看自选股'}」`
+            : ''}
         </div>
       ) : (
         grouped.map(({ cat, items }) => (
@@ -231,6 +251,14 @@ export default function MessagesPage() {
             <div className="divide-y divide-border/40">
               {items.map(m => (
                 <div key={m.id} className="flex items-start gap-2 py-1.5">
+                  {m.in_position && (
+                    <span
+                      className="mt-0.5 shrink-0 rounded bg-rose-500/15 px-1 text-[9px] font-medium text-rose-500"
+                      title="持仓股相关"
+                    >
+                      持
+                    </span>
+                  )}
                   {m.in_watchlist && (
                     <Star className="mt-0.5 h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />
                   )}

@@ -7,7 +7,7 @@
    ⚠️ 目前 PanWatch 的数据结构没有保留这些字段（``FlashNews`` 只有 importance），
    所以这一层暂时是空的，见文件末尾"待补"。
 2. **关键词规则** —— 按词表把消息分进 政策监管/宏观数据/公司事件/行业催化/海外地缘 五个桶。
-3. **关联标的** —— 命中自选股的消息单独拎出来置顶（自选股 = 绑定了 Agent 的股票）。
+3. **关联标的** —— 命中自选股(★)与持仓股(◆)的消息单独拎出来置顶，持仓优先、其次自选。
 4. **重要性排序** —— 源自带的 level/important + 关键词加权。
 
 关于"会漏"：关键词表需要维护，政策新提法不加进去就漏。这是规则方案的固定成本。
@@ -82,6 +82,7 @@ class Message:
     importance: int    # 0~3
     symbols: list[str] = field(default_factory=list)   # 消息提到/关联的股票
     in_watchlist: bool = False                          # 是否命中自选股
+    in_position: bool = False                           # 是否命中持仓股
 
 
 def classify_category(title: str, content: str = "") -> str:
@@ -108,27 +109,37 @@ def compute_importance(title: str, source_importance: int = 0) -> int:
     return base
 
 
-def _load_watchlist_symbols() -> set[str]:
-    """自选股 = 绑定了 Agent 的股票(与 load_watchlist_for_agent 同口径)。失败返回空集。"""
+def _load_tracked_symbols() -> tuple[set[str], set[str]]:
+    """返回 (自选股集合, 持仓股集合)。读取失败返回空集，不影响消息本身。
+
+    自选取 Stock 全表（不再要求绑定 Agent，否则没绑 Agent 的自选股会既抓不到新闻也不打标记）；
+    持仓通过 Position.stock_id 关联 Stock 取代码。
+    """
+    watch: set[str] = set()
+    positions: set[str] = set()
     try:
         from src.platform.persistence.database import SessionLocal
-        from src.platform.persistence.models import Stock, StockAgent
+        from src.platform.persistence.models import Position, Stock
 
         db = SessionLocal()
         try:
-            ids = {sa.stock_id for sa in db.query(StockAgent.stock_id).all()}
-            if not ids:
-                return set()
-            return {
+            watch = {
                 str(s.symbol).strip()
-                for s in db.query(Stock).filter(Stock.id.in_(ids)).all()
+                for s in db.query(Stock).all()
                 if s.symbol
             }
+            position_ids = {p.stock_id for p in db.query(Position.stock_id).all() if p.stock_id}
+            if position_ids:
+                positions = {
+                    str(s.symbol).strip()
+                    for s in db.query(Stock).filter(Stock.id.in_(position_ids)).all()
+                    if s.symbol
+                }
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"[消息] 自选股读取失败(关联标记将为空): {e}")
-        return set()
+        logger.warning(f"[消息] 自选/持仓读取失败(关联标记将为空): {e}")
+    return watch, positions
 
 
 async def _collect_flash() -> list[dict]:
@@ -189,6 +200,7 @@ async def collect_messages(
     category: str | None = None,
     source: str | None = None,
     watchlist_only: bool = False,
+    position_only: bool = False,
     limit: int = 200,
 ) -> dict:
     """收集并分类最近的消息。
@@ -198,12 +210,14 @@ async def collect_messages(
         category: 只要某个分类(如"政策监管");None 表示全部。
         source: 只要某个来源(如"jin10")。
         watchlist_only: 只保留命中自选股的消息。
+    position_only: 只保留命中持仓股的消息。
         limit: 返回上限(按重要性+时间排序后截断)。
     """
-    watch = _load_watchlist_symbols()
+    watch, positions = _load_tracked_symbols()
+    tracked = watch | positions
     flash, stock_news = await asyncio.gather(
         _collect_flash(),
-        _collect_stock_news(sorted(watch), hours=hours),
+        _collect_stock_news(sorted(tracked), hours=hours),
     )
 
     from datetime import datetime, timedelta, timezone
@@ -230,6 +244,7 @@ async def collect_messages(
         title = raw["title"]
         symbols = [str(s).strip() for s in (raw.get("symbols") or []) if s]
         hit_watch = bool(watch and any(s in watch for s in symbols))
+        hit_position = bool(positions and any(s in positions for s in symbols))
 
         messages.append(Message(
             id=mid,
@@ -243,16 +258,18 @@ async def collect_messages(
             importance=compute_importance(title, raw["importance"]),
             symbols=symbols,
             in_watchlist=hit_watch,
+            in_position=hit_position,
         ))
 
-    # 第 3 层:命中自选股的优先;第 4 层:重要性;再按时间
-    messages.sort(key=lambda m: (not m.in_watchlist, -m.importance, -m.ts))
+    # 第 3 层:命中持仓(◆)优先,其次自选(★);第 4 层:重要性;再按时间
+    messages.sort(key=lambda m: (not m.in_position, not m.in_watchlist, -m.importance, -m.ts))
 
     # 分类统计在过滤前算,这样切到某个分类时还能看到全貌
     counts: dict[str, int] = {}
     for m in messages:
         counts[m.category] = counts.get(m.category, 0) + 1
     watch_count = sum(1 for m in messages if m.in_watchlist)
+    position_count = sum(1 for m in messages if m.in_position)
     source_counts: dict[str, int] = {}
     for m in messages:
         source_counts[m.source] = source_counts.get(m.source, 0) + 1
@@ -263,6 +280,8 @@ async def collect_messages(
         messages = [m for m in messages if m.source == source]
     if watchlist_only:
         messages = [m for m in messages if m.in_watchlist]
+    if position_only:
+        messages = [m for m in messages if m.in_position]
 
     total = len(messages)
     messages = messages[: max(1, limit)]
@@ -273,6 +292,8 @@ async def collect_messages(
         "hours": hours,
         "watchlist_size": len(watch),
         "watchlist_hits": watch_count,
+        "position_size": len(positions),
+        "position_hits": position_count,
         "category_counts": counts,
         "source_counts": source_counts,
         "items": [
@@ -287,6 +308,7 @@ async def collect_messages(
                 "importance": m.importance,
                 "symbols": m.symbols,
                 "in_watchlist": m.in_watchlist,
+                "in_position": m.in_position,
             }
             for m in messages
         ],
@@ -318,8 +340,8 @@ def _build_brief_payload(messages: list[dict], category_counts: dict) -> str:
     for cat, items in grouped.items():
         lines.append(f"## {cat}")
         for m in items[:8]:
-            star = "★" if m["in_watchlist"] else ""
-            lines.append(f"- [{m['time']}][{m['source']}]{star} {m['title']}")
+            marks = ("◆" if m.get("in_position") else "") + ("★" if m.get("in_watchlist") else "")
+            lines.append(f"- [{m['time']}][{m['source']}]{marks} {m['title']}")
         lines.append("")
     return "\n".join(lines)
 

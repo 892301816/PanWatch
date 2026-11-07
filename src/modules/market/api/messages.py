@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from src.modules.market import message_service
 
@@ -23,13 +23,14 @@ async def get_feed(
     category: str | None = Query(None, description="只看某个分类，如 政策监管"),
     source: str | None = Query(None, description="只看某个来源，如 jin10"),
     watchlist_only: bool = Query(False, description="只看命中自选股的"),
+    position_only: bool = Query(False, description="只看命中持仓股的"),
     limit: int = Query(200, ge=1, le=500),
     with_brief: bool = Query(False, description="是否附带 AI 汇总(会调用一次模型)"),
 ):
     """最近消息（已按 分类 / 自选股关联 / 重要性 排好序）。"""
     data = await message_service.collect_messages(
         hours=hours, category=category, source=source,
-        watchlist_only=watchlist_only, limit=limit,
+        watchlist_only=watchlist_only, position_only=position_only, limit=limit,
     )
     if with_brief:
         data["brief"] = await message_service.write_ai_brief(
@@ -38,6 +39,28 @@ async def get_feed(
     else:
         data["brief"] = ""
     return {**data, "disclaimer": _DISCLAIMER}
+
+
+@router.post("/brief")
+async def generate_brief(notify: bool = Query(False, description="是否同时推送到默认通知渠道")):
+    """手动生成当天的「早间消息汇总」（首页今日要紧事用）。"""
+    from src.modules.market import news_brief
+
+    result = await news_brief.generate_news_brief(force=True, notify=notify)
+    if not result.get("ok"):
+        raise HTTPException(500, result.get("error") or "AI 汇总生成失败")
+    return result
+
+
+@router.get("/brief")
+def latest_brief():
+    """最近一次早间汇总；当天没有则回退到最近一条并带上生成日期。"""
+    from src.modules.market import news_brief
+
+    row = news_brief.get_news_brief()
+    if not row:
+        return {"empty": True}
+    return {"empty": False, **row, "today": news_brief.today_str()}
 
 
 @router.get("/categories")

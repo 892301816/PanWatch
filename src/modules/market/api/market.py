@@ -26,6 +26,9 @@ MARKET_INDICES = [
     {"symbol": "399006", "name": "创业板指", "market": "CN", "tencent_symbol": "sz399006", "response_symbol": "399006"},
     # 港股指数
     {"symbol": "HSI", "name": "恒生指数", "market": "HK", "tencent_symbol": "hkHSI", "response_symbol": "HSI"},
+    # 亚洲其他指数:腾讯不覆盖,走东财 ulist(secid 显式映射)
+    {"symbol": "N225", "name": "日经225", "market": "JP", "tencent_symbol": "", "eastmoney_secid": "100.N225", "response_symbol": "N225"},
+    {"symbol": "KS11", "name": "韩国综合", "market": "KR", "tencent_symbol": "", "eastmoney_secid": "100.KS11", "response_symbol": "KS11"},
     # 美股指数 (腾讯返回的 symbol 带点号前缀: .IXIC, .DJI)
     {"symbol": "IXIC", "name": "纳斯达克", "market": "US", "tencent_symbol": "usIXIC", "response_symbol": ".IXIC"},
     {"symbol": "DJI", "name": "道琼斯", "market": "US", "tencent_symbol": "usDJI", "response_symbol": ".DJI"},
@@ -58,7 +61,11 @@ def _spark_for(idx: dict) -> list[float]:
     if hit and now - hit[0] < _SPARK_TTL_S:
         return hit[1]
     try:
-        market_code = MarketCode(idx["market"])
+        try:
+            market_code = MarketCode(idx["market"])
+        except ValueError:
+            # JP/KR 不在 MarketCode 枚举里;指数K线只按 secid 取数,market 不参与
+            market_code = MarketCode.CN
         klines = get_index_klines(idx["symbol"], market_code, days=20)
         spark = [k.close for k in klines] if klines else []
     except Exception as e:
@@ -76,13 +83,23 @@ async def get_market_indices():
     if cached and now - cached[0] < _INDICES_CACHE_TTL_S:
         return cached[1]
 
-    tencent_symbols = [idx["tencent_symbol"] for idx in MARKET_INDICES]
+    tencent_symbols = [idx["tencent_symbol"] for idx in MARKET_INDICES if idx.get("tencent_symbol")]
+    em_secids = [idx["eastmoney_secid"] for idx in MARKET_INDICES if idx.get("eastmoney_secid")]
 
+    quotes: list[dict] = []
     try:
-        quotes = get_market_data().index_quotes(tencent_symbols)
+        quotes = get_market_data().index_quotes(tencent_symbols) or []
     except Exception as e:
-        logger.error(f"获取市场指数失败: {e}")
-        return []
+        logger.error(f"获取市场指数(腾讯)失败: {e}")
+
+    # 日经/韩国综合:腾讯无覆盖,东财补。失败只影响这两个,不影响其余指数
+    if em_secids:
+        try:
+            from marketdata.vendors.eastmoney import fetch_index_quotes
+
+            quotes.extend(fetch_index_quotes(em_secids))
+        except Exception as e:
+            logger.warning(f"获取市场指数(东财)失败: {e}")
 
     # 构建 response_symbol -> quote 映射
     quote_map = {}

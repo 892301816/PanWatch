@@ -282,8 +282,15 @@ export const dashboardApi = {
       timeoutMs: 40000,
     }),
 
-  brief: (type: 'premarket' | 'eod') =>
+  brief: (type: 'premarket' | 'eod' | 'morning') =>
     fetchAPI<DashboardBrief>(`/dashboard/brief?type=${type}`),
+
+  /** 手动生成当天的「早间消息汇总」（默认不推送） */
+  generateMorningBrief: (notify = false) =>
+    fetchAPI<{ ok: boolean; date: string; brief: string; notified: boolean }>(
+      `/messages/brief?notify=${notify ? 'true' : 'false'}`,
+      { method: 'POST', timeoutMs: 90_000 }
+    ),
 }
 
 export interface DashboardBrief {
