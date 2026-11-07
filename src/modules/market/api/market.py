@@ -1,7 +1,12 @@
 """市场指数 API - 公共数据，无需认证"""
 import asyncio
+import json
 import logging
+import os
+import threading
 import time
+from pathlib import Path
+
 from fastapi import APIRouter
 
 from src.platform.marketdata.collectors.kline_collector import get_index_klines
@@ -45,21 +50,79 @@ _SPARK_CACHE: dict[str, tuple[float, list[float]]] = {}
 _SPARK_TTL_S = 1800
 
 
-def clear_indices_cache() -> None:
-    """清空指数响应/spark 缓存(测试隔离用)。"""
-    _INDICES_CACHE.clear()
-    _SPARK_CACHE.clear()
+# 指数收盘价本地留存:日经/韩国综合在部分网络下取不到东财K线接口(云端实测被重置),
+# 美股指数腾讯只给 1 根。每天把看到的最新价按日期存下来,几日后就能自己长出走势线,
+# 不必依赖单一K线接口。文件在数据卷里,重启/升级都保留。
+_CLOSES_LOCK = threading.Lock()
+_CLOSES_MAX = 40
 
 
-def _spark_for(idx: dict) -> list[float]:
+def _closes_path() -> Path:
+    base = os.environ.get("DATA_DIR", "").strip()
+    root = Path(base) if base else Path.cwd() / "data"
+    return root / "index_closes.json"
+
+
+def _load_closes() -> dict[str, list[list]]:
+    try:
+        data = json.loads(_closes_path().read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_closes(symbol: str, pairs: list[tuple[str, float]]) -> None:
+    """合并若干 (日期, 收盘) 到本地留存,同日覆盖;失败静默。"""
+    rows_in = [(str(d), float(c)) for d, c in pairs if d and c and c > 0]
+    if not symbol or not rows_in:
+        return
+    try:
+        with _CLOSES_LOCK:
+            data = _load_closes()
+            merged = {
+                str(r[0]): float(r[1])
+                for r in data.get(symbol, [])
+                if isinstance(r, (list, tuple)) and len(r) == 2
+            }
+            merged.update(rows_in)
+            ordered = sorted(merged.items())[-_CLOSES_MAX:]
+            data[symbol] = [[d, c] for d, c in ordered]
+            path = _closes_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"指数收盘留存失败 {symbol}: {exc}")
+
+
+def _stored_rows(symbol: str) -> list[tuple[str, float]]:
+    rows = _load_closes().get(symbol) or []
+    return [
+        (str(r[0]), float(r[1]))
+        for r in rows
+        if isinstance(r, (list, tuple)) and len(r) == 2
+    ]
+
+
+def _spark_for(idx: dict, quote: dict | None = None) -> list[float]:
     """近 20 日收盘价,供首页指数走势 sparkline 用(带 30min 独立缓存)。
 
     fail-soft:市场码非法/取数异常/无映射一律吞掉,返回空列表,绝不影响 quote 主体。
     """
+    # 缓存命中也要记录当日价,否则本地走势线永远长不出来。
+    # 周末不记:非交易日拿到的只是上一个交易日的收盘价,记下来会多出一根假数据。
+    if quote and quote.get("current_price") and time.localtime().tm_wday < 5:
+        _merge_closes(
+            idx["symbol"], [(time.strftime("%Y-%m-%d"), quote["current_price"])]
+        )
+
     now = time.time()
     hit = _SPARK_CACHE.get(idx["symbol"])
     if hit and now - hit[0] < _SPARK_TTL_S:
         return hit[1]
+
+    merged: dict[str, float] = dict(_stored_rows(idx["symbol"]))
     try:
         try:
             market_code = MarketCode(idx["market"])
@@ -67,10 +130,16 @@ def _spark_for(idx: dict) -> list[float]:
             # JP/KR 不在 MarketCode 枚举里;指数K线只按 secid 取数,market 不参与
             market_code = MarketCode.CN
         klines = get_index_klines(idx["symbol"], market_code, days=20)
-        spark = [k.close for k in klines] if klines else []
+        history = [(str(k.date), k.close) for k in klines or []]
+        if history:
+            merged.update(history)
+            # 顺手把K线历史也落盘,换网络环境时不必从零积累
+            _merge_closes(idx["symbol"], history)
     except Exception as e:
         logger.debug(f"指数 spark 获取失败 {idx['symbol']}: {e}")
-        spark = []
+
+    # get_index_klines 的 lmt 下限是 1200 根,这里统一截成近 20 个交易日
+    spark = [close for _, close in sorted(merged.items())][-20:]
     _SPARK_CACHE[idx["symbol"]] = (now, spark)
     return spark
 
@@ -108,7 +177,10 @@ async def get_market_indices():
 
     # spark 并行取(缓存未过期时零成本;冷启动=最慢单个≈1s,而非 6 个串行累加)
     sparks = await asyncio.gather(
-        *[asyncio.to_thread(_spark_for, idx) for idx in MARKET_INDICES],
+        *[
+            asyncio.to_thread(_spark_for, idx, quote_map.get(idx["response_symbol"]))
+            for idx in MARKET_INDICES
+        ],
         return_exceptions=True,
     )
     spark_map = {
