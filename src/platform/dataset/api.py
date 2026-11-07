@@ -182,3 +182,46 @@ def get_spark(
                     data[code] = closes
 
     return {"data": data}
+
+
+@router.get("/spark-ohlc")
+def get_spark_ohlc(
+    symbols: str = Query(default=""),
+    days: int = Query(default=20, ge=5, le=60),
+    fallback: bool = Query(default=True, description="本地缺数据时是否回退 K 线接口"),
+):
+    """批量迷你日K(OHLC)。列表页画蜡烛图用,本地 daily_bars 优先。"""
+    codes = [s.strip() for s in symbols.split(",") if s.strip()][:200]
+    data = store.recent_bars(codes, days)
+
+    missing = [c for c in codes if len(data.get(c) or []) < 2]
+    if fallback and missing:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from src.platform.marketdata.collectors.kline_collector import KlineCollector
+        from src.platform.marketdata.models import MarketCode
+
+        def _fetch(code: str) -> tuple[str, list[dict]]:
+            try:
+                bars = KlineCollector(MarketCode.CN).get_klines(code, days=max(20, days))
+                out = [
+                    {
+                        "o": round(float(b.open), 3),
+                        "h": round(float(b.high), 3),
+                        "l": round(float(b.low), 3),
+                        "c": round(float(b.close), 3),
+                        "v": int(b.volume or 0),
+                    }
+                    for b in bars
+                    if None not in (b.open, b.high, b.low, b.close)
+                ][-days:]
+                return code, out
+            except Exception:  # noqa: BLE001
+                return code, []
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for code, bars in pool.map(_fetch, missing[:40]):
+                if bars:
+                    data[code] = bars
+
+    return {"data": data}

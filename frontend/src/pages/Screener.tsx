@@ -44,39 +44,60 @@ const fmt = (v: number | null | undefined, digits = 2) =>
 const pctText = (v: number | null | undefined) =>
   v == null || Number.isNaN(v) ? '--' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 
-function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
-  const color = positive ? '#E53935' : '#43A047'
-  if (!data || data.length === 0) {
+interface SparkBar {
+  o: number
+  h: number
+  l: number
+  c: number
+  v?: number
+}
+
+/** 近 20 日迷你K线(蜡烛 + 量能)。宽高由容器给定,约 2:1 才看得出起伏 */
+function CandleSpark({ bars, pending }: { bars?: SparkBar[]; pending: boolean }) {
+  if (!bars || bars.length < 2) {
     return (
-      <div className="flex h-9 w-full items-center justify-center rounded bg-muted/30 text-[10px] text-muted-foreground">
-        暂无走势
+      <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground/70">
+        {pending ? 'K 线加载中…' : '暂无K线'}
       </div>
     )
   }
-  if (data.length === 1) {
-    // 新股只有 1 个交易日:画一条基准线 + 点,避免整块空白
-    return (
-      <svg viewBox="0 0 132 36" className="h-9 w-full" preserveAspectRatio="none">
-        <line x1="0" y1="18" x2="132" y2="18" stroke="currentColor" className="text-border" strokeDasharray="3 3" strokeWidth="0.8" />
-        <circle cx="66" cy="18" r="2.6" fill={color} />
-        <text x="72" y="15" fontSize="8" fill="#8b929c">上市首日</text>
-      </svg>
-    )
-  }
-  const w = 132
-  const h = 36
-  const min = Math.min(...data)
-  const max = Math.max(...data)
-  const span = max - min || 1
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w
-    const y = h - ((v - min) / span) * (h - 4) - 2
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  })
+  const w = 160
+  const h = 96
+  const volH = 24 // 底部量能区高度
+  const gap = 5
+  const priceH = h - volH - gap
+  const hi = Math.max(...bars.map((b) => b.h))
+  const lo = Math.min(...bars.map((b) => b.l))
+  const span = hi - lo || 1
+  const bw = w / bars.length
+  const cw = Math.max(2, bw * 0.8)
+  const y = (v: number) => 3 + ((hi - v) / span) * (priceH - 6)
+  const volTop = priceH + gap
+  const maxVol = Math.max(...bars.map((b) => b.v || 0)) || 1
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-9 w-full" preserveAspectRatio="none">
-      <line x1="0" y1={h / 2} x2={w} y2={h / 2} stroke="currentColor" className="text-border" strokeDasharray="3 3" strokeWidth="0.8" />
-      <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-full w-full" preserveAspectRatio="none">
+      {bars.map((b, i) => {
+        const x = i * bw + bw / 2
+        const rise = b.c >= b.o
+        const color = rise ? '#F04438' : '#12B76A'
+        const top = y(Math.max(b.o, b.c))
+        const bodyH = Math.max(2, Math.abs(y(b.o) - y(b.c)))
+        const vh = Math.max(1, ((b.v || 0) / maxVol) * (volH - 1))
+        return (
+          <g key={i}>
+            <line x1={x} y1={y(b.h)} x2={x} y2={y(b.l)} stroke={color} strokeWidth="1" />
+            <rect x={x - cw / 2} y={top} width={cw} height={bodyH} fill={color} />
+            <rect
+              x={x - cw / 2}
+              y={volTop + (volH - vh)}
+              width={cw}
+              height={vh}
+              fill={color}
+              opacity="0.45"
+            />
+          </g>
+        )
+      })}
     </svg>
   )
 }
@@ -177,13 +198,15 @@ export default function ScreenerPage() {
   const [activeCode, setActiveCode] = useState('')
   const [items, setItems] = useState<ScreenerItem[]>([])
   const [page, setPage] = useState(1)
-  const [sparks, setSparks] = useState<Record<string, number[]>>({})
+  const [candles, setCandles] = useState<Record<string, SparkBar[]>>({})
+  const [candlesTried, setCandlesTried] = useState<Record<string, true>>({})
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [adding, setAdding] = useState(false)
   const [addMsg, setAddMsg] = useState('')
   const [tradeDate, setTradeDate] = useState('')
   const [universe, setUniverse] = useState(0)
+  const [dataWarnings, setDataWarnings] = useState<string[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [appliedLogic, setAppliedLogic] = useState<'all' | 'any'>('all')
@@ -211,6 +234,7 @@ export default function ScreenerPage() {
   const [ladderLoading, setLadderLoading] = useState(false)
   const [boards, setBoards] = useState<BoardItem[]>([])
   const [boardsLoading, setBoardsLoading] = useState(false)
+  const [showStyleBoards, setShowStyleBoards] = useState(false)
   // 连涨天梯的板块筛选（只显示该板块的涨停股）
   const [ladderConcept, setLadderConcept] = useState<string | null>(null)
   const [ladderFiltering, setLadderFiltering] = useState(false)
@@ -259,8 +283,9 @@ export default function ScreenerPage() {
         setTradeDate(res.trade_date)
         setUniverse(res.universe)
         setAppliedLogic(res.applied?.logic || opts?.logic || 'all')
+        setDataWarnings(res.warnings || [])
         setPage(1)
-        setSparks({})
+        setCandlesTried({}) // 保留已抓到的K线,只重置"已尝试"标记以便刷新
       } catch (e) {
         setError(e instanceof Error ? e.message : '选股失败')
         setItems([])
@@ -494,6 +519,7 @@ export default function ScreenerPage() {
       setLadder(null)
       setBoards([])
       setLadderConcept(null)
+      setShowStyleBoards(false)
       await loadMeta()
       await run(conditions, { code: activeCode })
     } catch (e) {
@@ -513,7 +539,7 @@ export default function ScreenerPage() {
     () => visibleItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [visibleItems, page]
   )
-  const sparkKey = pagedItems.map((i) => i.symbol).join(',')
+  const pageKey = pagedItems.map((i) => i.symbol).join(',')
 
   useEffect(() => {
     setPage(1)
@@ -523,24 +549,39 @@ export default function ScreenerPage() {
     if (page > totalPages) setPage(totalPages)
   }, [page, totalPages])
 
-  // 按页懒加载迷你走势:本地库优先,新股等缺失的回退 K 线接口
+  // 按页懒加载近 20 日K线(本地 daily_bars 优先,新股回退网络)
   useEffect(() => {
-    if (!sparkKey) return
-    const need = pagedItems.filter((i) => !sparks[i.symbol]).map((i) => i.symbol)
+    if (!pageKey) return
+    const need = pagedItems
+      .filter((i) => !candlesTried[i.symbol])
+      .map((i) => i.symbol)
+      .slice(0, 120)
     if (!need.length) return
     let alive = true
-    fetchAPI<{ data: Record<string, number[]> }>(
-      `/dataset/spark?symbols=${need.join(',')}&days=20`
+    const mark = (symbols: string[]) =>
+      setCandlesTried((prev) => {
+        const next = { ...prev }
+        symbols.forEach((s) => {
+          next[s] = true
+        })
+        return next
+      })
+    fetchAPI<{ data: Record<string, SparkBar[]> }>(
+      `/dataset/spark-ohlc?symbols=${need.join(',')}&days=20`
     )
       .then((r) => {
-        if (alive) setSparks((prev) => ({ ...prev, ...(r.data || {}) }))
+        if (!alive) return
+        setCandles((prev) => ({ ...prev, ...(r.data || {}) }))
+        mark(need)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (alive) mark(need)
+      })
     return () => {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sparkKey])
+  }, [pageKey])
 
   const toggleSelect = (symbol: string) => {
     setSelected((prev) => {
@@ -903,9 +944,17 @@ export default function ScreenerPage() {
               <div className="card border-destructive/40 p-2 text-xs text-destructive">{error}</div>
             )}
 
+            {dataWarnings.length > 0 && (
+              <div className="card border-amber-500/40 bg-amber-500/5 p-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                {dataWarnings.map((w) => (
+                  <div key={w}>· {w}</div>
+                ))}
+              </div>
+            )}
+
             {/* 列表 */}
             <div className="card overflow-hidden">
-              <div className="hidden gap-3 border-b bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground sm:grid sm:grid-cols-[28px_190px_140px_1fr_110px_96px]">
+              <div className="hidden gap-3 border-b bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground sm:grid sm:grid-cols-[28px_190px_200px_1fr_104px]">
                 <div className="flex items-center justify-center">
                   <input
                     type="checkbox"
@@ -915,11 +964,10 @@ export default function ScreenerPage() {
                     className="h-3.5 w-3.5 cursor-pointer"
                   />
                 </div>
-                <div>股票名称 / 代码</div>
-                <div>近 20 日走势</div>
+                <div>股票名称 / 涨跌幅</div>
+                <div>近 20 日K线</div>
                 <div>所属板块 · 概念</div>
                 <div className="text-right">换手 / 成交额</div>
-                <div className="text-right">涨幅 / 现价</div>
               </div>
 
               {running && !visibleItems.length ? (
@@ -938,7 +986,7 @@ export default function ScreenerPage() {
                     <div
                       key={it.symbol}
                       onClick={() => setDetail(it)}
-                      className="grid cursor-pointer gap-3 border-b px-3 py-2 last:border-0 hover:bg-accent/40 sm:grid-cols-[28px_190px_140px_1fr_110px_96px] sm:items-center"
+                      className="grid cursor-pointer gap-3 border-b px-3 py-3 last:border-0 hover:bg-accent/40 sm:grid-cols-[28px_190px_200px_1fr_104px] sm:items-center sm:gap-3"
                     >
                       <div
                         className="hidden items-center justify-center sm:flex"
@@ -954,6 +1002,13 @@ export default function ScreenerPage() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1">
                           <span className="truncate text-sm font-semibold">{it.name}</span>
+                          <span
+                            className={`shrink-0 text-xs font-semibold ${
+                              up ? 'text-stock-up' : 'text-stock-down'
+                            }`}
+                          >
+                            {pctText(it.change_pct)}
+                          </span>
                           {watchlist.has(it.symbol) && (
                             <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
                               已自选
@@ -965,11 +1020,23 @@ export default function ScreenerPage() {
                             </span>
                           ))}
                         </div>
-                        <div className="mt-0.5 text-[11px] text-muted-foreground">{it.symbol}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <span>{it.symbol}</span>
+                          <span className={up ? 'text-stock-up' : 'text-stock-down'}>{fmt(it.price)}</span>
+                        </div>
                       </div>
 
-                      <div className="hidden sm:block">
-                        <Sparkline data={sparks[it.symbol] || it.spark || []} positive={up} />
+                      <div className="flex items-center gap-3 sm:contents">
+                        <div className="h-[92px] w-[200px] max-w-[60%] shrink-0 sm:h-[84px] sm:w-auto sm:max-w-none">
+                          <CandleSpark
+                            bars={candles[it.symbol]}
+                            pending={!candlesTried[it.symbol]}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1 text-[11px] leading-5 text-muted-foreground sm:hidden">
+                          <div>换手 {fmt(it.turnover_rate)}%</div>
+                          <div>{fmt(it.amount)} 亿</div>
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap gap-1">
@@ -993,15 +1060,6 @@ export default function ScreenerPage() {
                       <div className="hidden text-right text-[11px] leading-5 text-muted-foreground sm:block">
                         <div>换手 {fmt(it.turnover_rate)}%</div>
                         <div>{fmt(it.amount)} 亿</div>
-                      </div>
-
-                      <div
-                        className={`rounded-md px-1 py-1 text-center ${
-                          up ? 'bg-stock-up/10 text-stock-up' : 'bg-stock-down/10 text-stock-down'
-                        }`}
-                      >
-                        <div className="text-sm font-bold">{pctText(it.change_pct)}</div>
-                        <div className="text-[10px] text-muted-foreground">{fmt(it.price)}</div>
                       </div>
                     </div>
                   )
@@ -1180,7 +1238,20 @@ export default function ScreenerPage() {
                         )}
                       </span>
                       <div className="pr-10 text-xs font-semibold">{it.name}</div>
-                      <div className="mt-1 text-[10px] text-stock-up">{it.concept || '--'}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        {(it.concepts?.length ? it.concepts : [it.concept || '--']).map((c, ci) => (
+                          <span
+                            key={`${c}-${ci}`}
+                            className={
+                              ci === 0
+                                ? 'text-[10px] font-medium text-stock-up'
+                                : 'rounded bg-muted/50 px-1 text-[10px] text-muted-foreground'
+                            }
+                          >
+                            {c}
+                          </span>
+                        ))}
+                      </div>
                       {it.stat && <div className="mt-0.5 text-[10px] text-muted-foreground">{it.stat}</div>}
                     </button>
                   ))}
@@ -1196,6 +1267,27 @@ export default function ScreenerPage() {
 
       {view === 'boards' && (
         <div className="card overflow-hidden">
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2">
+            <div className="text-[11px] font-medium">板块强弱</div>
+            <div className="text-[10px] text-muted-foreground">默认只列主题/概念板块</div>
+            <label className="ml-auto flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={showStyleBoards}
+                onChange={(e) => {
+                  setShowStyleBoards(e.target.checked)
+                  setBoardsLoading(true)
+                  screenerApi
+                    .boards(undefined, 30, e.target.checked)
+                    .then((r) => setBoards(r.items))
+                    .catch(() => {})
+                    .finally(() => setBoardsLoading(false))
+                }}
+                className="h-3 w-3 cursor-pointer"
+              />
+              含风格板块（新高/破净/红利等）
+            </label>
+          </div>
           <div className="hidden grid-cols-[36px_1fr_80px_90px_70px_120px] gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground sm:grid">
             <div>#</div>
             <div>板块 / 概念</div>

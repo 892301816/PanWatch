@@ -129,10 +129,11 @@ def get_ladder(
 def get_boards(
     date: str | None = Query(default=None, description="YYYY-MM-DD"),
     limit: int = Query(default=30, ge=1, le=100),
+    include_style: bool = Query(default=False, description="是否包含新高/破净/红利等风格板块"),
 ):
-    """板块强弱榜。"""
+    """板块强弱榜(默认只返回主题/概念板块)。"""
     try:
-        return engine.get_boards(date, limit=limit)
+        return engine.get_boards(date, limit=limit, include_style=include_style)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[选股] 板块榜失败")
         raise HTTPException(500, f"板块榜加载失败: {exc}")
@@ -153,7 +154,7 @@ def refresh_snapshot():
     """强制刷新全市场快照与概念索引(盘后跑一次即可)。"""
     try:
         result = snapshot.refresh_snapshot(force=True)
-        rows = concepts.build_concept_index(result["trade_date"], board_limit=160)
+        rows = concepts.build_concept_index(result["trade_date"])
         return {**result, "concept_rows": rows}
     except Exception as exc:  # noqa: BLE001
         logger.exception("[选股] 刷新失败")

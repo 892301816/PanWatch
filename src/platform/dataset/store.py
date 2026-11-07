@@ -244,6 +244,42 @@ def recent_closes(symbols: list[str], days: int = 20) -> dict[str, list[float]]:
     return out
 
 
+def recent_bars(symbols: list[str], days: int = 20) -> dict[str, list[dict]]:
+    """取每只股票最近 N 根日K的 OHLC(升序),供列表页迷你K线。
+
+    与 recent_closes 同路数,只是多带 o/h/l;数值保留 3 位小数以控制响应体积。
+    """
+    if not symbols:
+        return {}
+    out: dict[str, list[dict]] = {}
+    db = SessionLocal()
+    try:
+        for symbol in symbols:
+            rows = db.execute(
+                text(
+                    "SELECT open, high, low, close, volume FROM daily_bars WHERE symbol = :symbol "
+                    "ORDER BY trade_date DESC LIMIT :limit"
+                ),
+                {"symbol": symbol, "limit": max(1, int(days))},
+            ).fetchall()
+            bars = [
+                {
+                    "o": round(float(r[0]), 3),
+                    "h": round(float(r[1]), 3),
+                    "l": round(float(r[2]), 3),
+                    "c": round(float(r[3]), 3),
+                    "v": int(r[4] or 0),
+                }
+                for r in rows
+                if r[0] is not None and r[1] is not None and r[2] is not None and r[3] is not None
+            ]
+            if bars:
+                out[str(symbol)] = list(reversed(bars))
+    finally:
+        db.close()
+    return out
+
+
 def bars_for_symbol(symbol: str, days: int = 60) -> list[dict]:
     db = SessionLocal()
     try:

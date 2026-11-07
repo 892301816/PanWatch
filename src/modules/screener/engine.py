@@ -88,7 +88,7 @@ def _ladder_by_symbol(date_str: str) -> dict[str, dict]:
 # ── 近 N 日涨停(选"回踩""N天M板"必须的历史窗口)─────────────────────
 # 当日涨停池里的 stat_days/stat_count 只对「今天涨停」的股票有值,
 # 而"近5日有过涨停、今天回调"的股票不在今日池里 —— 必须回看历史池。
-_RECENT_ZT_CACHE: dict = {"date": "", "days": 0, "ts": 0.0, "map": {}}
+_RECENT_ZT_CACHE: dict = {"date": "", "days": 0, "ts": 0.0, "map": {}, "local_dates": []}
 _RECENT_ZT_TTL_S = 600.0
 _RECENT_ZT_LOCK = threading.Lock()
 
@@ -100,6 +100,54 @@ def _recent_weekdays(end: date, n: int) -> list[date]:
         if d.weekday() < 5:
             out.append(d)
         d -= timedelta(days=1)
+    return out
+
+
+def _local_limit_up_symbols(day: str) -> set[str]:
+    """用本地 daily_bars 推算某日涨停,东财涨停池取不到时兜底。
+
+    阈值按板块:创业板/科创板 19.5%,北交所 29.5%,其余 9.5%;ST 的 5% 涨停会漏,
+    但选股规则通常已排除 ST。返回空集表示本地也没有该日数据。
+    """
+    from sqlalchemy import text
+
+    from src.platform.persistence.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        # 昨收取「该股自己最近的一根」,而不是固定前一天:个别股票当天缺一根
+        # (停牌/同步漏抓),用固定日期 join 会把它们直接漏掉。
+        rows = db.execute(
+            text(
+                "SELECT b.symbol, b.close, ("
+                "  SELECT p.close FROM daily_bars p "
+                "  WHERE p.symbol = b.symbol AND p.trade_date < b.trade_date "
+                "  ORDER BY p.trade_date DESC LIMIT 1"
+                ") AS prev_close "
+                "FROM daily_bars b WHERE b.trade_date = :day AND b.close IS NOT NULL"
+            ),
+            {"day": day},
+        ).fetchall()
+    finally:
+        db.close()
+
+    out: set[str] = set()
+    for symbol, close, prev_close in rows:
+        try:
+            ratio = float(close) / float(prev_close) - 1.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        code = str(symbol)
+        # 阈值比名义涨跌幅略放宽:涨停价按昨收四舍五入到分,加上前复权与实时价的差异,
+        # 实际算出来常常是 19.9x% / 9.9x%,卡 19.5% 会漏掉临界的那一只。
+        if code.startswith(("300", "301", "688", "689")):
+            threshold = 0.19
+        elif code.startswith(("4", "8")) or code.startswith("92"):
+            threshold = 0.29
+        else:
+            threshold = 0.09
+        if ratio >= threshold:
+            out.add(code)
     return out
 
 
@@ -129,35 +177,71 @@ def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
         dates = _recent_weekdays(end, max(1, int(days)))
 
         def _fetch(d: date) -> tuple[date, list]:
-            try:
-                from src.platform.marketdata.marketdata_client import get_market_data
+            # 东财偶发 TLS 中断,单日失败重试一次;两次都失败再由本地日K兜底
+            for attempt in (1, 2):
+                try:
+                    from src.platform.marketdata.marketdata_client import get_market_data
 
-                rows = get_market_data().zt_pool(date=d.strftime("%Y%m%d"), limit=300)
-                return d, rows
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(f"[选股] 历史涨停池 {d} 获取失败: {exc}")
-                return d, []
+                    rows = get_market_data().zt_pool(date=d.strftime("%Y%m%d"), limit=300)
+                    if rows:
+                        return d, rows
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(f"[选股] 历史涨停池 {d} 获取失败({attempt}): {exc}")
+                if attempt == 1:
+                    time.sleep(0.5)
+            return d, []
 
-        result: dict[str, dict] = {}
+        local_used: list[str] = []
+        day_maps: dict[date, dict[str, int]] = {}
         with ThreadPoolExecutor(max_workers=max(1, len(dates))) as pool:
             for d, rows in pool.map(_fetch, dates):
-                ago = (end - d).days
-                for r in rows:
-                    sym = getattr(r, "code", "") or ""
-                    if not sym:
-                        continue
-                    bucket = result.setdefault(
-                        sym, {"count": 0, "max_days": 0, "last_days_ago": 99}
-                    )
-                    bucket["count"] += 1
-                    bucket["max_days"] = max(
-                        bucket["max_days"], int(getattr(r, "limit_up_days", 0) or 0)
-                    )
-                    bucket["last_days_ago"] = min(bucket["last_days_ago"], ago)
+                remote = {
+                    getattr(r, "code", "") or "": int(getattr(r, "limit_up_days", 0) or 0)
+                    for r in rows
+                    if getattr(r, "code", "")
+                }
+                if not remote:
+                    # 东财涨停池取不到(常见的是 TLS 被中断):用本地日K推算,避免条件全部落空
+                    local = _local_limit_up_symbols(d.isoformat())
+                    if local:
+                        local_used.append(d.isoformat())
+                        remote = {s: 0 for s in local}
+                day_maps[d] = remote
+
+        result: dict[str, dict] = {}
+        for d, remote in day_maps.items():
+            ago = (end - d).days
+            for sym, zt_days in remote.items():
+                bucket = result.setdefault(
+                    sym, {"count": 0, "max_days": 0, "last_days_ago": 99}
+                )
+                bucket["count"] += 1
+                bucket["max_days"] = max(bucket["max_days"], zt_days)
+                bucket["last_days_ago"] = min(bucket["last_days_ago"], ago)
+
+        # 本地推算拿不到「连板数」,用窗口内的连续天数补一个近似值
+        if local_used:
+            for sym, bucket in result.items():
+                if bucket["max_days"] > 0:
+                    continue
+                streak = 0
+                for d in dates:  # 由近到远
+                    if sym not in day_maps.get(d, {}):
+                        break
+                    streak += 1
+                bucket["max_days"] = streak
 
         _RECENT_ZT_CACHE.update(
-            date=trade_date, days=days, ts=time.monotonic(), map=result
+            date=trade_date,
+            days=days,
+            ts=time.monotonic(),
+            map=result,
+            local_dates=local_used,
         )
+        if local_used:
+            logger.warning(
+                f"[选股] 涨停池取数失败,已用本地日K推算 {len(local_used)} 天: {', '.join(local_used)}"
+            )
         logger.info(
             f"[选股] 近{days}日涨停统计完成: {len(result)} 只 / {len(dates)} 个交易日"
         )
@@ -402,12 +486,22 @@ def run_screen(payload: dict) -> dict:
     if bool(payload.get("with_spark", False)):
         _attach_spark(matched, trade_date, int(payload.get("spark_limit") or 80))
 
+    warnings: list[str] = []
+    local_dates = _RECENT_ZT_CACHE.get("local_dates") or []
+    if local_dates:
+        warnings.append(
+            f"东财涨停池暂不可用,近 5 日涨停次数已用本地日K推算({len(local_dates)} 个交易日)"
+        )
+    if not get_zt_pool(trade_date):
+        warnings.append("今日涨停池为空:涨停相关字段(连板数、封板资金)可能不准确")
+
     return {
         "trade_date": trade_date,
         "count": len(matched),
         "universe": len(rows),
         "items": [_serialize_item(r) for r in matched],
         "as_of": time.strftime("%H:%M"),
+        "warnings": warnings,
         # 回显本次真正生效的条件,前端可直接展示,避免"条件看起来是 A、实际按 B 跑"
         "applied": {
             "logic": str(payload.get("logic") or "all").lower(),
@@ -473,10 +567,17 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
     def concept_names(symbol: str) -> list[str]:
         return [c.get("name") or "" for c in (concept_map.get(symbol) or [])]
 
+    def ordered_concepts(symbol: str) -> list[str]:
+        """按「主题优先、风格靠后」排好序的概念名（最多 3 个）。"""
+        cons = concept_map.get(symbol) or []
+        themes = [c for c in cons if concept_index.classify_board(c.get("name") or "") == "theme"]
+        others = [c for c in cons if concept_index.classify_board(c.get("name") or "") != "theme"]
+        return [(c.get("name") or "") for c in themes + others if c.get("name")][:3]
+
     def concept_of(item: dict) -> str:
-        cons = concept_map.get(item["symbol"]) or []
-        if cons:
-            return cons[0].get("name") or ""
+        names = ordered_concepts(item["symbol"])
+        if names:
+            return names[0]
         return item.get("industry") or ""
 
     # 板块筛选:按概念成分归属过滤涨停池,天梯分组保持不变,空分组不返回
@@ -517,6 +618,7 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
                         "name": x["name"],
                         "time": x.get("first_seal_time") or "",
                         "concept": concept_of(x),
+                        "concepts": ordered_concepts(x["symbol"]),
                         "industry": x.get("industry") or "",
                         "stat": (
                             f"{x['stat_days']}天{x['stat_count']}板"
@@ -576,20 +678,55 @@ def _concept_zt_stats(trade_date: str, zt_codes: set[str]) -> dict[str, dict]:
     return out
 
 
-def get_boards(date_str: str | None = None, limit: int = 30) -> dict:
+def _tdx_zt_stats(trade_date: str, zt_codes: set[str]) -> dict[str, dict]:
+    """通达信兜底时的板块统计:直接按板块文件算,不依赖当天索引。"""
+    from src.modules.screener import tdx_blocks
+
+    groups = tdx_blocks.fetch_groups()
+    ladder = _ladder_by_symbol(trade_date)
+    out: dict[str, dict] = {}
+    for kind in ("theme", "style", "index"):
+        for name, codes in (groups.get(kind) or {}).items():
+            bucket = out.setdefault(
+                f"tdx:{name}", {"count": 0, "max_days": 0, "members": len(codes)}
+            )
+            for symbol in codes:
+                if symbol not in zt_codes:
+                    continue
+                bucket["count"] += 1
+                bucket["max_days"] = max(
+                    bucket["max_days"],
+                    int((ladder.get(symbol) or {}).get("limit_up_days") or 0),
+                )
+    return out
+
+
+def get_boards(date_str: str | None = None, limit: int = 30, include_style: bool = False) -> dict:
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
     concept_index.ensure_concept_index(trade_date)
     boards = concept_index.fetch_concept_boards()
+    if boards and not include_style:
+        # 默认只留主题类:新高/破净/红利/昨日连板这些是选股条件,不是板块
+        boards = [
+            b for b in boards
+            if (b.get("kind") or concept_index.classify_board(b.get("name") or ""))
+            == "theme"
+        ]
     if not boards:
         return {"trade_date": trade_date, "items": [], "error": "概念板块数据源不可用"}
 
     zt_codes = {x["symbol"] for x in get_zt_pool(trade_date)}
-    zt_stats = _concept_zt_stats(trade_date, zt_codes)
+    if concept_index.board_source() == "tdx":
+        # 通达信源的板块代码是 tdx:<名称>,和东财索引对不上,现算
+        zt_stats = _tdx_zt_stats(trade_date, zt_codes)
+    else:
+        zt_stats = _concept_zt_stats(trade_date, zt_codes)
 
     items = []
     for b in boards:
         stat = zt_stats.get(b["code"]) or {}
-        inflow_yi = (b.get("main_net_inflow") or 0.0) / 1e8
+        raw_inflow = b.get("main_net_inflow")
+        inflow_yi = (raw_inflow or 0.0) / 1e8
         change_pct = b.get("change_pct") or 0.0
         score = (
             0.35 * min(1.0, stat.get("count", 0) / 15)
@@ -602,7 +739,10 @@ def get_boards(date_str: str | None = None, limit: int = 30) -> dict:
                 "code": b["code"],
                 "name": b["name"],
                 "change_pct": change_pct,
-                "main_net_inflow": round(inflow_yi, 2),
+                # 通达信兜底时没有资金流数据,给 None 而不是 0,避免误读
+                "main_net_inflow": (
+                    round(inflow_yi, 2) if raw_inflow is not None else None
+                ),
                 "limit_up_count": stat.get("count", 0),
                 "max_days": stat.get("max_days", 0),
                 "members": stat.get("members", 0),

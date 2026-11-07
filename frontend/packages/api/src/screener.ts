@@ -63,6 +63,8 @@ export interface ScreenerRunResponse {
   universe: number
   items: ScreenerItem[]
   as_of: string
+  /** 数据降级提示(如涨停池取数失败改用本地日K推算) */
+  warnings?: string[]
   applied?: {
     logic: 'all' | 'any'
     conditions: ScreenerCondition[]
@@ -93,6 +95,8 @@ export interface LadderItem {
   name: string
   time: string
   concept: string
+  /** 主主题 + 最多 2 个副主题(主题优先,风格标签靠后) */
+  concepts?: string[]
   industry: string
   stat: string
   seal_fund: number | null
@@ -164,9 +168,10 @@ export const screenerApi = {
     return fetchAPI<LadderResponse>(query ? `/screener/ladder?${query}` : '/screener/ladder')
   },
 
-  boards: (date?: string, limit = 30) => {
+  boards: (date?: string, limit = 30, includeStyle = false) => {
     const qs = new URLSearchParams({ limit: String(limit) })
     if (date) qs.set('date', date)
+    if (includeStyle) qs.set('include_style', 'true')
     return fetchAPI<{ trade_date: string; items: BoardItem[]; error?: string }>(
       `/screener/boards?${qs.toString()}`
     )
