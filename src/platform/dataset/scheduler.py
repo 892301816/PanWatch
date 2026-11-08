@@ -58,6 +58,19 @@ def set_schedule(config: dict) -> dict:
     return merged
 
 
+_QFQ_JOB_ID = "dataset-qfq-sync"
+
+
+def _qfq_job() -> None:
+    """收盘后补前复权日K(技术指标用),失败不影响主同步。"""
+    from src.platform.dataset import qfq
+
+    try:
+        qfq.sync_all(days=260)
+    except Exception:  # noqa: BLE001
+        logger.exception("[数据集] 前复权同步失败")
+
+
 def _job() -> None:
     logger.info("[数据集] 定时同步开始")
     started = sync_service.start_sync_async(mode="incremental")
@@ -71,6 +84,8 @@ def _apply(config: dict) -> None:
     existing = _scheduler.get_job(_JOB_ID)
     if existing:
         _scheduler.remove_job(_JOB_ID)
+    if _scheduler.get_job(_QFQ_JOB_ID):
+        _scheduler.remove_job(_QFQ_JOB_ID)
     if not config.get("enabled"):
         logger.info("[数据集] 定时同步已关闭")
         return
@@ -83,6 +98,19 @@ def _apply(config: dict) -> None:
             timezone="Asia/Shanghai",
         ),
         id=_JOB_ID,
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    # 前复权数据在原始日K之后 5 分钟跑,给主同步留出落库时间
+    _scheduler.add_job(
+        _qfq_job,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=int(config.get("hour") or 15),
+            minute=min(59, int(config.get("minute") or 45) + 5),
+            timezone="Asia/Shanghai",
+        ),
+        id=_QFQ_JOB_ID,
         replace_existing=True,
         misfire_grace_time=3600,
     )

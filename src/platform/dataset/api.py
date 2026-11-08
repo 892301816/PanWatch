@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -72,6 +73,41 @@ def get_status(db: Session = Depends(get_db)):
         "schedule": {**schedule, "next_run_at": dataset_scheduler.next_run_at()},
         "stale": sync.is_stale(),
     }
+
+
+_QFQ_SYNC_LOCK = threading.Lock()
+
+
+@router.get("/qfq/status")
+def get_qfq_status():
+    """前复权日K(技术指标用)的覆盖情况。"""
+    from src.platform.dataset import qfq
+
+    return qfq.status()
+
+
+@router.post("/qfq/sync")
+def sync_qfq():
+    """手动触发全市场前复权日K同步(后台线程,约几分钟)。"""
+    from src.platform.dataset import qfq
+
+    if not _QFQ_SYNC_LOCK.acquire(blocking=False):
+        return {"started": False, "reason": "已有同步在进行"}
+    try:
+        threading.Thread(target=_run_qfq_sync, daemon=True, name="qfq-sync").start()
+        return {"started": True}
+    except Exception:
+        _QFQ_SYNC_LOCK.release()
+        raise
+
+
+def _run_qfq_sync() -> None:
+    from src.platform.dataset import qfq
+
+    try:
+        qfq.sync_all(days=260)
+    finally:
+        _QFQ_SYNC_LOCK.release()
 
 
 @router.post("/sync")

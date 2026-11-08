@@ -1548,6 +1548,31 @@ class DailyBar(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class DailyBarQfq(Base):
+    """前复权日K(仅供技术指标:均线/新高/MACD 等)。
+
+    原始 ``daily_bars`` 是不复权价,除权日会出现假跳空;这张表用腾讯 ``qfq``
+    日线单独存一份,成交量单位同为手,不含成交额。
+    """
+
+    __tablename__ = "daily_bars_qfq"
+    __table_args__ = (
+        UniqueConstraint("symbol", "trade_date", name="uq_daily_bar_qfq_symbol_date"),
+        Index("ix_daily_bar_qfq_date", "trade_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, nullable=False)
+    trade_date = Column(String, nullable=False)  # YYYY-MM-DD
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)   # 手
+    source = Column(String, default="tencent_qfq")
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class DatasetSyncState(Base):
     """数据集同步游标与最近一次结果。"""
 

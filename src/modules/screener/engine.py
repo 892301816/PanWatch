@@ -230,6 +230,14 @@ def _technical_map(trade_date: str) -> dict[str, dict]:
         for symbol, day, close, high, amount in rows:
             grouped.setdefault(str(symbol), []).append((str(day), close, high, amount))
 
+        # 前复权日K:除权日不会制造假跳空;没有的股票退回不复权
+        try:
+            from src.platform.dataset import qfq as qfq_store
+
+            qfq_map = qfq_store.load_recent(days=26)
+        except Exception:  # noqa: BLE001
+            qfq_map = {}
+
         # 快照里的现价/成交额(日K可能还没同步到当天)
         try:
             quotes = {r["symbol"]: r for r in snapshot_mod.get_snapshot()}
@@ -241,9 +249,16 @@ def _technical_map(trade_date: str) -> dict[str, dict]:
             bars.sort(key=lambda x: x[0], reverse=True)
             if bars and bars[0][0] == trade_date:
                 bars = bars[1:]  # 已同步当天,避免和现价重复
-            closes = [float(b[1]) for b in bars[:20] if b[1] is not None]
-            highs = [float(b[2]) for b in bars[:20] if b[2] is not None]
+            # 成交额是真实金额,不受复权影响,始终用原始表
             amounts = [float(b[3]) for b in bars[:5] if b[3] is not None]
+
+            qbars = [b for b in (qfq_map.get(symbol) or []) if b["date"] != trade_date]
+            if len(qbars) >= 15:
+                closes = [float(b["close"]) for b in qbars[-20:] if b["close"] is not None]
+                highs = [float(b["high"]) for b in qbars[-20:] if b["high"] is not None]
+            else:
+                closes = [float(b[1]) for b in bars[:20] if b[1] is not None]
+                highs = [float(b[2]) for b in bars[:20] if b[2] is not None]
             quote = quotes.get(symbol) or {}
             price = quote.get("price")
             amount = quote.get("amount")
