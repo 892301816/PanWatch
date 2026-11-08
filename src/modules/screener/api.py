@@ -35,6 +35,7 @@ class ScreenIn(BaseModel):
     exclude: list[str] = Field(default_factory=lambda: ["st"])
     order_by: str = "change_pct desc"
     limit: int = 0          # 0 = 全部
+    offset: int = 0         # 服务端分页起点
     with_spark: bool = False
     refresh: bool = False
 
@@ -137,6 +138,29 @@ def get_boards(
     except Exception as exc:  # noqa: BLE001
         logger.exception("[选股] 板块榜失败")
         raise HTTPException(500, f"板块榜加载失败: {exc}")
+
+
+@router.get("/concepts")
+def list_concepts():
+    """今日索引里的概念名(供条件编辑器做候选,避免手输与索引口径不一致)。"""
+    trade_date = snapshot.latest_trade_date().isoformat()
+    concepts.ensure_concept_index(trade_date)
+    mapping = concepts.get_concept_map(trade_date)
+    seen: dict[str, int] = {}
+    for cons in mapping.values():
+        for c in cons:
+            name = str(c.get("name") or "").strip()
+            if name and name not in seen:
+                seen[name] = int(c.get("rank") or 9999)
+    items = [
+        {"name": name, "rank": rank}
+        for name, rank in sorted(seen.items(), key=lambda x: (x[1], x[0]))
+    ]
+    return {
+        "trade_date": trade_date,
+        "items": items,
+        "source": concepts.board_source(),
+    }
 
 
 @router.post("/parse")

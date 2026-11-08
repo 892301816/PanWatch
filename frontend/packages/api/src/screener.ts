@@ -41,6 +41,12 @@ export interface ScreenerItem {
   float_mv: number | null
   total_mv: number | null
   main_net_inflow: number | null
+  /** 距20日均线 % */
+  ma20_dev?: number | null
+  /** 距20日新高 %(0 = 正好新高) */
+  high20_gap?: number | null
+  /** 今日成交额 / 前5日平均成交额 */
+  amount_ratio_5d?: number | null
   pe_ttm: number | null
   pb: number | null
   industry: string
@@ -59,7 +65,12 @@ export interface ScreenerItem {
 
 export interface ScreenerRunResponse {
   trade_date: string
+  /** 命中总数(分页前) */
   count: number
+  total?: number
+  /** 本次实际返回条数 */
+  returned?: number
+  offset?: number
   universe: number
   items: ScreenerItem[]
   as_of: string
@@ -152,6 +163,7 @@ export const screenerApi = {
     exclude?: string[]
     order_by?: string
     limit?: number
+    offset?: number
     with_spark?: boolean
     refresh?: boolean
   }, options?: { timeoutMs?: number }) =>
@@ -176,6 +188,13 @@ export const screenerApi = {
       `/screener/boards?${qs.toString()}`
     )
   },
+
+  /** 今日概念名候选(条件编辑器用) */
+  concepts: () =>
+    fetchAPI<{ trade_date: string; items: Array<{ name: string; rank: number }>; source: string }>(
+      '/screener/concepts',
+      { timeoutMs: 60000 }
+    ),
 
   parse: (text: string) =>
     fetchAPI<ScreenerParseResponse>('/screener/parse', {

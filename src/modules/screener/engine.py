@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, timedelta
 
 from src.modules.screener import concepts as concept_index
@@ -22,7 +22,7 @@ from src.modules.screener.constants import FIELD_SCALE, FIELD_KEYS
 
 logger = logging.getLogger(__name__)
 
-_LADDER_CACHE: dict = {"date": "", "ts": 0.0, "items": []}
+_LADDER_CACHE: dict = {"date": "", "ts": 0.0, "items": [], "local": False}
 _LADDER_TTL_S = 120.0
 _LADDER_LOCK = threading.Lock()
 
@@ -33,6 +33,98 @@ _SPARK_LOCK = threading.Lock()
 # ── 涨停池 ────────────────────────────────────────────────────────────
 def _compact(date_str: str) -> str:
     return date_str.replace("-", "")
+
+
+def _limit_threshold(code: str) -> float:
+    """按板块返回涨停阈值(留 0.5 个点容差,避免四舍五入误差)。"""
+    if code.startswith(("30", "68")):
+        return 0.19
+    if code.startswith(("4", "8")) or code.startswith("92"):
+        return 0.29
+    return 0.09
+
+
+def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
+    """用本地 daily_bars 推算当日涨停与连板数(涨停池不可用时的兜底)。
+
+    只能给出:代码、名称、涨跌幅、连板数、涨停统计(近似)。
+    封板资金、首封时间、炸板次数这些只有东财涨停池才有,这里留空。
+    """
+    from sqlalchemy import text
+
+    from src.platform.persistence.database import SessionLocal
+
+    end = date.fromisoformat(trade_date)
+    since = (end - timedelta(days=max(30, days * 2))).isoformat()
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                "SELECT symbol, trade_date, close, prev_close FROM ("
+                "  SELECT symbol, trade_date, close,"
+                "         LAG(close) OVER (PARTITION BY symbol ORDER BY trade_date) AS prev_close"
+                "  FROM daily_bars WHERE trade_date BETWEEN :since AND :day"
+                ") WHERE prev_close IS NOT NULL AND prev_close > 0"
+            ),
+            {"since": since, "day": trade_date},
+        ).fetchall()
+    finally:
+        db.close()
+    if not rows:
+        return []
+
+    dates = sorted({str(r[1]) for r in rows})
+    if trade_date not in dates:
+        return []
+    day_index = {d: i for i, d in enumerate(dates)}
+
+    hit: dict[tuple[str, str], float] = {}
+    pct_by_symbol: dict[str, float] = {}
+    for symbol, day, close, prev in rows:
+        code = str(symbol)
+        pct = (float(close) - float(prev)) / float(prev)
+        if pct >= _limit_threshold(code):
+            hit[(code, str(day))] = pct * 100
+            if str(day) == trade_date:
+                pct_by_symbol[code] = pct * 100
+    if not pct_by_symbol:
+        return []
+
+    try:
+        names = {r["symbol"]: r.get("name") or "" for r in snapshot_mod.get_snapshot()}
+    except Exception:  # noqa: BLE001
+        names = {}
+
+    items: list[dict] = []
+    for symbol, pct in pct_by_symbol.items():
+        streak = 0
+        i = day_index[trade_date]
+        while i >= 0 and (symbol, dates[i]) in hit:
+            streak += 1
+            i -= 1
+        items.append(
+            {
+                "symbol": symbol,
+                "name": names.get(symbol, ""),
+                "change_pct": round(pct, 2),
+                # 本地只算得上「连续涨停天数」,涨停统计用同一值近似
+                "limit_up_days": streak,
+                "stat_days": streak,
+                "stat_count": streak,
+                "first_seal_time": "",
+                "seal_fund": None,
+                "break_count": 0,
+                "amount": None,
+                "turnover_rate": None,
+                "industry": "",
+                "float_market_cap": None,
+            }
+        )
+    items.sort(key=lambda x: (-x["limit_up_days"], -x["change_pct"]))
+    logger.warning(
+        f"[选股] 涨停池不可用,已用本地日K推算 {trade_date}: {len(items)} 只涨停"
+    )
+    return items
 
 
 def get_zt_pool(date_str: str | None = None) -> list[dict]:
@@ -77,12 +169,126 @@ def get_zt_pool(date_str: str | None = None) -> list[dict]:
             ]
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[选股] 涨停池获取失败({trade_date}): {exc}")
-        _LADDER_CACHE.update(date=trade_date, ts=time.monotonic(), items=items)
+        local = False
+        if not items:
+            # 东财不可用:用本地日K补出「今日涨停 + 连板数」,否则首板/连板梯队会全是 0
+            items = _local_ladder(trade_date)
+            local = bool(items)
+        _LADDER_CACHE.update(
+            date=trade_date, ts=time.monotonic(), items=items, local=local
+        )
         return items
+
+
+_TECH_CACHE: dict = {"date": "", "ts": 0.0, "map": {}}
+_TECH_TTL_S = 600.0
+_TECH_LOCK = threading.Lock()
+
+
+def _technical_map(trade_date: str) -> dict[str, dict]:
+    """本地日K算出的技术指标(近20日均线/新高/量能)。
+
+    行情快照只有当天,趋势类条件必须回看日K;这里一次批量算全市场,结果缓存 10 分钟。
+    ``ma20_dev`` 单位 %,``high20_gap`` 单位 %(0 = 正好新高),``amount_ratio_5d`` 倍数。
+    """
+    now = time.monotonic()
+    if (
+        _TECH_CACHE["date"] == trade_date
+        and now - _TECH_CACHE["ts"] <= _TECH_TTL_S
+    ):
+        return _TECH_CACHE["map"]
+
+    with _TECH_LOCK:
+        if (
+            _TECH_CACHE["date"] == trade_date
+            and time.monotonic() - _TECH_CACHE["ts"] <= _TECH_TTL_S
+        ):
+            return _TECH_CACHE["map"]
+
+        from sqlalchemy import text
+
+        from src.platform.persistence.database import SessionLocal
+
+        end = date.fromisoformat(trade_date)
+        since = (end - timedelta(days=45)).isoformat()
+        db = SessionLocal()
+        try:
+            rows = db.execute(
+                text(
+                    "SELECT symbol, trade_date, close, high, amount FROM ("
+                    "  SELECT symbol, trade_date, close, high, amount,"
+                    "         ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY trade_date DESC) AS rn"
+                    "  FROM daily_bars WHERE trade_date BETWEEN :since AND :day"
+                    ") WHERE rn <= 21"
+                ),
+                {"since": since, "day": trade_date},
+            ).fetchall()
+        finally:
+            db.close()
+
+        grouped: dict[str, list] = {}
+        for symbol, day, close, high, amount in rows:
+            grouped.setdefault(str(symbol), []).append((str(day), close, high, amount))
+
+        # 快照里的现价/成交额(日K可能还没同步到当天)
+        try:
+            quotes = {r["symbol"]: r for r in snapshot_mod.get_snapshot()}
+        except Exception:  # noqa: BLE001
+            quotes = {}
+
+        out: dict[str, dict] = {}
+        for symbol, bars in grouped.items():
+            bars.sort(key=lambda x: x[0], reverse=True)
+            if bars and bars[0][0] == trade_date:
+                bars = bars[1:]  # 已同步当天,避免和现价重复
+            closes = [float(b[1]) for b in bars[:20] if b[1] is not None]
+            highs = [float(b[2]) for b in bars[:20] if b[2] is not None]
+            amounts = [float(b[3]) for b in bars[:5] if b[3] is not None]
+            quote = quotes.get(symbol) or {}
+            price = quote.get("price")
+            amount = quote.get("amount")
+
+            ma20_dev = None
+            if closes:
+                window = closes[:19] if price else closes[:20]
+                if price:
+                    window = [float(price)] + window
+                if len(window) >= 15:
+                    ma = sum(window) / len(window)
+                    if ma > 0:
+                        ma20_dev = round((float(price or closes[0]) - ma) / ma * 100, 2)
+
+            high20_gap = None
+            if highs:
+                peak = max(highs)
+                base = float(price) if price else (closes[0] if closes else None)
+                if peak > 0 and base:
+                    high20_gap = round((base - peak) / peak * 100, 2)
+
+            amount_ratio = None
+            if amounts and amount:
+                avg = sum(amounts) / len(amounts)
+                if avg > 0:
+                    amount_ratio = round(float(amount) / avg, 2)
+
+            out[symbol] = {
+                "ma20_dev": ma20_dev,
+                "high20_gap": high20_gap,
+                "amount_ratio_5d": amount_ratio,
+            }
+
+        _TECH_CACHE.update(date=trade_date, ts=time.monotonic(), map=out)
+        logger.info(f"[选股] 技术指标计算完成: {len(out)} 只")
+        return out
 
 
 def _ladder_by_symbol(date_str: str) -> dict[str, dict]:
     return {x["symbol"]: x for x in get_zt_pool(date_str) if x.get("symbol")}
+
+
+def ladder_is_local() -> bool:
+    """当前涨停池是否来自本地推算(用于给用户提示数据降级)。"""
+    return bool(_LADDER_CACHE.get("local"))
 
 
 # ── 近 N 日涨停(选"回踩""N天M板"必须的历史窗口)─────────────────────
@@ -497,9 +703,38 @@ def run_screen(payload: dict) -> dict:
 
     concept_index.ensure_concept_index(trade_date)
     concept_map = concept_index.get_concept_map(trade_date)
-    ladder = _ladder_by_symbol(trade_date)
-    recent_zt = get_recent_limit_up(trade_date, 5)
 
+    # 涨停池和近5日统计都要联网,并行取并设总预算:东财不通时不能把请求拖到几十秒
+    budget = float(payload.get("remote_budget_s") or 8.0)
+    remote_timeout: list[str] = []
+    ladder_local = False
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        f_ladder = pool.submit(_ladder_by_symbol, trade_date)
+        f_recent = pool.submit(get_recent_limit_up, trade_date, 5)
+        done, _pending = wait([f_ladder, f_recent], timeout=budget)
+        if f_ladder in done:
+            try:
+                ladder = f_ladder.result()
+            except Exception:  # noqa: BLE001
+                ladder = {}
+        else:
+            remote_timeout.append("涨停池")
+            ladder_local = True
+            ladder = {x["symbol"]: x for x in _local_ladder(trade_date)}
+        if f_recent in done:
+            try:
+                recent_zt = f_recent.result()
+            except Exception:  # noqa: BLE001
+                recent_zt = {}
+        else:
+            remote_timeout.append("近5日涨停")
+            recent_zt = {}
+    finally:
+        # 超时的线程留在后台自己收尾,不阻塞本次响应
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    tech = _technical_map(trade_date)
     enriched: list[dict] = []
     for base in rows:
         symbol = base["symbol"]
@@ -519,15 +754,22 @@ def run_screen(payload: dict) -> dict:
         row["concepts"] = cons
         row["board"] = _board(symbol)
         row["concept_rank"] = min((c.get("rank") or 9999) for c in cons) if cons else None
+        t = tech.get(symbol) or {}
+        row["ma20_dev"] = t.get("ma20_dev")
+        row["high20_gap"] = t.get("high20_gap")
+        row["amount_ratio_5d"] = t.get("amount_ratio_5d")
         enriched.append(row)
 
     matched = _apply(enriched, payload)
     matched = _sort(matched, payload.get("order_by") or "change_pct desc")
 
     # limit<=0 表示返回全部;上限 6000 只(全市场约 5600)
+    # offset + limit 供服务端分页:首屏只回一页,避免一次传几 MB
+    total = len(matched)
+    offset = max(0, int(payload.get("offset") or 0))
     raw_limit = int(payload.get("limit") or 0)
     limit = 6000 if raw_limit <= 0 else max(1, min(raw_limit, 6000))
-    matched = matched[:limit]
+    matched = matched[offset: offset + limit]
 
     for row in matched:
         row["tags"] = _tags(row)
@@ -543,14 +785,26 @@ def run_screen(payload: dict) -> dict:
         warnings.append(
             f"东财涨停池暂不可用,近 5 日涨停次数已用本地日K推算({len(local_dates)} 个交易日)"
         )
-    if not get_zt_pool(trade_date):
+    if remote_timeout:
+        warnings.append(
+            f"{'、'.join(remote_timeout)}获取超过 {int(budget)} 秒,已按本地数据降级"
+        )
+    elif not ladder:
         warnings.append("今日涨停池为空:涨停相关字段(连板数、封板资金)可能不准确")
+    elif ladder_local or ladder_is_local():
+        warnings.append(
+            "涨停池暂不可用,连板数已用本地日K推算(封板资金、首封时间、炸板次数缺失)"
+        )
 
     warnings.extend(_concept_warnings(payload.get("conditions") or [], concept_map))
 
     return {
         "trade_date": trade_date,
-        "count": len(matched),
+        # count/total = 命中的总数;returned = 本次实际返回条数(分页后)
+        "count": total,
+        "total": total,
+        "returned": len(matched),
+        "offset": offset,
         "universe": len(rows),
         "items": [_serialize_item(r) for r in matched],
         "as_of": time.strftime("%H:%M"),
@@ -584,6 +838,9 @@ def _serialize_item(row: dict) -> dict:
         "float_mv": _yi(row.get("float_mv")),
         "total_mv": _yi(row.get("total_mv")),
         "main_net_inflow": _yi(row.get("main_net_inflow")),
+        "ma20_dev": row.get("ma20_dev"),
+        "high20_gap": row.get("high20_gap"),
+        "amount_ratio_5d": row.get("amount_ratio_5d"),
         "pe_ttm": row.get("pe_ttm"),
         "pb": row.get("pb"),
         "industry": row.get("industry") or "",

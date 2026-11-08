@@ -8,8 +8,13 @@ import src.modules.market.api.market as mkt
 
 @pytest.fixture(autouse=True)
 def _isolate_closes(tmp_path, monkeypatch):
-    """收盘留存写到临时目录,别污染仓库 data/ 或真实数据卷。"""
+    """收盘留存写到临时目录,并桩掉落盘。
+
+    落盘本身只在工作日执行,让 spark 用例依赖运行日期;这里关掉它保证结果稳定,
+    去重逻辑单独用 test_merge_closes_skips_unchanged 覆盖。
+    """
     monkeypatch.setattr(mkt, "_closes_path", lambda: tmp_path / "index_closes.json")
+    monkeypatch.setattr(mkt, "_merge_closes", lambda *a, **k: None)
 
 
 class _K:

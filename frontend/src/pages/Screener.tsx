@@ -149,6 +149,7 @@ export default function ScreenerPage() {
   const [addMsg, setAddMsg] = useState('')
   const [tradeDate, setTradeDate] = useState('')
   const [universe, setUniverse] = useState(0)
+  const [total, setTotal] = useState(0)
   const [dataWarnings, setDataWarnings] = useState<string[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -167,6 +168,7 @@ export default function ScreenerPage() {
   const [draftField, setDraftField] = useState('change_pct')
   const [draftOp, setDraftOp] = useState('gte')
   const [draftValue, setDraftValue] = useState('')
+  const [conceptOptions, setConceptOptions] = useState<string[]>([])
 
   const [saving, setSaving] = useState(false)
   const [saveMode, setSaveMode] = useState(false)
@@ -205,7 +207,10 @@ export default function ScreenerPage() {
   }, [])
 
   const run = useCallback(
-    async (conds: ScreenerCondition[], opts?: { code?: string; logic?: 'all' | 'any'; exclude?: string[]; orderBy?: string }) => {
+    async (
+      conds: ScreenerCondition[],
+      opts?: { code?: string; logic?: 'all' | 'any'; exclude?: string[]; orderBy?: string; offset?: number; sector?: string | null }
+    ) => {
       setRunning(true)
       setError('')
       setConditions(conds)
@@ -213,36 +218,46 @@ export default function ScreenerPage() {
       if (opts?.exclude) setExclude(opts.exclude)
       if (opts?.orderBy) setOrderBy(opts.orderBy)
       if (opts?.code !== undefined) setActiveCode(opts.code)
+      const sector = opts?.sector !== undefined ? opts.sector : sectorFilter
+      const offset = Math.max(0, opts?.offset || 0)
+      // 板块快捷筛选走服务端条件,否则分页后只能过滤当前页
+      const finalConds = sector
+        ? [...conds, { field: 'concept', op: 'in', value: [sector] } as ScreenerCondition]
+        : conds
       try {
         const res = await screenerApi.run({
-          conditions: conds,
+          conditions: finalConds,
           logic: opts?.logic || logic,
           exclude: opts?.exclude || exclude,
           order_by: opts?.orderBy || orderBy,
-          limit: 0,           // 0 = 返回全部，前端分页
+          limit: PAGE_SIZE,   // 服务端分页:一次只回一页
+          offset,
           with_spark: false,  // 走势按页懒加载
         })
         setItems(res.items)
+        setTotal(res.total ?? res.count)
         setTradeDate(res.trade_date)
         setUniverse(res.universe)
         setAppliedLogic(res.applied?.logic || opts?.logic || 'all')
         setDataWarnings(res.warnings || [])
-        setPage(1)
+        setPage(Math.floor(offset / PAGE_SIZE) + 1)
         setCandlesTried({}) // 保留已抓到的K线,只重置"已尝试"标记以便刷新
       } catch (e) {
         setError(e instanceof Error ? e.message : '选股失败')
         setItems([])
+        setTotal(0)
       } finally {
         setRunning(false)
       }
     },
-    [logic, exclude, orderBy]
+    [logic, exclude, orderBy, sectorFilter]
   )
 
   const applyStrategy = useCallback(
     (s: ScreenerStrategy) => {
       setSectorFilter(null)
       void run(s.conditions || [], {
+        sector: null,
         code: s.code,
         logic: (s.logic as 'all' | 'any') || 'all',
         exclude: s.exclude || ['st'],
@@ -464,7 +479,7 @@ export default function ScreenerPage() {
       setLadderConcept(null)
       setShowStyleBoards(false)
       await loadMeta()
-      await run(conditions, { code: activeCode })
+      await run(conditions, { code: activeCode, offset: 0 })
     } catch (e) {
       setError(e instanceof Error ? e.message : '刷新失败')
     } finally {
@@ -472,25 +487,24 @@ export default function ScreenerPage() {
     }
   }
 
-  const visibleItems = useMemo(() => {
-    if (!sectorFilter) return items
-    return items.filter((it) => it.concepts.some((c) => c.name === sectorFilter))
-  }, [items, sectorFilter])
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pageKey = items.map((i) => i.symbol).join(',')
 
-  const totalPages = Math.max(1, Math.ceil(visibleItems.length / PAGE_SIZE))
-  const pagedItems = useMemo(
-    () => visibleItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [visibleItems, page]
+  useEffect(() => {
+    if (!builderOpen || draftField !== 'concept' || conceptOptions.length) return
+    screenerApi
+      .concepts()
+      .then((r) => setConceptOptions(r.items.map((x) => x.name)))
+      .catch(() => {})
+  }, [builderOpen, draftField, conceptOptions.length])
+  const pagedItems = items
+
+  const goPage = useCallback(
+    (p: number) => {
+      void run(conditions, { code: activeCode, offset: (p - 1) * PAGE_SIZE })
+    },
+    [run, conditions, activeCode]
   )
-  const pageKey = pagedItems.map((i) => i.symbol).join(',')
-
-  useEffect(() => {
-    setPage(1)
-  }, [sectorFilter])
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages)
-  }, [page, totalPages])
 
   // 按页懒加载近 20 日K线(本地 daily_bars 优先,新股回退网络)
   useEffect(() => {
@@ -747,7 +761,12 @@ export default function ScreenerPage() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2 text-xs">
                   <select
                     value={draftField}
-                    onChange={(e) => setDraftField(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value
+                      setDraftField(next)
+                      // 概念只有「属于 / 不属于 / 包含」有意义
+                      if (next === 'concept') setDraftOp('in')
+                    }}
                     className="rounded border bg-background px-2 py-1"
                   >
                     {fields.filter((f) => f.available !== false).map((f) => (
@@ -761,7 +780,10 @@ export default function ScreenerPage() {
                     onChange={(e) => setDraftOp(e.target.value)}
                     className="rounded border bg-background px-2 py-1"
                   >
-                    {['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'in', 'contains'].map((op) => (
+                    {(draftField === 'concept'
+                      ? ['in', 'not_in', 'contains']
+                      : ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'in', 'contains']
+                    ).map((op) => (
                       <option key={op} value={op}>
                         {ops[op] || op}
                       </option>
@@ -770,9 +792,23 @@ export default function ScreenerPage() {
                   <input
                     value={draftValue}
                     onChange={(e) => setDraftValue(e.target.value)}
-                    placeholder={draftOp === 'between' ? '如 5,20' : '条件值'}
-                    className="w-28 rounded border bg-background px-2 py-1"
+                    list={draftField === 'concept' ? 'concept-options' : undefined}
+                    placeholder={
+                      draftField === 'concept'
+                        ? '选择或输入概念，多个用逗号分隔'
+                        : draftOp === 'between'
+                          ? '如 5,20'
+                          : '条件值'
+                    }
+                    className="w-40 rounded border bg-background px-2 py-1"
                   />
+                  {draftField === 'concept' && (
+                    <datalist id="concept-options">
+                      {conceptOptions.map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
+                  )}
                   <button onClick={addCondition} className="rounded bg-primary px-2.5 py-1 text-primary-foreground">
                     添加
                   </button>
@@ -781,7 +817,7 @@ export default function ScreenerPage() {
 
               <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                 <span>
-                  共 <b className="text-foreground">{visibleItems.length}</b> 只
+                  共 <b className="text-foreground">{total}</b> 只
                   {universe > 0 && <span className="ml-1 opacity-70">/ 全市场 {universe}</span>}
                 </span>
                 {conditions.length >= 2 && (
@@ -791,7 +827,10 @@ export default function ScreenerPage() {
                 )}
                 {sectorFilter && (
                   <button
-                    onClick={() => setSectorFilter(null)}
+                    onClick={() => {
+                      setSectorFilter(null)
+                      void run(conditions, { code: activeCode, sector: null })
+                    }}
                     className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-primary"
                   >
                     板块：{sectorFilter}
@@ -913,12 +952,12 @@ export default function ScreenerPage() {
                 <div className="text-right">换手 / 成交额</div>
               </div>
 
-              {running && !visibleItems.length ? (
+              {running && !items.length ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   选股中…
                 </div>
-              ) : !visibleItems.length ? (
+              ) : !items.length ? (
                 <div className="py-16 text-center text-xs text-muted-foreground">
                   没有符合条件的个股，试着放宽条件
                 </div>
@@ -988,7 +1027,9 @@ export default function ScreenerPage() {
                             key={c.code}
                             onClick={(e) => {
                               e.stopPropagation()
-                              setSectorFilter((v) => (v === c.name ? null : c.name))
+                              const next = sectorFilter === c.name ? null : c.name
+                              setSectorFilter(next)
+                              void run(conditions, { code: activeCode, sector: next, offset: 0 })
                             }}
                             className={`rounded-full border px-2 py-0.5 text-[10px] transition hover:border-primary/40 hover:text-primary ${
                               sectorFilter === c.name ? 'border-primary/50 bg-primary/10 text-primary' : 'text-muted-foreground'
@@ -1012,7 +1053,7 @@ export default function ScreenerPage() {
               {totalPages > 1 && (
                 <div className="flex flex-wrap items-center justify-center gap-1 border-t px-3 py-2.5 text-[11px]">
                   <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    onClick={() => goPage(Math.max(1, page - 1))}
                     disabled={page === 1}
                     className="rounded border px-2 py-1 text-muted-foreground hover:bg-accent disabled:opacity-40"
                   >
@@ -1026,7 +1067,7 @@ export default function ScreenerPage() {
                           <span className="px-1 text-muted-foreground">…</span>
                         )}
                         <button
-                          onClick={() => setPage(p)}
+                          onClick={() => goPage(p)}
                           className={`min-w-[26px] rounded border px-1.5 py-1 ${
                             p === page
                               ? 'border-primary/40 bg-primary/10 font-medium text-primary'
@@ -1038,14 +1079,14 @@ export default function ScreenerPage() {
                       </span>
                     ))}
                   <button
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    onClick={() => goPage(Math.min(totalPages, page + 1))}
                     disabled={page === totalPages}
                     className="rounded border px-2 py-1 text-muted-foreground hover:bg-accent disabled:opacity-40"
                   >
                     下一页
                   </button>
                   <span className="ml-2 text-muted-foreground">
-                    共 {visibleItems.length} 只 · 每页 {PAGE_SIZE}
+                    共 {total} 只 · 每页 {PAGE_SIZE}
                   </span>
                 </div>
               )}
@@ -1251,7 +1292,7 @@ export default function ScreenerPage() {
                 onClick={() => {
                   setSectorFilter(b.name)
                   setView('screen')
-                  run(conditions, { code: activeCode })
+                  void run(conditions, { code: activeCode, sector: b.name, offset: 0 })
                 }}
                 className="grid w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-2 border-b px-3 py-2.5 text-left last:border-0 hover:bg-accent/40 sm:grid-cols-[36px_1fr_80px_90px_70px_120px] sm:py-2"
               >
@@ -1354,6 +1395,7 @@ export default function ScreenerPage() {
                           setSectorFilter(c.name)
                           setDetail(null)
                           setView('screen')
+                          void run(conditions, { code: activeCode, sector: c.name, offset: 0 })
                         }}
                         className="rounded-full border px-2.5 py-1 text-[11px] hover:border-primary/40 hover:text-primary"
                       >
