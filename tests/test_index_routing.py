@@ -48,10 +48,17 @@ def test_get_market_indices_uses_marketdata(monkeypatch):
     monkeypatch.setattr(mkt, "get_market_data", lambda: _MD())
     # spark 取数不是本用例关注点,桩掉避免真实联网(见 test_market_indices_spark.py 专测 spark)。
     monkeypatch.setattr(mkt, "get_index_klines", lambda *a, **k: [])
+    # 日经/韩国综合走东财补取,同样桩掉
+    import marketdata.vendors.eastmoney as em
+
+    monkeypatch.setattr(em, "fetch_index_quotes", lambda *a, **k: [])
 
     out = asyncio.run(mkt.get_market_indices())
 
-    assert captured["symbols"] == [idx["tencent_symbol"] for idx in mkt.MARKET_INDICES]
+    # 腾讯只收有符号的指数(日经/韩国没有 tencent_symbol,走东财)
+    assert captured["symbols"] == [
+        idx["tencent_symbol"] for idx in mkt.MARKET_INDICES if idx.get("tencent_symbol")
+    ]
     sh = next(i for i in out if i["symbol"] == "000001")
     assert sh["current_price"] == 3200.0 and sh["change_pct"] == 0.63
     # 未命中行情的指数仍返回基本信息占位(current_price=None),匹配逻辑不变

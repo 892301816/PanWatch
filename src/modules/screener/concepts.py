@@ -15,10 +15,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 from sqlalchemy import delete, func, text
@@ -53,6 +56,68 @@ _BOARDS_TTL_S = 300.0
 _LOCK = threading.Lock()
 _BUILDING = threading.Event()
 _LAST_BUILD: dict = {}
+
+# 当天索引是「哪家」建的:东财板块代码是 BKxxxx,通达信是 tdx:名称。
+# 只记在内存里的话,容器重启后会丢失判断依据 —— 东财恢复后不会重建,
+# 拿东财板块去查通达信口径的索引,板块榜的涨停数会全是 0。
+_SOURCE_FILE = "concept_index_source.json"
+_SOURCE_KEEP_DAYS = 10
+_SOURCE_LOCK = threading.Lock()
+
+
+def _source_path() -> Path:
+    base = os.environ.get("DATA_DIR", "").strip()
+    root = Path(base) if base else Path.cwd() / "data"
+    return root / _SOURCE_FILE
+
+
+def _read_index_source(trade_date: str) -> str:
+    """读取某天索引的构建来源(没有记录返回空串)。"""
+    try:
+        data = json.loads(_source_path().read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return ""
+    row = data.get(trade_date) if isinstance(data, dict) else None
+    return str(row.get("source") or "") if isinstance(row, dict) else ""
+
+
+def _write_index_source(
+    trade_date: str, source: str, boards: int, ok_boards: int, rows: int
+) -> None:
+    """记录某天索引的构建来源,只保留最近 10 个交易日;失败静默。"""
+    if not trade_date or not source:
+        return
+    try:
+        with _SOURCE_LOCK:
+            path = _source_path()
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data[trade_date] = {
+                "source": source,
+                "boards": int(boards),
+                "ok_boards": int(ok_boards),
+                "rows": int(rows),
+                "ts": int(time.time()),
+            }
+            for old in sorted(data)[:-_SOURCE_KEEP_DAYS]:
+                data.pop(old, None)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[选股] 索引来源记录失败: {exc}")
+
+
+def _source_family_mismatch(last_src: str, cur_src: str) -> bool:
+    """索引口径与当前板块源是否跨了「东财 / 通达信」两族。"""
+    if not last_src or not cur_src:
+        return False
+    return (cur_src in _EASTMONEY_SOURCES) != (last_src in _EASTMONEY_SOURCES)
 _LAST_ATTEMPT = 0.0
 
 
@@ -428,6 +493,9 @@ def build_concept_index(trade_date: str, *, board_limit: int = _DEFAULT_BOARDS) 
     if out:
         _store(trade_date, out)
         _MEM.update(trade_date=trade_date, map=None)
+        _write_index_source(
+            trade_date, source or "unknown", len(boards), ok_boards, len(out)
+        )
         logger.info(
             f"[选股] 概念索引完成: {ok_boards}/{len(boards)} 个板块 / {len(out)} 条归属"
         )
@@ -446,17 +514,19 @@ def ensure_concept_index(trade_date: str, *, board_limit: int = 0, force: bool =
     # 先确定当前板块源(有 5 分钟缓存,正常不会额外打网络)
     fetch_concept_boards()
     cur_src = _BOARDS_MEM.get("source") or ""
-    last_src = _LAST_BUILD.get("source") or ""
+    # 内存里有当天的构建记录就用它,没有则读盘 —— 容器重启后仍能判断口径
+    last_src = ""
+    if _LAST_BUILD.get("trade_date") == trade_date:
+        last_src = _LAST_BUILD.get("source") or ""
+    if not last_src:
+        last_src = _read_index_source(trade_date)
     rows = _count_rows(trade_date)
 
     # 板块源在「东财」与「通达信」之间切换过 → 板块代码口径不一致,重建
     if (
         not force
         and rows >= _MIN_GOOD_ROWS
-        and last_src
-        and cur_src
-        and _LAST_BUILD.get("trade_date") == trade_date
-        and (cur_src in _EASTMONEY_SOURCES) != (last_src in _EASTMONEY_SOURCES)
+        and _source_family_mismatch(last_src, cur_src)
         and _time.monotonic() - _LAST_ATTEMPT >= 600
     ):
         logger.warning(
@@ -567,11 +637,15 @@ def concept_index_status(trade_date: str) -> dict:
     finally:
         db.close()
     last = _LAST_BUILD.get("trade_date")
+    built_src = (
+        _LAST_BUILD.get("source") if _LAST_BUILD.get("trade_date") == trade_date else ""
+    )
     return {
         "rows": rows,
         "concepts": concepts,
         "source_date": _MEM.get("source_date") or trade_date,
-        "source": (_LAST_BUILD.get("source") or _BOARDS_MEM.get("source") or ""),
+        # 依次取:本次进程的构建记录 → 落盘的构建记录 → 当前板块源
+        "source": built_src or _read_index_source(trade_date) or _BOARDS_MEM.get("source") or "",
         "last_build": (
             {
                 "trade_date": last,
