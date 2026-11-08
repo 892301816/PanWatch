@@ -251,6 +251,9 @@ def fetch_concept_boards() -> list[dict]:
     else:
         boards.sort(key=lambda b: (b.get("main_net_inflow") or 0.0), reverse=True)
     _BOARDS_MEM.update(ts=time.monotonic(), items=boards, source=source)
+    if source != "tdx":
+        # 东财正常时也悄悄预热通达信板块名,给「风格/主题」判定多一份判据
+        tdx_blocks.warm_async()
     return boards
 
 
@@ -286,6 +289,9 @@ def classify_board(name: str) -> str:
         return "style"
     if any(k in text for k in _INDEX_PATTERNS):
         return "index"
+    # 通达信自带风格分类,数据在内存时优先用它(词表容易漏词)
+    if text in tdx_blocks.cached_style_names():
+        return "style"
     if any(k in text for k in _STYLE_WORDS):
         return "style"
     return "theme"

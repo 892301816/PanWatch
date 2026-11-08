@@ -9,6 +9,8 @@ describe('route page loaders', () => {
       'dashboard',
       'stocks',
       'opportunities',
+      'screener',
+      'messages',
       'paperTrading',
       'assistant',
       'alerts',

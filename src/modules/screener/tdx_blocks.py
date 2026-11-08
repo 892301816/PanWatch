@@ -86,9 +86,10 @@ def _call(sock: socket.socket, pkg: bytes) -> bytes:
     return body
 
 
-def _open() -> socket.socket:
+def _open(max_hosts: int | None = None) -> socket.socket:
     last: Exception | None = None
-    for host, port in _HOSTS:
+    hosts = _HOSTS[: max_hosts] if max_hosts else _HOSTS
+    for host, port in hosts:
         sock: socket.socket | None = None
         try:
             sock = socket.create_connection((host, port), timeout=_TIMEOUT)
@@ -158,7 +159,9 @@ def _parse(data: bytes) -> dict[str, list[str]]:
     return out
 
 
-def fetch_groups(*, force: bool = False) -> dict[str, dict[str, list[str]]]:
+def fetch_groups(
+    *, force: bool = False, max_hosts: int | None = None
+) -> dict[str, dict[str, list[str]]]:
     """返回 ``{"theme": {板块名: [代码]}, "style": {...}, "index": {...}}``。
 
     结果缓存 10 分钟;任一文件失败返回空字典,不影响调用方继续降级。
@@ -174,7 +177,7 @@ def fetch_groups(*, force: bool = False) -> dict[str, dict[str, list[str]]]:
         groups: dict[str, dict[str, list[str]]] = {}
         sock = None
         try:
-            sock = _open()
+            sock = _open(max_hosts)
             for kind, fname in _FILES.items():
                 try:
                     groups[kind] = _parse(_download(sock, fname))
@@ -202,3 +205,47 @@ def fetch_groups(*, force: bool = False) -> dict[str, dict[str, list[str]]]:
             # 全失败时缩短缓存,1 分钟后重试,避免一次网络抖动锁死 10 分钟
             _MEM.update(ts=time.monotonic() - (_TTL_S - 60.0), groups={})
         return groups
+
+
+_STYLE_NAMES_CACHE: dict = {"groups": None, "names": frozenset()}
+_WARM_LOCK = threading.Lock()
+_WARMING = False
+
+
+def cached_style_names() -> frozenset[str]:
+    """已缓存板块文件里的「风格」板块名(不触发网络)。
+
+    东财板块的分层目前靠名称词表,漏词就会把「股权集中」这类当成主题。
+    通达信自带风格分类,只要它的数据在内存里就直接用,当第二判据。
+    """
+    groups = _MEM.get("groups") or {}
+    if _STYLE_NAMES_CACHE.get("groups") is groups:
+        return _STYLE_NAMES_CACHE["names"]
+    names = frozenset((groups.get("style") or {}).keys())
+    _STYLE_NAMES_CACHE.update(groups=groups, names=names)
+    return names
+
+
+def warm_async() -> None:
+    """后台预热板块文件,不阻塞调用方;失败静默(由 fetch_groups 记日志)。
+
+    只为「东财正常时也能用通达信的风格分类」服务,所以只探前 3 个服务器,
+    即使端口被封也只是后台线程多等几秒,不影响页面响应。
+    """
+    global _WARMING
+    groups = _MEM.get("groups")
+    if groups and time.monotonic() - float(_MEM.get("ts") or 0.0) <= _TTL_S:
+        return
+    with _WARM_LOCK:
+        if _WARMING:
+            return
+        _WARMING = True
+
+    def _run() -> None:
+        global _WARMING
+        try:
+            fetch_groups(max_hosts=3)
+        finally:
+            _WARMING = False
+
+    threading.Thread(target=_run, daemon=True, name="tdx-warm").start()
