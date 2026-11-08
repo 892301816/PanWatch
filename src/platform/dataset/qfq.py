@@ -13,10 +13,12 @@ MACD 这类指标会因此失真。这里用腾讯的 ``qfq`` 日线单独落一
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -33,10 +35,12 @@ _HEADERS = {
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://gu.qq.com/",
 }
-_MIN_INTERVAL_S = 0.06
+_MIN_INTERVAL_S = 0.12
 _THROTTLE_LOCK = threading.Lock()
 _LAST_CALL = [0.0]
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TZ = ZoneInfo("Asia/Shanghai")
+_FUYAO_KEY: list[str | None] = [None]
 
 
 def tencent_code(symbol: str) -> str:
@@ -81,7 +85,89 @@ def parse_qfq_payload(payload: dict, tc: str) -> list[dict]:
     return out
 
 
+def _fuyao_key() -> str:
+    """扶摇 API Key:环境变量优先,其次取「同花顺K线(fuyao)」数据源配置。"""
+    if _FUYAO_KEY[0] is not None:
+        return _FUYAO_KEY[0] or ""
+    key = os.environ.get("FUYAO_API_KEY", "").strip()
+    if not key:
+        from src.platform.persistence.models import DataSource
+
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(DataSource)
+                .filter(DataSource.name.like("%fuyao%"))
+                .first()
+            )
+            key = str((row.config or {}).get("api_key") or "").strip() if row else ""
+        finally:
+            db.close()
+    _FUYAO_KEY[0] = key
+    return key
+
+
+def _fetch_fuyao(symbol: str, days: int) -> list[dict]:
+    """扶摇前复权日线(付费接口,稳定性好于腾讯网页端)。"""
+    key = _fuyao_key()
+    if not key:
+        return []
+    from src.platform.dataset.providers.fuyao import FuyaoClient
+    from src.platform.dataset.symbols import to_exchange_code
+
+    end = datetime.now(tz=_TZ)
+    start = end - timedelta(days=max(60, int(days) * 2))
+    with _THROTTLE_LOCK:
+        wait = _MIN_INTERVAL_S - (time.monotonic() - _LAST_CALL[0])
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_CALL[0] = time.monotonic()
+    try:
+        client = FuyaoClient(key)
+        try:
+            rows = client.historical_kline(
+                to_exchange_code(symbol),
+                int(start.timestamp() * 1000),
+                int(end.timestamp() * 1000),
+                adjust="forward",
+            )
+        finally:
+            client.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[前复权] {symbol} 扶摇获取失败: {exc}")
+        return []
+
+    out: list[dict] = []
+    for row in rows:
+        try:
+            day = datetime.fromtimestamp(
+                int(row["date_ms"]) / 1000, tz=_TZ
+            ).strftime("%Y-%m-%d")
+            out.append(
+                {
+                    "trade_date": day,
+                    "open": float(row["open_price"]),
+                    "close": float(row["close_price"]),
+                    "high": float(row["high_price"]),
+                    "low": float(row["low_price"]),
+                    # 扶摇 volume 是股,本表统一成手
+                    "volume": float(row["volume"]) / 100.0,
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    out.sort(key=lambda b: b["trade_date"])
+    return out[-int(days):]
+
+
 def fetch_qfq(symbol: str, days: int = 260) -> list[dict]:
+    bars = _fetch_fuyao(symbol, days)
+    if bars:
+        return bars
+    return _fetch_tencent(symbol, days)
+
+
+def _fetch_tencent(symbol: str, days: int) -> list[dict]:
     tc = tencent_code(symbol)
     if not tc:
         return []
@@ -155,15 +241,22 @@ def sync_symbols(
     return {"symbols": len(symbols), "rows": written, "failed": failed}
 
 
-def sync_all(*, days: int = 260, workers: int = 6) -> dict:
-    """同步全市场(以 daily_bars 里的代码为准)。"""
+def sync_all(*, days: int = 260, workers: int = 6, only_missing: bool = True) -> dict:
+    """同步全市场(以 daily_bars 里的代码为准)。
+
+    ``only_missing`` 只补还没有前复权数据的股票,便于中断后断点续传。
+    """
     db = SessionLocal()
     try:
-        symbols = [
-            str(r[0])
-            for r in db.execute(text("SELECT DISTINCT symbol FROM daily_bars")).fetchall()
-            if r[0]
-        ]
+        if only_missing:
+            sql = (
+                "SELECT DISTINCT d.symbol FROM daily_bars d "
+                "LEFT JOIN daily_bars_qfq q ON q.symbol = d.symbol "
+                "WHERE q.symbol IS NULL"
+            )
+        else:
+            sql = "SELECT DISTINCT symbol FROM daily_bars"
+        symbols = [str(r[0]) for r in db.execute(text(sql)).fetchall() if r[0]]
     finally:
         db.close()
     return sync_symbols(symbols, days=days, workers=workers)

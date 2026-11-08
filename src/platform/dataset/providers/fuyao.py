@@ -95,13 +95,15 @@ class FuyaoClient:
         return rows
 
     # ---- 单标的日K ----
-    def historical_kline(self, thscode: str, start_ms: int, end_ms: int) -> list[dict]:
+    def historical_kline(
+        self, thscode: str, start_ms: int, end_ms: int, *, adjust: str = "none"
+    ) -> list[dict]:
         data = self._get(
             "/api/a-share/prices/historical",
             {
                 "thscode": thscode,
                 "interval": "1d",
-                "adjust": "none",
+                "adjust": adjust,
                 "start": int(start_ms),
                 "end": int(end_ms),
             },
