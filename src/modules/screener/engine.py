@@ -279,6 +279,55 @@ def _scaled(row: dict, field: str):
     return value / scale if scale else value
 
 
+# 概念的「概念/板块/指数」后缀在两家数据源里不一致(东财「光伏概念」/ 通达信「光伏」),
+# 比较前统一剥掉,否则用户从另一个入口带过来的名字会一个都匹配不上。
+_CONCEPT_SUFFIXES = ("概念", "板块", "指数")
+
+
+def _norm_concept(name: str) -> str:
+    text = str(name or "").strip()
+    for suffix in _CONCEPT_SUFFIXES:
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _concept_warnings(conditions: list[dict], concept_map: dict) -> list[str]:
+    """概念条件里的名字如果今日索引里根本没有,给出提示。
+
+    否则用户只能看到「0 只」,分不清是条件太严还是名字写错。
+    """
+    wanted: list[str] = []
+    for cond in conditions:
+        if str(cond.get("field") or "") != "concept":
+            continue
+        value = cond.get("value")
+        values = value if isinstance(value, list) else [value]
+        wanted.extend(str(v).strip() for v in values if str(v or "").strip())
+    if not wanted:
+        return []
+
+    raw_names: set[str] = set()
+    for cons in concept_map.values():
+        for c in cons:
+            name = str(c.get("name") or "").strip()
+            if name:
+                raw_names.add(name)
+    known = {_norm_concept(n) for n in raw_names}
+
+    out: list[str] = []
+    for word in dict.fromkeys(wanted):
+        key = _norm_concept(word)
+        if key in known:
+            continue
+        near = sorted((n for n in raw_names if key and (key in n or n in key)), key=len)[:2]
+        hint = f",最接近的是「{'」「'.join(near)}」" if near else ""
+        out.append(
+            f"概念「{word}」不在今日板块索引里{hint};请从候选里选,或点「刷新数据」重建索引"
+        )
+    return out
+
+
 def _match(row: dict, cond: dict) -> bool:
     field = str(cond.get("field") or "").strip()
     op = str(cond.get("op") or "eq").strip()
@@ -287,13 +336,15 @@ def _match(row: dict, cond: dict) -> bool:
         return False
 
     if field == "concept":
-        names = [c.get("name", "") for c in (row.get("concepts") or [])]
+        names = [_norm_concept(c.get("name", "")) for c in (row.get("concepts") or [])]
         if op in ("in", "not_in"):
             wanted = expected if isinstance(expected, list) else [expected]
-            hit = any(w and w in names for w in wanted)
+            keys = {_norm_concept(w) for w in wanted if str(w or "").strip()}
+            hit = any(n in keys for n in names)
             return hit if op == "in" else not hit
         if op == "contains":
-            return bool(expected) and any(str(expected) in n for n in names)
+            key = _norm_concept(expected)
+            return bool(key) and any(key in n for n in names)
         return bool(names)
 
     actual = _scaled(row, field)
@@ -494,6 +545,8 @@ def run_screen(payload: dict) -> dict:
         )
     if not get_zt_pool(trade_date):
         warnings.append("今日涨停池为空:涨停相关字段(连板数、封板资金)可能不准确")
+
+    warnings.extend(_concept_warnings(payload.get("conditions") or [], concept_map))
 
     return {
         "trade_date": trade_date,
