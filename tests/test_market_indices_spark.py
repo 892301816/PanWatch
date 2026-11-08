@@ -1,14 +1,23 @@
 """首页指数 spark(近20日收盘) 注入 + 60s 缓存 + fail-soft 测试"""
 import asyncio
 
+import pytest
+
 import src.modules.market.api.market as mkt
 
 
-class _K:
-    """极简 K 线桩,只需 .close 供 spark 取值。"""
+@pytest.fixture(autouse=True)
+def _isolate_closes(tmp_path, monkeypatch):
+    """收盘留存写到临时目录,别污染仓库 data/ 或真实数据卷。"""
+    monkeypatch.setattr(mkt, "_closes_path", lambda: tmp_path / "index_closes.json")
 
-    def __init__(self, close: float):
+
+class _K:
+    """极简 K 线桩,只需 .date/.close 供 spark 取值。"""
+
+    def __init__(self, close: float, date: str = "2026-01-01"):
         self.close = close
+        self.date = date
 
 
 def test_spark_injected_for_each_index(monkeypatch):
@@ -35,7 +44,7 @@ def test_spark_injected_for_each_index(monkeypatch):
 
     def _fake_get_index_klines(code, market, days=120):
         captured_days[code] = days
-        return [_K(100 + i) for i in range(20)]
+        return [_K(100 + i, f"2026-01-{i + 1:02d}") for i in range(20)]
 
     monkeypatch.setattr(mkt, "get_market_data", lambda: _MD())
     monkeypatch.setattr(mkt, "get_index_klines", _fake_get_index_klines)
@@ -105,7 +114,7 @@ def test_indices_response_cached_60s(monkeypatch):
 
     def _fake_get_index_klines(code, market, days=120):
         call_count["klines"] += 1
-        return [_K(100 + i) for i in range(20)]
+        return [_K(100 + i, f"2026-01-{i + 1:02d}") for i in range(20)]
 
     monkeypatch.setattr(mkt, "get_market_data", lambda: _MD())
     monkeypatch.setattr(mkt, "get_index_klines", _fake_get_index_klines)

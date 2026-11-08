@@ -50,6 +50,12 @@ _SPARK_CACHE: dict[str, tuple[float, list[float]]] = {}
 _SPARK_TTL_S = 1800
 
 
+def clear_indices_cache() -> None:
+    """清空指数响应/spark 缓存(测试隔离用)。"""
+    _INDICES_CACHE.clear()
+    _SPARK_CACHE.clear()
+
+
 # 指数收盘价本地留存:日经/韩国综合在部分网络下取不到东财K线接口(云端实测被重置),
 # 美股指数腾讯只给 1 根。每天把看到的最新价按日期存下来,几日后就能自己长出走势线,
 # 不必依赖单一K线接口。文件在数据卷里,重启/升级都保留。
@@ -86,7 +92,11 @@ def _merge_closes(symbol: str, pairs: list[tuple[str, float]]) -> None:
             }
             merged.update(rows_in)
             ordered = sorted(merged.items())[-_CLOSES_MAX:]
-            data[symbol] = [[d, c] for d, c in ordered]
+            new_rows = [[d, c] for d, c in ordered]
+            if data.get(symbol) == new_rows:
+                # 值没变就不落盘:指数接口每分钟刷新一次,8 个指数会白白写 8 次
+                return
+            data[symbol] = new_rows
             path = _closes_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
