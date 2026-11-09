@@ -176,7 +176,39 @@ def apply_compat_patches() -> None:
 
     _patch_tool_call_args_coercion()
     _patch_ai_message_init()
+    _patch_opencode_session_header()
     _PATCH_APPLIED = True
+
+
+def _patch_opencode_session_header() -> None:
+    """给 LangChain 的 ChatOpenAI 补 ``x-opencode-session`` 头。
+
+    TradingAgents 走 ``llm_provider=openrouter`` + 自定义 backend_url，
+    内部直接用 langchain_openai.ChatOpenAI，不会经过 PanWatch 的 AIClient，
+    所以 OpenCode 网关要求的会话头需要在这里补上。只对 opencode.ai 生效。
+    """
+    try:
+        import langchain_openai
+    except Exception:  # noqa: BLE001 — 未安装时跳过(TA 不可用本来就不会跑)
+        return
+
+    original = langchain_openai.ChatOpenAI.__init__
+    if getattr(original, "_panwatch_opencode_patched", False):
+        return
+
+    from src.platform.ai.ai_client import _is_opencode, _opencode_session_id
+
+    def _init(self, *args, **kwargs):
+        base_url = kwargs.get("base_url") or kwargs.get("openai_api_base") or ""
+        if _is_opencode(str(base_url)):
+            model = str(kwargs.get("model") or kwargs.get("model_name") or "")
+            headers = dict(kwargs.get("default_headers") or {})
+            headers.setdefault("x-opencode-session", _opencode_session_id(str(base_url), model))
+            kwargs["default_headers"] = headers
+        return original(self, *args, **kwargs)
+
+    _init._panwatch_opencode_patched = True  # type: ignore[attr-defined]
+    langchain_openai.ChatOpenAI.__init__ = _init
 
 
 def _coerce_tool_calls_args(tool_calls: Any) -> Any:
