@@ -849,7 +849,9 @@ export default function ScreenerPage() {
                   >
                     {(draftField === 'concept'
                       ? ['in', 'not_in', 'contains']
-                      : ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'in', 'contains']
+                      : draftField === 'board'
+                        ? ['eq', 'ne', 'in', 'not_in', 'contains']
+                        : ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'in', 'contains']
                     ).map((op) => (
                       <option key={op} value={op}>
                         {ops[op] || op}
@@ -859,19 +861,34 @@ export default function ScreenerPage() {
                   <input
                     value={draftValue}
                     onChange={(e) => setDraftValue(e.target.value)}
-                    list={draftField === 'concept' ? 'concept-options' : undefined}
+                    list={
+                      draftField === 'concept'
+                        ? 'concept-options'
+                        : draftField === 'board'
+                          ? 'board-options'
+                          : undefined
+                    }
                     placeholder={
                       draftField === 'concept'
                         ? '选择或输入概念，多个用逗号分隔'
-                        : draftOp === 'between'
-                          ? '如 5,20'
-                          : '条件值'
+                        : draftField === 'board'
+                          ? '如 创业板'
+                          : draftOp === 'between'
+                            ? '如 5,20'
+                            : '条件值'
                     }
                     className="w-40 rounded border bg-background px-2 py-1"
                   />
                   {draftField === 'concept' && (
                     <datalist id="concept-options">
                       {conceptOptions.map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
+                  )}
+                  {draftField === 'board' && (
+                    <datalist id="board-options">
+                      {['主板', '创业板', '科创板', '北交所'].map((name) => (
                         <option key={name} value={name} />
                       ))}
                     </datalist>

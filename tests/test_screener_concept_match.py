@@ -43,3 +43,21 @@ def test_warnings_only_for_unknown_names():
     )
     assert len(warnings) == 1
     assert "半导体" in warnings[0]
+
+
+def test_concept_condition_accepts_board_names():
+    """「所属概念 不属于 创业板」按上市板块求值(用户和 AI 都常这么写)。"""
+    cond = {"field": "concept", "op": "not_in", "value": ["创业板"]}
+    assert _match({"concepts": [], "board": "主板"}, cond)
+    assert not _match({"concepts": [], "board": "创业板"}, cond)
+
+    cond_in = {"field": "concept", "op": "in", "value": ["创业板"]}
+    assert _match({"concepts": [], "board": "创业板"}, cond_in)
+    assert not _match({"concepts": [], "board": "科创板"}, cond_in)
+
+
+def test_board_names_do_not_trigger_unknown_concept_warning():
+    concept_map = {"000001": [{"name": "光伏概念"}]}
+    assert _concept_warnings(
+        [{"field": "concept", "op": "not_in", "value": ["创业板"]}], concept_map
+    ) == []

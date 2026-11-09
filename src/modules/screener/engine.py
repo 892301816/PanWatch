@@ -500,6 +500,10 @@ def _scaled(row: dict, field: str):
     return value / scale if scale else value
 
 
+# 「创业板/科创板/主板/北交所」是上市板块,不是概念。用户(或 AI)常把它们写进
+# 「所属概念」条件里,这里做一层兼容:整组值都是板块名时,按「上市板块」求值。
+_BOARD_NAMES = frozenset({"主板", "创业板", "科创板", "北交所"})
+
 # 概念的「概念/板块/指数」后缀在两家数据源里不一致(东财「光伏概念」/ 通达信「光伏」),
 # 比较前统一剥掉,否则用户从另一个入口带过来的名字会一个都匹配不上。
 _CONCEPT_SUFFIXES = ("概念", "板块", "指数")
@@ -538,6 +542,8 @@ def _concept_warnings(conditions: list[dict], concept_map: dict) -> list[str]:
 
     out: list[str] = []
     for word in dict.fromkeys(wanted):
+        if word in _BOARD_NAMES:
+            continue  # 已按上市板块处理,不再提示「概念不存在」
         key = _norm_concept(word)
         if key in known:
             continue
@@ -560,7 +566,12 @@ def _match(row: dict, cond: dict) -> bool:
         names = [_norm_concept(c.get("name", "")) for c in (row.get("concepts") or [])]
         if op in ("in", "not_in"):
             wanted = expected if isinstance(expected, list) else [expected]
-            keys = {_norm_concept(w) for w in wanted if str(w or "").strip()}
+            raw = [str(w).strip() for w in wanted if str(w or "").strip()]
+            if raw and all(w in _BOARD_NAMES for w in raw):
+                # 兼容「所属概念 不属于 创业板」这类写法:按上市板块判断
+                hit = (row.get("board") or "") in raw
+                return hit if op == "in" else not hit
+            keys = {_norm_concept(w) for w in raw}
             hit = any(n in keys for n in names)
             return hit if op == "in" else not hit
         if op == "contains":

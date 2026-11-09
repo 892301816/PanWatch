@@ -63,6 +63,9 @@ def _coerce_number(value) -> float | None:
         return None
 
 
+_BOARD_NAMES = frozenset({"主板", "创业板", "科创板", "北交所"})
+
+
 def _validate_condition(cond: dict, warnings: list[str]) -> dict | None:
     field = str(cond.get("field") or "").strip()
     op = str(cond.get("op") or "").strip()
@@ -87,11 +90,21 @@ def _validate_condition(cond: dict, warnings: list[str]) -> dict | None:
         if not value:
             warnings.append("concept 条件缺少值")
             return None
+        # 「创业板/科创板/主板/北交所」是上市板块,不是概念:自动改到 board 字段
+        raw = value if isinstance(value, list) else [value]
+        if raw and all(str(v).strip() in _BOARD_NAMES for v in raw):
+            board_op = "not_in" if op == "not_in" else "in"
+            names = [str(v).strip() for v in raw]
+            return {
+                "field": "board",
+                "op": board_op,
+                "value": names if len(names) > 1 else names[0],
+            }
         return {"field": field, "op": op, "value": value}
 
-    if field == "industry":
-        return {"field": field, "op": op if op in ("eq", "ne", "contains") else "contains",
-                "value": str(value or "").strip()}
+    if field in ("industry", "board"):
+        return {"field": field, "op": op if op in ("eq", "ne", "contains", "in", "not_in") else "contains",
+                "value": value if isinstance(value, (list, tuple)) else str(value or "").strip()}
 
     if field == "is_st":
         if isinstance(value, str):
