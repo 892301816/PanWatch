@@ -1,6 +1,9 @@
 import base64
+import hashlib
 import logging
+import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 from pan_agent_token_meter import normalize_provider_usage
@@ -9,15 +12,54 @@ from src.platform.observability import otel
 
 logger = logging.getLogger(__name__)
 
+# OpenCode Zen / Go 网关要求每个请求带 ``x-opencode-session``(稳定会话 id),
+# 缺失直接 400 MissingSessionID。这里按「服务商 + 模型」生成一次并复用,
+# 兼顾网关校验与提示缓存亲和性;调用方也可显式传 session_id 覆盖。
+_OPENCODE_HOSTS = ("opencode.ai",)
+_SESSION_LOCK = threading.Lock()
+_SESSION_IDS: dict[str, str] = {}
+
+
+def _is_opencode(base_url: str) -> bool:
+    host = (urlparse(base_url or "").hostname or "").lower().rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in _OPENCODE_HOSTS)
+
+
+def _opencode_session_id(base_url: str, model: str) -> str:
+    """同一服务商+模型在进程内固定一个会话 id(稳定优先于每次随机)。"""
+    key = f"{base_url.rstrip('/')}|{model}"
+    with _SESSION_LOCK:
+        hit = _SESSION_IDS.get(key)
+        if hit:
+            return hit
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+        sid = f"ses_{digest}"
+        _SESSION_IDS[key] = sid
+        return sid
+
 
 class AIClient:
     """OpenAI 协议兼容的 AI 客户端"""
 
-    def __init__(self, base_url: str, api_key: str, model: str = "", proxy: str = ""):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "",
+        proxy: str = "",
+        *,
+        session_id: str = "",
+    ):
         kwargs = {
             "base_url": base_url,
             "api_key": api_key,
         }
+        # OpenCode 网关的会话头(其它服务商不需要,不能乱发)
+        if _is_opencode(base_url):
+            kwargs["default_headers"] = {
+                "x-opencode-session": session_id
+                or _opencode_session_id(base_url, model)
+            }
         if proxy:
             kwargs["http_client"] = None  # TODO: 如需代理，用 httpx 配置
         self.client = AsyncOpenAI(**kwargs)
