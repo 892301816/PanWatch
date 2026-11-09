@@ -143,6 +143,14 @@ class ContextMaintenanceScheduler:
             has_work = bool(deleted and any(deleted.values()) if isinstance(deleted, dict) else deleted)
             level = logging.INFO if has_work else logging.DEBUG
             logger.log(level, "[上下文维护] 清理完成: %s", deleted)
+
+            # 选股历史:明细 90 天、运行记录 1 年
+            from src.modules.screener import history as screener_history
+
+            screen_deleted = await asyncio.to_thread(
+                screener_history.cleanup, items_days=90, runs_days=365
+            )
+            logger.info("[上下文维护] 选股历史清理完成: %s", screen_deleted)
         except Exception as e:
             logger.exception(f"[上下文维护] 清理异常: {e}")
         finally:

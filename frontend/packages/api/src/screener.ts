@@ -136,6 +136,48 @@ export interface BoardItem {
   score: number
 }
 
+export interface ScreenerRunSummary {
+  id: number
+  trade_date: string
+  created_at: string
+  source: string
+  rule_name: string
+  conditions: ScreenerCondition[]
+  logic: string
+  matched_count: number
+  universe: number
+  stored_items: number
+  duration_ms: number
+}
+
+export interface ScreenerHistoryItem {
+  rank: number
+  symbol: string
+  name: string
+  price: number | null
+  change_pct: number | null
+  turnover_rate: number | null
+  amount: number | null
+  float_mv: number | null
+  limit_up_days: number
+  concept_rank: number | null
+  concepts: string[]
+}
+
+export interface ScreenerHistoryPerformance {
+  trade_date: string
+  horizons: Record<string, { count: number; avg?: number; median?: number; win_rate?: number }>
+  computed_at: string
+}
+
+export interface ScreenerHistoryDetail extends ScreenerRunSummary {
+  exclude: string[]
+  order_by: string
+  warnings: string[]
+  performance: ScreenerHistoryPerformance | null
+  items: ScreenerHistoryItem[]
+}
+
 export interface ScreenerParseResponse {
   conditions: ScreenerCondition[]
   logic: 'all' | 'any'
@@ -164,6 +206,8 @@ export const screenerApi = {
     order_by?: string
     limit?: number
     offset?: number
+    save?: boolean
+    code?: string
     with_spark?: boolean
     refresh?: boolean
   }, options?: { timeoutMs?: number }) =>
@@ -195,6 +239,30 @@ export const screenerApi = {
       '/screener/concepts',
       { timeoutMs: 60000 }
     ),
+
+  /** 选股历史 */
+  history: (params?: { limit?: number; offset?: number; date?: string; q?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    if (params?.date) qs.set('date', params.date)
+    if (params?.q) qs.set('q', params.q)
+    const query = qs.toString()
+    return fetchAPI<{ total: number; items: ScreenerRunSummary[] }>(
+      query ? `/screener/history?${query}` : '/screener/history'
+    )
+  },
+
+  historyDetail: (id: number) =>
+    fetchAPI<ScreenerHistoryDetail>(`/screener/history/${id}`, { timeoutMs: 60000 }),
+
+  historyPerformance: (id: number) =>
+    fetchAPI<ScreenerHistoryPerformance>(`/screener/history/${id}/performance`, {
+      timeoutMs: 60000,
+    }),
+
+  deleteHistory: (id: number) =>
+    fetchAPI<{ deleted: number }>(`/screener/history/${id}`, { method: 'DELETE' }),
 
   parse: (text: string) =>
     fetchAPI<ScreenerParseResponse>('/screener/parse', {

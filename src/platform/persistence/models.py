@@ -1628,6 +1628,61 @@ class ScreenerRule(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class ScreenerRun(Base):
+    """一次选股运行的快照(用于历史回看与后续表现统计)。"""
+
+    __tablename__ = "screener_runs"
+    __table_args__ = (
+        Index("ix_screener_run_date", "trade_date"),
+        Index("ix_screener_run_hash", "conditions_hash"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String, nullable=False, default="")   # 数据日
+    created_at = Column(DateTime, server_default=func.now())
+    created_by = Column(String, default="")                   # 预留多用户
+    source = Column(String, default="custom")                 # custom/preset/rule/ai
+    rule_id = Column(Integer, nullable=True)
+    rule_name = Column(String, default="")
+    conditions = Column(JSON, default=list)
+    logic = Column(String, default="all")
+    exclude = Column(JSON, default=list)
+    order_by = Column(String, default="change_pct desc")
+    conditions_hash = Column(String, default="")
+    universe = Column(Integer, default=0)
+    matched_count = Column(Integer, default=0)
+    stored_items = Column(Integer, default=0)
+    symbols_json = Column(Text, default="[]")                 # 全部命中代码
+    warnings = Column(JSON, default=list)
+    duration_ms = Column(Integer, default=0)
+    performance = Column(JSON, nullable=True)                 # T+N 统计缓存
+    performance_at = Column(DateTime, nullable=True)
+
+
+class ScreenerRunItem(Base):
+    """历史运行的前 N 条明细(冻结当时价格与标签)。"""
+
+    __tablename__ = "screener_run_items"
+    __table_args__ = (
+        Index("ix_screener_run_item_run", "run_id"),
+        UniqueConstraint("run_id", "symbol", name="uq_screener_run_item"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, nullable=False)
+    rank = Column(Integer, default=0)
+    symbol = Column(String, nullable=False)
+    name = Column(String, default="")
+    price = Column(Float, nullable=True)
+    change_pct = Column(Float, nullable=True)
+    turnover_rate = Column(Float, nullable=True)
+    amount = Column(Float, nullable=True)
+    float_mv = Column(Float, nullable=True)
+    limit_up_days = Column(Integer, default=0)
+    concept_rank = Column(Integer, nullable=True)
+    concepts = Column(JSON, default=list)
+
+
 class TradeRecord(Base):
     """交易流水：加仓/减仓/定投/现金分红/分红再投。
 

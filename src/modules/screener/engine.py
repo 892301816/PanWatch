@@ -784,6 +784,14 @@ def run_screen(payload: dict) -> dict:
     offset = max(0, int(payload.get("offset") or 0))
     raw_limit = int(payload.get("limit") or 0)
     limit = 6000 if raw_limit <= 0 else max(1, min(raw_limit, 6000))
+
+    # 历史落库只在首屏请求时准备(全量代码 + 前 300 条明细),翻页不算新运行
+    history_data = None
+    if offset == 0 and payload.get("save", True):
+        history_data = {
+            "symbols": [r["symbol"] for r in matched],
+            "preview": [_history_item(r, i + 1) for i, r in enumerate(matched[:300])],
+        }
     matched = matched[offset: offset + limit]
 
     for row in matched:
@@ -824,6 +832,7 @@ def run_screen(payload: dict) -> dict:
         "items": [_serialize_item(r) for r in matched],
         "as_of": time.strftime("%H:%M"),
         "warnings": warnings,
+        "_history": history_data,
         # 回显本次真正生效的条件,前端可直接展示,避免"条件看起来是 A、实际按 B 跑"
         "applied": {
             "logic": str(payload.get("logic") or "all").lower(),
@@ -837,6 +846,23 @@ def run_screen(payload: dict) -> dict:
 
 def _yi(value):
     return round(value / 1e8, 2) if value is not None else None
+
+
+def _history_item(row: dict, rank: int) -> dict:
+    """历史明细的冻结字段(够回看,不追求全量)。"""
+    return {
+        "rank": rank,
+        "symbol": row.get("symbol"),
+        "name": row.get("name") or "",
+        "price": row.get("price"),
+        "change_pct": row.get("change_pct"),
+        "turnover_rate": row.get("turnover_rate"),
+        "amount": _yi(row.get("amount")),
+        "float_mv": _yi(row.get("float_mv")),
+        "limit_up_days": int(row.get("limit_up_days") or 0),
+        "concept_rank": row.get("concept_rank"),
+        "concepts": [c.get("name") for c in (row.get("concepts") or [])[:3]],
+    }
 
 
 def _serialize_item(row: dict) -> dict:

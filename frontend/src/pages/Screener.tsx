@@ -21,12 +21,15 @@ import {
   type LadderResponse,
   type ScreenerCondition,
   type ScreenerField,
+  type ScreenerHistoryDetail,
+  type ScreenerHistoryPerformance,
   type ScreenerItem,
   type ScreenerMetaResponse,
+  type ScreenerRunSummary,
   type ScreenerStrategy,
 } from '@panwatch/api'
 
-type View = 'screen' | 'ladder' | 'boards'
+type View = 'screen' | 'ladder' | 'boards' | 'history'
 
 const PAGE_SIZE = 80
 
@@ -164,6 +167,14 @@ export default function ScreenerPage() {
   const [newGroup, setNewGroup] = useState('')
 
   const [sectorFilter, setSectorFilter] = useState<string | null>(null)
+  const [historyRuns, setHistoryRuns] = useState<ScreenerRunSummary[]>([])
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyDetail, setHistoryDetail] = useState<ScreenerHistoryDetail | null>(null)
+  const [historyPerf, setHistoryPerf] = useState<ScreenerHistoryPerformance | null>(null)
+  const [autoSave, setAutoSave] = useState(
+    () => (typeof localStorage === 'undefined' ? true : localStorage.getItem('screener.autoSave') !== '0')
+  )
   const [builderOpen, setBuilderOpen] = useState(false)
   const [draftField, setDraftField] = useState('change_pct')
   const [draftOp, setDraftOp] = useState('gte')
@@ -232,6 +243,8 @@ export default function ScreenerPage() {
           order_by: opts?.orderBy || orderBy,
           limit: PAGE_SIZE,   // 服务端分页:一次只回一页
           offset,
+          save: autoSave,     // 首屏请求写入历史
+          code: opts?.code || activeCode,
           with_spark: false,  // 走势按页懒加载
         })
         setItems(res.items)
@@ -250,7 +263,7 @@ export default function ScreenerPage() {
         setRunning(false)
       }
     },
-    [logic, exclude, orderBy, sectorFilter]
+    [logic, exclude, orderBy, sectorFilter, autoSave, activeCode]
   )
 
   const applyStrategy = useCallback(
@@ -499,6 +512,59 @@ export default function ScreenerPage() {
   }, [builderOpen, draftField, conceptOptions.length])
   const pagedItems = items
 
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    try {
+      const r = await screenerApi.history({ limit: 30 })
+      setHistoryRuns(r.items)
+      setHistoryTotal(r.total)
+    } catch {
+      setHistoryRuns([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (view === 'history') void loadHistory()
+  }, [view, loadHistory])
+
+  const openHistory = useCallback(async (run: ScreenerRunSummary) => {
+    try {
+      const d = await screenerApi.historyDetail(run.id)
+      setHistoryDetail(d)
+      setHistoryPerf(d.performance)
+      screenerApi
+        .historyPerformance(run.id)
+        .then((p) => setHistoryPerf(p))
+        .catch(() => {})
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '历史详情加载失败')
+    }
+  }, [])
+
+  const rerunHistory = useCallback(() => {
+    if (!historyDetail) return
+    setView('screen')
+    setHistoryDetail(null)
+    void run(historyDetail.conditions || [], {
+      code: 'custom',
+      logic: (historyDetail.logic as 'all' | 'any') || 'all',
+      exclude: historyDetail.exclude || ['st'],
+      orderBy: historyDetail.order_by || 'change_pct desc',
+    })
+  }, [historyDetail, run])
+
+  const removeHistory = useCallback(
+    async (id: number) => {
+      if (!window.confirm('删除这条历史记录？')) return
+      await screenerApi.deleteHistory(id).catch(() => {})
+      if (historyDetail?.id === id) setHistoryDetail(null)
+      void loadHistory()
+    },
+    [historyDetail, loadHistory]
+  )
+
   const goPage = useCallback(
     (p: number) => {
       void run(conditions, { code: activeCode, offset: (p - 1) * PAGE_SIZE })
@@ -605,6 +671,7 @@ export default function ScreenerPage() {
               ['screen', '选股'],
               ['ladder', '连涨天梯'],
               ['boards', '板块强弱'],
+              ['history', '历史'],
             ] as Array<[View, string]>).map(([key, label]) => (
               <button
                 key={key}
@@ -1329,6 +1396,194 @@ export default function ScreenerPage() {
                 </div>
               </button>
             ))
+          )}
+        </div>
+      )}
+
+      {view === 'history' && (
+        <div className="space-y-3">
+          <div className="card overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2">
+              <div className="text-[11px] font-medium">选股历史</div>
+              <div className="text-[10px] text-muted-foreground">
+                共 {historyTotal} 条 · 明细保留 90 天
+              </div>
+              <label className="ml-auto flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={autoSave}
+                  onChange={(e) => {
+                    setAutoSave(e.target.checked)
+                    localStorage.setItem('screener.autoSave', e.target.checked ? '1' : '0')
+                  }}
+                  className="h-3 w-3 cursor-pointer"
+                />
+                自动记录
+              </label>
+              <button
+                onClick={() => void loadHistory()}
+                className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+              >
+                刷新
+              </button>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-xs text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                加载历史…
+              </div>
+            ) : !historyRuns.length ? (
+              <div className="py-12 text-center text-xs text-muted-foreground">
+                还没有记录，运行一次选股就会自动保存
+              </div>
+            ) : (
+              <div className="divide-y">
+                {historyRuns.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => void openHistory(r)}
+                    className={`flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-accent/40 ${
+                      historyDetail?.id === r.id ? 'bg-accent/30' : ''
+                    }`}
+                  >
+                    <div className="w-[92px] shrink-0 text-[10px] leading-4 text-muted-foreground">
+                      {r.created_at?.slice(5, 16) || '--'}
+                      <div>{r.trade_date || '--'}</div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium">
+                        {r.rule_name ||
+                          (r.conditions.length
+                            ? r.conditions
+                                .slice(0, 2)
+                                .map((c) => conditionLabel(c, fields, ops))
+                                .join(' · ')
+                            : '全部（不限条件）')}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">
+                        命中 {r.matched_count} 只 / 全市场 {r.universe}
+                        {r.conditions.length > 2 ? ` · 共 ${r.conditions.length} 个条件` : ''}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-[10px] text-muted-foreground">
+                      {r.source === 'rule' ? '分组' : r.source === 'preset' ? '预设' : '自定义'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {historyDetail && (
+            <div className="card p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-[11px] font-medium">历史详情</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {historyDetail.created_at} · 数据日 {historyDetail.trade_date} · 命中{' '}
+                  {historyDetail.matched_count} 只
+                </div>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <button
+                    onClick={rerunHistory}
+                    className="rounded border px-2 py-0.5 text-[11px] hover:bg-accent"
+                  >
+                    重新运行
+                  </button>
+                  <button
+                    onClick={() => void removeHistory(historyDetail.id)}
+                    className="rounded border px-2 py-0.5 text-[11px] text-destructive hover:bg-destructive/10"
+                  >
+                    删除
+                  </button>
+                  <button
+                    onClick={() => setHistoryDetail(null)}
+                    className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-1">
+                {historyDetail.conditions.length === 0 && (
+                  <span className="text-[11px] text-muted-foreground">全部（不限条件）</span>
+                )}
+                {historyDetail.conditions.map((c, i) => (
+                  <span
+                    key={`${c.field}-${c.op}-${i}`}
+                    className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+                  >
+                    {conditionLabel(c, fields, ops)}
+                  </span>
+                ))}
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(['1', '3', '5', '10'] as const).map((h) => {
+                  const stat = historyPerf?.horizons?.[h]
+                  const color =
+                    stat?.avg == null
+                      ? 'text-muted-foreground'
+                      : stat.avg >= 0
+                        ? 'text-stock-up'
+                        : 'text-stock-down'
+                  return (
+                    <div key={h} className="rounded-md border bg-muted/20 px-2 py-1.5">
+                      <div className="text-[10px] text-muted-foreground">T+{h} 等权收益</div>
+                      <div className={`text-sm font-medium ${color}`}>
+                        {stat?.avg == null ? '--' : `${stat.avg > 0 ? '+' : ''}${stat.avg}%`}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {stat?.count ? `胜率 ${stat.win_rate}% · ${stat.count} 只` : '数据不足'}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="text-[10px] text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="py-1 pr-2 font-normal">#</th>
+                      <th className="py-1 pr-2 font-normal">代码</th>
+                      <th className="py-1 pr-2 font-normal">名称</th>
+                      <th className="py-1 pr-2 text-right font-normal">涨跌幅</th>
+                      <th className="hidden py-1 pr-2 text-right font-normal sm:table-cell">换手</th>
+                      <th className="hidden py-1 font-normal sm:table-cell">概念</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyDetail.items.map((it) => (
+                      <tr key={it.symbol} className="border-b last:border-0">
+                        <td className="py-1 pr-2 text-muted-foreground">{it.rank}</td>
+                        <td className="py-1 pr-2 font-mono">{it.symbol}</td>
+                        <td className="py-1 pr-2">{it.name}</td>
+                        <td
+                          className={`py-1 pr-2 text-right ${
+                            (it.change_pct || 0) >= 0 ? 'text-stock-up' : 'text-stock-down'
+                          }`}
+                        >
+                          {pctText(it.change_pct)}
+                        </td>
+                        <td className="hidden py-1 pr-2 text-right sm:table-cell">
+                          {it.turnover_rate == null ? '--' : `${it.turnover_rate.toFixed(2)}%`}
+                        </td>
+                        <td className="hidden py-1 text-muted-foreground sm:table-cell">
+                          {it.concepts.slice(0, 3).join(' / ') || '--'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {historyDetail.matched_count > historyDetail.items.length && (
+                  <div className="py-2 text-center text-[10px] text-muted-foreground">
+                    明细仅保存前 {historyDetail.items.length} 条，其余请用「重新运行」查看
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
