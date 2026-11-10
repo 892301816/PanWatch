@@ -72,6 +72,36 @@ def reset_market_data() -> None:
     _md = None
 
 
+def fill_missing_names(quotes: list) -> list:
+    """补齐行情里缺失的股票名称。
+
+    扶摇(优先级最高)的 snapshot 接口**不返回名称**,引擎命中它就不会再往
+    腾讯/东财兜底,导致首页、通知、盘中分析里只剩代码。这里用本地 stocks 表补名。
+    """
+    missing = [q for q in quotes if not str(getattr(q, "name", "") or "").strip()]
+    if not missing:
+        return quotes
+    try:
+        from src.platform.persistence.database import SessionLocal
+        from src.platform.persistence.models import Stock
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Stock.symbol, Stock.name)
+                .filter(Stock.symbol.in_([q.symbol for q in missing]))
+                .all()
+            )
+        finally:
+            db.close()
+        names = {str(sym): (name or "") for sym, name in rows}
+        for q in missing:
+            q.name = names.get(q.symbol, "")
+    except Exception:  # noqa: BLE001 — 补名失败不影响行情主体
+        pass
+    return quotes
+
+
 def _quote_to_row(q: Quote) -> dict:
     """marketdata.Quote → 旧 orchestrator 同形 dict。"""
     return {
@@ -103,7 +133,7 @@ def md_quote_rows(symbols: list[str], market: str) -> list[dict]:
     syms = list(symbols)
     if not syms:
         return []
-    quotes = get_market_data().quotes(syms, market=market)
+    quotes = fill_missing_names(get_market_data().quotes(syms, market=market))
     return [_quote_to_row(q) for q in quotes]
 
 
@@ -161,7 +191,7 @@ def md_stock_data(symbols: list[str], market: str) -> list:
     syms = list(symbols)
     if not syms:
         return []
-    quotes = get_market_data().quotes(syms, market=market)
+    quotes = fill_missing_names(get_market_data().quotes(syms, market=market))
     return [StockData(
         symbol=q.symbol, name=q.name or "", market=MarketCode(q.market),
         current_price=q.current_price or 0.0, change_pct=q.change_pct or 0.0,

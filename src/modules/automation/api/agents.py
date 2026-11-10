@@ -973,6 +973,8 @@ async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
     )
     all_quotes = [q for batch in quote_batches for q in (batch or [])]
     quote_by_symbol = {q.symbol: q for q in all_quotes}
+    # 行情源偶尔不返回名称,首页/通知里就只剩代码:用自选配置兜底
+    name_map = {s.symbol: (s.name or "").strip() for s in active_watchlist if s.symbol}
 
     # 解析 Agent 阈值配置（用于异动标记与提示 AI）
     try:
@@ -1074,7 +1076,7 @@ async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
 
         return {
             "symbol": quote.symbol,
-            "name": quote.name,
+            "name": (quote.name or "").strip() or name_map.get(quote.symbol, ""),
             "market": market.value,
             "current_price": quote.current_price,
             "change_pct": change_pct,
