@@ -54,6 +54,22 @@ SUGGESTION_TYPES = {
 PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "intraday_monitor.txt"
 
 
+def _lookup_stock_name(symbol: str) -> str:
+    """行情源偶尔不返回名称,通知里别只剩代码。"""
+    try:
+        from src.platform.persistence.database import SessionLocal
+        from src.platform.persistence.models import Stock
+
+        db = SessionLocal()
+        try:
+            row = db.query(Stock.name).filter(Stock.symbol == symbol).first()
+            return (row[0] or "").strip() if row else ""
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 class IntradayMonitorAgent(BaseAgent):
     """
     盘中监测 Agent
@@ -767,22 +783,6 @@ class IntradayMonitorAgent(BaseAgent):
         if not any(k in obj for k in keys):
             return None
         return obj
-
-def _lookup_stock_name(symbol: str) -> str:
-    """行情源偶尔不返回名称,通知里别只剩代码。"""
-    try:
-        from src.platform.persistence.database import SessionLocal
-        from src.platform.persistence.models import Stock
-
-        db = SessionLocal()
-        try:
-            row = db.query(Stock.name).filter(Stock.symbol == symbol).first()
-            return (row[0] or "").strip() if row else ""
-        finally:
-            db.close()
-    except Exception:  # noqa: BLE001
-        return ""
-
 
     def _format_human_readable_content(
         self, stock: StockData, suggestion: dict, raw_content: str
