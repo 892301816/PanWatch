@@ -473,20 +473,23 @@ export default function DashboardPage() {
       {/* 主体:要紧事(7) | 体检(5);机会(5) | 简报(7) */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
         {/* 今日要紧事(主角) */}
-        <div className="card p-4 lg:col-span-7">
+        <div className="card p-3 lg:col-span-7 sm:p-4">
           <div className="mb-2 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">今日要紧事</h2>
-            <span className="text-[11px] text-muted-foreground">你的持仓/自选里今天该关注的</span>
+            <Activity className="h-4 w-4 shrink-0 text-primary" />
+            <h2 className="shrink-0 whitespace-nowrap text-sm font-semibold">今日要紧事</h2>
+            {/* 窄屏放不下副标题和按钮文案,只留主标题与图标 */}
+            <span className="hidden min-w-0 truncate text-[11px] text-muted-foreground sm:inline">
+              你的持仓/自选里今天该关注的
+            </span>
             {feed.length > 0 && (
               <button
                 type="button"
                 onClick={() => setShareDigest(true)}
-                className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary"
+                className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground transition-colors hover:text-primary"
                 title="生成今日盯盘分享图"
               >
                 <Share2 className="h-3.5 w-3.5" />
-                分享图
+                <span className="hidden sm:inline">分享图</span>
               </button>
             )}
           </div>
@@ -582,28 +585,28 @@ export default function DashboardPage() {
         {/* 组合体检(并入首页) */}
         <div className="card p-4 lg:col-span-5">
           <div className="mb-2 flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">组合体检</h2>
+            <ShieldAlert className="h-4 w-4 shrink-0 text-primary" />
+            <h2 className="shrink-0 whitespace-nowrap text-sm font-semibold">组合体检</h2>
             {benchReady && (
               <button
                 type="button"
                 onClick={() => setShareBench(true)}
-                className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary"
+                className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground transition-colors hover:text-primary"
                 title="生成模拟盘成绩单分享图"
               >
                 <Share2 className="h-3.5 w-3.5" />
-                成绩单
+                <span className="hidden sm:inline">成绩单</span>
               </button>
             )}
             {hasHoldings && (
               <button
                 type="button"
                 onClick={() => setShareDiag(true)}
-                className={`${benchReady ? '' : 'ml-auto'} inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary`}
+                className={`${benchReady ? '' : 'ml-auto'} inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground transition-colors hover:text-primary`}
                 title="生成组合体检分享图"
               >
                 <Share2 className="h-3.5 w-3.5" />
-                体检图
+                <span className="hidden sm:inline">体检图</span>
               </button>
             )}
           </div>
