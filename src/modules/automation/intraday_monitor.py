@@ -768,6 +768,22 @@ class IntradayMonitorAgent(BaseAgent):
             return None
         return obj
 
+def _lookup_stock_name(symbol: str) -> str:
+    """行情源偶尔不返回名称,通知里别只剩代码。"""
+    try:
+        from src.platform.persistence.database import SessionLocal
+        from src.platform.persistence.models import Stock
+
+        db = SessionLocal()
+        try:
+            row = db.query(Stock.name).filter(Stock.symbol == symbol).first()
+            return (row[0] or "").strip() if row else ""
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
     def _format_human_readable_content(
         self, stock: StockData, suggestion: dict, raw_content: str
     ) -> str:
@@ -792,8 +808,9 @@ class IntradayMonitorAgent(BaseAgent):
             f"{stock.current_price:.2f}" if getattr(stock, "current_price", None) else "N/A"
         )
         chg = f"{(stock.change_pct or 0):+.2f}%"
+        name = (stock.name or "").strip() or _lookup_stock_name(stock.symbol)
         lines = [
-            f"{stock.name}（{stock.symbol}）",
+            f"{name}（{stock.symbol}）" if name else f"（{stock.symbol}）",
             f"现价：{price}  涨跌：{chg}",
             f"建议：{action_label}",
             f"信号：{signal}",

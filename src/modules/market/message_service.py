@@ -325,9 +325,39 @@ def _brief_prompt_path():
     return Path(__file__).parent.parent.parent.parent / "prompts" / "message_brief.txt"
 
 
+def _symbol_names(symbols: set[str]) -> dict[str, str]:
+    """代码 → 名称。汇总里要写公司名，模型自己编名字比漏写更糟。"""
+    if not symbols:
+        return {}
+    try:
+        from src.platform.persistence.database import SessionLocal
+        from src.platform.persistence.models import Stock
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Stock.symbol, Stock.name)
+                .filter(Stock.symbol.in_(list(symbols)))
+                .all()
+            )
+        finally:
+            db.close()
+        return {str(sym): (name or "") for sym, name in rows}
+    except Exception:  # noqa: BLE001 — 名称缺失只影响提示,不阻断汇总
+        return {}
+
+
 def _build_brief_payload(messages: list[dict], category_counts: dict) -> str:
     """把消息喂给 AI 的紧凑文本。按分类分组，每组最多 8 条，带来源便于引用。"""
     from collections import defaultdict
+
+    tracked = {
+        str(s)
+        for m in messages
+        if m.get("in_position") or m.get("in_watchlist")
+        for s in (m.get("symbols") or [])
+    }
+    names = _symbol_names(tracked)
 
     grouped: dict[str, list[dict]] = defaultdict(list)
     for m in messages:
@@ -341,7 +371,21 @@ def _build_brief_payload(messages: list[dict], category_counts: dict) -> str:
         lines.append(f"## {cat}")
         for m in items[:8]:
             marks = ("◆" if m.get("in_position") else "") + ("★" if m.get("in_watchlist") else "")
-            lines.append(f"- [{m['time']}][{m['source']}]{marks} {m['title']}")
+            hint = ""
+            if marks:
+                # 把命中的标的写清楚,模型才有名字可写,不会只输出符号
+                labels = []
+                for sym in (m.get("symbols") or []):
+                    sym = str(sym)
+                    if sym not in tracked:
+                        continue
+                    nm = names.get(sym) or ""
+                    labels.append(f"{nm}({sym})" if nm else sym)
+                    if len(labels) >= 3:
+                        break
+                if labels:
+                    hint = f"〔标的: {'、'.join(labels)}〕"
+            lines.append(f"- [{m['time']}][{m['source']}]{marks}{hint} {m['title']}")
         lines.append("")
     return "\n".join(lines)
 
@@ -365,7 +409,10 @@ async def write_ai_brief(messages: list[dict], category_counts: dict) -> str:
         raw = await client.chat(
             system_prompt, _build_brief_payload(messages, category_counts), temperature=0.3
         )
-        return (raw or "").strip()[:1200]
+        text = (raw or "").strip()[:1200]
+        # 模型偶尔把 ◆/★ 当占位符直接写进正文("与◆★相关的…"),这里清掉残留符号
+        text = text.replace("◆★", "").replace("★◆", "").replace("◆", "").replace("★", "")
+        return text
     except Exception as e:
         logger.warning(f"[消息] AI 建议失败(留空继续): {e}")
         return ""

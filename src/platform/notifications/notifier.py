@@ -197,6 +197,23 @@ def build_apprise_url(channel_type: str, config: dict) -> str | None:
         raise ValueError(f"不支持的 Apprise 渠道类型: {channel_type}")
 
 
+WECOM_TEXT_LIMIT = 4000
+
+
+def truncate_for_wecom(text: str, limit: int = WECOM_TEXT_LIMIT) -> str:
+    """企业微信 markdown 单条上限 4096 字节,超出会被对方静默截断。
+
+    这里显式截断并补一句提示,让用户知道要去 PanWatch 看全文。
+    """
+    if len(text.encode("utf-8")) <= limit:
+        return text
+    notice = "\n\n…内容过长已截断,完整内容请在 PanWatch 查看"
+    budget = max(0, limit - len(notice.encode("utf-8")))
+    while text and len(text.encode("utf-8")) > budget:
+        text = text[:-50]
+    return text.rstrip() + notice
+
+
 class NotifierManager:
     """通知管理器: Apprise 渠道 + 自定义渠道"""
 
@@ -438,6 +455,7 @@ class NotifierManager:
 
         url = f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}"
         text = f"## {title}\n\n{content}" if title else content
+        text = truncate_for_wecom(text)
         payload = {"msgtype": "markdown", "markdown": {"content": text}}
 
         async with httpx.AsyncClient() as client:
