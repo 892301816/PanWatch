@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -617,7 +618,31 @@ class PaperTradingEngine:
                 account.max_drawdown_pct = round(drawdown, 2)
 
     def _scan_sync(self) -> dict:
-        """同步扫描（在线程中执行）。"""
+        """同步扫描（在线程中执行）。
+
+        夜间维护/数据集同步会持有 SQLite 写锁，扫描偶尔会撞到 ``database is locked``。
+        这里做 3 次短重试，避免整轮扫描直接失败。
+        """
+        from sqlalchemy.exc import OperationalError
+
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return self._scan_once()
+            except OperationalError as exc:
+                last = exc
+                if "locked" not in str(exc).lower() or attempt >= 2:
+                    break
+                logger.warning(f"[模拟盘] 数据库忙，2 秒后重试（第 {attempt + 1} 次）")
+                time.sleep(2)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"[模拟盘] 扫描异常: {exc}")
+                return {"status": "error", "error": str(exc)}
+        logger.exception(f"[模拟盘] 扫描异常: {last}")
+        return {"status": "error", "error": str(last)}
+
+    def _scan_once(self) -> dict:
+        """单轮扫描（不含重试）。"""
         db = SessionLocal()
         try:
             account = self._get_or_create_account(db)
