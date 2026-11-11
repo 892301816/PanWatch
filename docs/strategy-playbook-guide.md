@@ -12,15 +12,18 @@
 - 策略卡与检查：`src/modules/strategy/playbooks.py`
 - 买卖前体检（规则 + AI）：`src/modules/strategy/gate.py`
 - 单票回测：`src/modules/strategy/backtest/single.py`
-- 界面：`frontend/packages/biz-ui/src/components/StrategyBacktest.tsx`、`TradeGate.tsx`
+- 界面：`frontend/packages/biz-ui/src/components/StrategyBacktest.tsx`、`TradeGate.tsx`、`StrategySettings.tsx`
 
 ## 一、三个入口
 
 | 入口 | 位置 | 作用 |
 | --- | --- | --- |
-| 策略卡 | 个股详情 →「策略回测」标签 →「编辑策略」 | 配买入 / 卖出 / 禁买条件，保存后对本股或全局生效 |
+| 全局策略设置 | 首页「交易策略」条 →「设置策略 / 修改策略」 | 配置对所有股票生效的买入 / 卖出 / 禁买条件，管理个股覆盖 |
+| 策略卡（个股/全局） | 个股详情 →「策略回测」标签 →「编辑策略」 | 配本股或全局规则，保存后对本股或全局生效 |
 | 买卖前体检 | 持仓「加仓 / 减仓」弹窗、添加持仓（建仓）弹窗 | 打开弹窗自动跑一次「规则 + 形态 + AI」，结论为「不建议」时要勾选才能继续记录 |
 | 单票回测 | 个股详情 →「策略回测」→「运行回测」 | 用当前规则跑近 2 年日K，给出胜率、收益、回撤、买卖点与交易解读 |
+
+首页顶部始终有一条「交易策略」摘要：已配置时显示策略名、买/卖/禁条件条数、个股覆盖数量；未配置时提示「买卖前体检只能按形态提示」。策略信号块的右上角也有「设置」直达。
 
 另外：首页「今日要紧事」会把盯盘股票里触发策略的列成「策略信号」；持仓行会显示「买 / 卖 / 禁 / 近」徽标；助手可以直接问「宇晶股份能买吗」，走 `check_trade_strategy` 工具。
 

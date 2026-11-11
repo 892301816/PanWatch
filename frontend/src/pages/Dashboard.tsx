@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2 } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, ShieldCheck, Newspaper, Share2 } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -9,6 +9,7 @@ import {
   homeApi,
   strategyApi,
   type StrategyCheck,
+  type StrategyPlaybook,
   type DashboardMarketIndex,
   type DashboardMarketStatus,
   type DashboardMonitorStock,
@@ -28,6 +29,7 @@ import {
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Onboarding } from '@panwatch/biz-ui/components/onboarding'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import StrategySettings from '@panwatch/biz-ui/components/StrategySettings'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
 import ThemePanel from '@/components/ThemePanel'
 import Sparkline from '@/components/Sparkline'
@@ -111,6 +113,10 @@ export default function DashboardPage() {
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [indices, setIndices] = useState<DashboardMarketIndex[]>([])
   const [strategyHits, setStrategyHits] = useState<StrategyCheck[]>([])
+  // 首页「交易策略」条：展示全局策略摘要，并提供设置入口
+  const [strategyOpen, setStrategyOpen] = useState(false)
+  const [globalStrategy, setGlobalStrategy] = useState<StrategyPlaybook | null>(null)
+  const [stockOverrideCount, setStockOverrideCount] = useState(0)
   const [scan, setScan] = useState<DashboardMonitorStock[]>([])
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null)
   const [diag, setDiag] = useState<PortfolioDiagnostics | null>(null)
@@ -294,6 +300,22 @@ export default function DashboardPage() {
     }
   }, [scan])
 
+  // 首页「交易策略」摘要:全局策略 + 个股覆盖数量(失败静默,不挡首页)
+  const loadStrategySummary = useCallback(async () => {
+    try {
+      const data = await strategyApi.playbooks()
+      const items = data.items || []
+      setGlobalStrategy(items.find((p) => p.scope === 'global') || null)
+      setStockOverrideCount(items.filter((p) => p.scope === 'stock').length)
+    } catch {
+      /* 策略接口不可用时首页照常 */
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadStrategySummary()
+  }, [loadStrategySummary])
+
   const urgent = useMemo(() => {
     const items = (scan || []).filter((s) => s.has_position || s.alert_type || s.suggestion?.should_alert)
     const weight = (s: DashboardMonitorStock) =>
@@ -427,6 +449,42 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* 交易策略:首页直接设置全局策略,并显示是否已配置 */}
+      <div className="card mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3 text-[11px]">
+        <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
+        <span className="text-[12px] font-medium text-foreground">交易策略</span>
+        {globalStrategy ? (
+          <>
+            <span className="min-w-0 truncate text-muted-foreground">
+              {globalStrategy.name || '全局策略'}
+              {!globalStrategy.enabled ? '（已停用）' : ''}
+            </span>
+            <span className="text-muted-foreground">
+              买 {globalStrategy.buy?.length ?? 0} · 卖 {globalStrategy.sell?.length ?? 0} · 禁 {globalStrategy.avoid?.length ?? 0}
+            </span>
+            {stockOverrideCount > 0 && (
+              <span className="text-muted-foreground">个股覆盖 {stockOverrideCount} 只</span>
+            )}
+          </>
+        ) : (
+          <span className="text-amber-600 dark:text-amber-400">
+            尚未配置：买卖前体检只能按形态提示，判断不了是否符合你的策略
+          </span>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {strategyHits.length > 0 && (
+            <span className="text-[10px] text-stock-up">{strategyHits.length} 只触发信号</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setStrategyOpen(true)}
+            className="rounded border border-border/60 px-2 py-0.5 text-primary transition-colors hover:bg-accent/30"
+          >
+            {globalStrategy ? '修改策略' : '设置策略'}
+          </button>
+        </div>
+      </div>
+
       {/* 组合速览条:今日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
       <div className="card mb-3 p-4">
         {!hasHoldings ? (
@@ -525,6 +583,13 @@ export default function DashboardPage() {
               <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
                 策略信号
                 <span className="font-normal text-muted-foreground">按你的策略卡自动检查</span>
+                <button
+                  type="button"
+                  onClick={() => setStrategyOpen(true)}
+                  className="ml-auto font-normal text-muted-foreground transition-colors hover:text-primary"
+                >
+                  设置
+                </button>
               </div>
               <div className="space-y-1">
                 {strategyHits.slice(0, 5).map((x) => (
@@ -929,6 +994,13 @@ export default function DashboardPage() {
       />
 
       <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} hasStocks={hasWatchlist} />
+
+      {/* 全局交易策略设置（首页入口；个股覆盖仍在个股详情里配） */}
+      <StrategySettings
+        open={strategyOpen}
+        onOpenChange={setStrategyOpen}
+        onSaved={loadStrategySummary}
+      />
     </div>
   )
 }
