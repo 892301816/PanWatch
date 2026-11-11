@@ -297,6 +297,38 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
             observed_at=datetime.now(UTC),
         )
 
+    async def check_trade_strategy(_request: RunRequest, arguments: dict) -> ToolResult:
+        """按用户的交易策略卡检查当前是否满足买入/卖出条件。"""
+        parsed = _symbol_and_market(arguments)
+        if parsed is None:
+            return _failure_for_symbol(arguments)
+        symbol, _market = parsed
+        try:
+            from src.modules.strategy import playbooks as strategy_playbooks
+
+            data = await asyncio.to_thread(strategy_playbooks.check_symbol, symbol)
+        except Exception:  # noqa: BLE001
+            return ToolResult.failure(
+                summary="策略检查暂时不可用。", error_code="strategy_unavailable"
+            )
+        if not data.get("has_playbook"):
+            return ToolResult.success(
+                summary=f"{symbol} 还没有配置交易策略。",
+                data=data,
+                sources=[{"name": "PanWatch 策略卡"}],
+                observed_at=datetime.now(UTC),
+            )
+        lines = []
+        for item in data.get("buy_checks") or []:
+            lines.append(f"{'✓' if item['ok'] else '✗'} {item['label']} {item['actual']}（要求 {item['expect']}）")
+        summary = f"{symbol} 当前：{data.get('verdict')}。" + ("；".join(lines) if lines else "")
+        return ToolResult.success(
+            summary=summary,
+            data=data,
+            sources=[{"name": "PanWatch 策略卡"}],
+            observed_at=datetime.now(UTC),
+        )
+
     async def get_kline_summary(_request: RunRequest, arguments: dict) -> ToolResult:
         parsed = _symbol_and_market(arguments)
         if parsed is None:
@@ -957,6 +989,23 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
             },
         ),
         find_research_candidates,
+    )
+    registry.register(
+        ToolSpec(
+            name="check_trade_strategy",
+            title="检查交易策略",
+            description="按用户配置的买入/卖出策略条件，检查一只股票当前是否满足，返回逐条对照与结论。",
+            risk=ToolRisk.READ,
+            input_schema={
+                "type": "object",
+                "required": ["symbol"],
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，例如 600519"},
+                    "market": {"type": "string", "default": "CN", "description": "市场代码"},
+                },
+            },
+        ),
+        check_trade_strategy,
     )
     registry.register(
         ToolSpec(

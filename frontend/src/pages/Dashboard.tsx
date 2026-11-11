@@ -7,6 +7,8 @@ import {
   portfolioApi,
   recommendationsApi,
   homeApi,
+  strategyApi,
+  type StrategyCheck,
   type DashboardMarketIndex,
   type DashboardMarketStatus,
   type DashboardMonitorStock,
@@ -108,6 +110,7 @@ export default function DashboardPage() {
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [indices, setIndices] = useState<DashboardMarketIndex[]>([])
+  const [strategyHits, setStrategyHits] = useState<StrategyCheck[]>([])
   const [scan, setScan] = useState<DashboardMonitorStock[]>([])
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null)
   const [diag, setDiag] = useState<PortfolioDiagnostics | null>(null)
@@ -267,6 +270,30 @@ export default function DashboardPage() {
   }
 
   // 今日要紧事:持仓异动 + 触发的盯盘信号(有 AI 建议/告警优先)
+  // 策略信号:对当前盯盘股票批量跑一次策略检查(失败静默,不影响首页)
+  useEffect(() => {
+    const symbols = Array.from(new Set((scan || []).map((s) => s.symbol).filter(Boolean)))
+    if (!symbols.length) {
+      setStrategyHits([])
+      return
+    }
+    let alive = true
+    strategyApi
+      .board(symbols)
+      .then((r) => {
+        if (!alive) return
+        setStrategyHits(
+          (r.items || []).filter((x) =>
+            ['符合买入', '符合卖出', '接近买入'].includes(x.verdict)
+          )
+        )
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [scan])
+
   const urgent = useMemo(() => {
     const items = (scan || []).filter((s) => s.has_position || s.alert_type || s.suggestion?.should_alert)
     const weight = (s: DashboardMonitorStock) =>
@@ -493,6 +520,41 @@ export default function DashboardPage() {
               </button>
             )}
           </div>
+          {strategyHits.length > 0 && (
+            <div className="mb-2.5 rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
+              <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                策略信号
+                <span className="font-normal text-muted-foreground">按你的策略卡自动检查</span>
+              </div>
+              <div className="space-y-1">
+                {strategyHits.slice(0, 5).map((x) => (
+                  <button
+                    key={x.symbol}
+                    type="button"
+                    onClick={() => openStock(x.symbol, 'CN', x.name || x.symbol)}
+                    className="flex w-full items-center gap-2 text-left text-[12px] hover:text-primary"
+                  >
+                    <span
+                      className={
+                        x.verdict === '符合买入'
+                          ? 'text-stock-up'
+                          : x.verdict === '符合卖出'
+                            ? 'text-stock-down'
+                            : 'text-amber-500'
+                      }
+                    >
+                      {x.verdict === '符合卖出' ? '⚠' : x.verdict === '符合买入' ? '✓' : '○'}
+                    </span>
+                    <span className="truncate">{x.name || x.symbol}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {x.verdict}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 早间消息汇总：每个交易日 08:00 生成并推送 */}
           <div className="mb-2.5 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
             <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-primary">

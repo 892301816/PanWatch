@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import WealthActionMenu from '@/components/WealthActionMenu'
 import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink } from 'lucide-react'
-import { fetchAPI, stocksApi, portfolioApi, type WealthOverview, type AIService, type NotifyChannel } from '@panwatch/api'
+import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
 import {
@@ -491,10 +491,44 @@ export default function StocksPage() {
   const [accountForm, setAccountForm] = useState<AccountForm>(emptyAccountForm)
   const [editAccountId, setEditAccountId] = useState<number | null>(null)
 
+  // 策略状态:对当前持仓批量检查(失败静默)
+  useEffect(() => {
+    const symbols = Array.from(
+      new Set(
+        (portfolio?.accounts || [])
+          .flatMap((a) => (a.positions || []).map((p) => p.symbol))
+          .filter(Boolean)
+      )
+    ) as string[]
+    if (!symbols.length) {
+      setStrategyMap({})
+      return
+    }
+    let alive = true
+    strategyApi
+      .board(symbols)
+      .then((r) => {
+        if (!alive) return
+        const map: Record<string, string> = {}
+        for (const item of r.items || []) {
+          if (['符合买入', '符合卖出', '接近买入'].includes(item.verdict)) {
+            map[item.symbol] = item.verdict
+          }
+        }
+        setStrategyMap(map)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [portfolio])
+
   // Position form
   const [positionDialogOpen, setPositionDialogOpen] = useState(false)
   const [positionForm, setPositionForm] = useState<PositionForm>({ account_id: 0, stock_id: 0, cost_price: '', quantity: '', invested_amount: '', trading_style: '', stock_symbol: '', stock_name: '', stock_market: 'CN', record_trade: true, deduct_cash: false })
   const [editPositionId, setEditPositionId] = useState<number | null>(null)
+  // 持仓行的策略状态（符合买入/卖出/接近买入），批量检查一次
+  const [strategyMap, setStrategyMap] = useState<Record<string, string>>({})
   const [positionDialogAccountId, setPositionDialogAccountId] = useState<number | null>(null)
   const [positionSearchQuery, setPositionSearchQuery] = useState('')
   const [positionSearchMarket, setPositionSearchMarket] = useState('')  // 搜索市场筛选
@@ -2059,6 +2093,23 @@ export default function StocksPage() {
                                     <span className="font-mono text-[12px] font-semibold text-foreground">
                                       {pos.symbol}
                                     </span>
+                                    {strategyMap[pos.symbol] && (
+                                      <span
+                                        className={`ml-1 rounded px-1 py-0.5 text-[9px] ${
+                                          strategyMap[pos.symbol] === '符合卖出'
+                                            ? 'bg-stock-down/15 text-stock-down'
+                                            : strategyMap[pos.symbol] === '符合买入'
+                                              ? 'bg-stock-up/15 text-stock-up'
+                                              : 'bg-amber-500/15 text-amber-500'
+                                        }`}
+                                      >
+                                        {strategyMap[pos.symbol] === '符合卖出'
+                                          ? '卖'
+                                          : strategyMap[pos.symbol] === '符合买入'
+                                            ? '买'
+                                            : '近'}
+                                      </span>
+                                    )}
                                     <button
                                       className="ml-1.5 text-[12px] text-muted-foreground hover:text-primary"
                                       onClick={() => openStockDetail(pos.symbol, pos.market, pos.name, true)}
@@ -2231,6 +2282,23 @@ export default function StocksPage() {
                                   <span className="shrink-0 font-mono text-[12px] font-semibold text-foreground">
                                     {pos.symbol}
                                   </span>
+                                  {strategyMap[pos.symbol] && (
+                                    <span
+                                      className={`shrink-0 rounded px-1 py-0.5 text-[9px] ${
+                                        strategyMap[pos.symbol] === '符合卖出'
+                                          ? 'bg-stock-down/15 text-stock-down'
+                                          : strategyMap[pos.symbol] === '符合买入'
+                                            ? 'bg-stock-up/15 text-stock-up'
+                                            : 'bg-amber-500/15 text-amber-500'
+                                      }`}
+                                    >
+                                      {strategyMap[pos.symbol] === '符合卖出'
+                                        ? '卖'
+                                        : strategyMap[pos.symbol] === '符合买入'
+                                          ? '买'
+                                          : '近'}
+                                    </span>
+                                  )}
                                   <button
                                     className="text-[12px] text-muted-foreground hover:text-primary truncate"
                                     onClick={() => openStockDetail(pos.symbol, pos.market, pos.name, true)}
