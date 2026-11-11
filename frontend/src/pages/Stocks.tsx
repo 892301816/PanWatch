@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import WealthActionMenu from '@/components/WealthActionMenu'
 import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink } from 'lucide-react'
-import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel } from '@panwatch/api'
+import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel, type StrategyGate } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
 import {
@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectLabel, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import TradeGate, { isGateBlocked } from '@panwatch/biz-ui/components/TradeGate'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import WealthPanel from '@/components/WealthPanel'
 import WealthSummary from '@/components/WealthSummary'
@@ -511,7 +512,7 @@ export default function StocksPage() {
         if (!alive) return
         const map: Record<string, string> = {}
         for (const item of r.items || []) {
-          if (['符合买入', '符合卖出', '接近买入'].includes(item.verdict)) {
+          if (['符合买入', '符合卖出', '接近买入', '禁止买入'].includes(item.verdict)) {
             map[item.symbol] = item.verdict
           }
         }
@@ -553,6 +554,11 @@ export default function StocksPage() {
     cost: '',
   })
   const [tradeBusy, setTradeBusy] = useState(false)
+  // 交易前体检：结论为「不建议」时需要勾选确认才能继续记录
+  const [tradeGate, setTradeGate] = useState<StrategyGate | null>(null)
+  const [tradeGateAck, setTradeGateAck] = useState(false)
+  const [positionGate, setPositionGate] = useState<StrategyGate | null>(null)
+  const [positionGateAck, setPositionGateAck] = useState(false)
   const [riskTarget, setRiskTarget] = useState<{
     account: AccountSummary
     pos: Position
@@ -863,6 +869,8 @@ export default function StocksPage() {
 
   const openTradeDialog = (account: AccountSummary, pos: Position, action: 'buy' | 'sell') => {
     setTradeTarget({ account, pos, action })
+    setTradeGate(null)
+    setTradeGateAck(false)
     setTradeForm({
       quantity: action === 'sell' ? String(Math.min(pos.quantity, 100)) : '100',
       price: pos.current_price != null ? pos.current_price.toFixed(2) : '',
@@ -905,6 +913,10 @@ export default function StocksPage() {
     const price = Number(tradeForm.price)
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
       toast('请填写有效的数量和价格', 'error')
+      return
+    }
+    if (isGateBlocked(tradeGate) && !tradeGateAck) {
+      toast('策略体检不建议这笔交易，勾选「已了解风险」后再记录', 'error')
       return
     }
     setTradeBusy(true)
@@ -1355,6 +1367,8 @@ export default function StocksPage() {
   // ========== Position handlers ==========
   const openPositionDialog = (accountId: number, position?: Position) => {
     setPositionDialogAccountId(accountId)
+    setPositionGate(null)
+    setPositionGateAck(false)
     setPositionSearchQuery('')
     setPositionSearchResults([])
     setShowPositionDropdown(false)
@@ -1432,6 +1446,10 @@ export default function StocksPage() {
   }
 
   const handlePositionSubmit = async () => {
+    if (!editPositionId && positionForm.record_trade && isGateBlocked(positionGate) && !positionGateAck) {
+      toast('策略体检不建议现在建仓，勾选「已了解风险」后再添加', 'error')
+      return
+    }
     try {
       let stockId = positionForm.stock_id
 
@@ -2096,7 +2114,7 @@ export default function StocksPage() {
                                     {strategyMap[pos.symbol] && (
                                       <span
                                         className={`ml-1 rounded px-1 py-0.5 text-[9px] ${
-                                          strategyMap[pos.symbol] === '符合卖出'
+                                          strategyMap[pos.symbol] === '符合卖出' || strategyMap[pos.symbol] === '禁止买入'
                                             ? 'bg-stock-down/15 text-stock-down'
                                             : strategyMap[pos.symbol] === '符合买入'
                                               ? 'bg-stock-up/15 text-stock-up'
@@ -2105,9 +2123,11 @@ export default function StocksPage() {
                                       >
                                         {strategyMap[pos.symbol] === '符合卖出'
                                           ? '卖'
-                                          : strategyMap[pos.symbol] === '符合买入'
-                                            ? '买'
-                                            : '近'}
+                                          : strategyMap[pos.symbol] === '禁止买入'
+                                            ? '禁'
+                                            : strategyMap[pos.symbol] === '符合买入'
+                                              ? '买'
+                                              : '近'}
                                       </span>
                                     )}
                                     <button
@@ -2285,7 +2305,7 @@ export default function StocksPage() {
                                   {strategyMap[pos.symbol] && (
                                     <span
                                       className={`shrink-0 rounded px-1 py-0.5 text-[9px] ${
-                                        strategyMap[pos.symbol] === '符合卖出'
+                                        strategyMap[pos.symbol] === '符合卖出' || strategyMap[pos.symbol] === '禁止买入'
                                           ? 'bg-stock-down/15 text-stock-down'
                                           : strategyMap[pos.symbol] === '符合买入'
                                             ? 'bg-stock-up/15 text-stock-up'
@@ -2294,9 +2314,11 @@ export default function StocksPage() {
                                     >
                                       {strategyMap[pos.symbol] === '符合卖出'
                                         ? '卖'
-                                        : strategyMap[pos.symbol] === '符合买入'
-                                          ? '买'
-                                          : '近'}
+                                        : strategyMap[pos.symbol] === '禁止买入'
+                                          ? '禁'
+                                          : strategyMap[pos.symbol] === '符合买入'
+                                            ? '买'
+                                            : '近'}
                                     </span>
                                   )}
                                   <button
@@ -2668,6 +2690,16 @@ export default function StocksPage() {
               确认后更新持仓与可用资金，并写入交易记录；不会自动下单。
             </DialogDescription>
           </DialogHeader>
+          {tradeTarget && (
+            <TradeGate
+              symbol={tradeTarget.pos.symbol}
+              side={tradeTarget.action}
+              market={tradeTarget.pos.market || 'CN'}
+              price={Number(tradeForm.price) || undefined}
+              quantity={Number(tradeForm.quantity) || undefined}
+              onGate={setTradeGate}
+            />
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-[11px]">数量（股/份）</Label>
@@ -2740,10 +2772,25 @@ export default function StocksPage() {
               )}
             </div>
           )}
+          {isGateBlocked(tradeGate) && (
+            <label className="mt-3 flex items-start gap-2 text-[11px] text-amber-600">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={tradeGateAck}
+                onChange={(e) => setTradeGateAck(e.target.checked)}
+              />
+              <span>我知道当前形态/策略不满足，仍要记录这笔交易</span>
+            </label>
+          )}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setTradeTarget(null)}>取消</Button>
-            <Button size="sm" onClick={submitTrade} disabled={tradeBusy}>
-              {tradeBusy ? '记录中…' : '确认记录'}
+            <Button
+              size="sm"
+              onClick={submitTrade}
+              disabled={tradeBusy || (isGateBlocked(tradeGate) && !tradeGateAck)}
+            >
+              {tradeBusy ? '记录中…' : isGateBlocked(tradeGate) && !tradeGateAck ? '策略不建议' : '确认记录'}
             </Button>
           </div>
         </DialogContent>
@@ -3065,11 +3112,36 @@ export default function StocksPage() {
                 )}
               </div>
             )}
+            {!editPositionId && positionForm.record_trade && positionForm.stock_symbol && (
+              <TradeGate
+                symbol={positionForm.stock_symbol}
+                side="buy"
+                market={positionForm.stock_market || 'CN'}
+                enabled={positionDialogOpen}
+                onGate={setPositionGate}
+              />
+            )}
+            {!editPositionId && isGateBlocked(positionGate) && (
+              <label className="flex items-start gap-2 text-[11px] text-amber-600">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={positionGateAck}
+                  onChange={(e) => setPositionGateAck(e.target.checked)}
+                />
+                <span>我知道当前形态/策略不满足，仍要建仓</span>
+              </label>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setPositionDialogOpen(false)}>取消</Button>
               <Button
                 onClick={handlePositionSubmit}
-                disabled={!positionForm.cost_price || !positionForm.quantity || (!editPositionId && !positionForm.stock_id && !positionForm.stock_symbol)}
+                disabled={
+                  !positionForm.cost_price ||
+                  !positionForm.quantity ||
+                  (!editPositionId && !positionForm.stock_id && !positionForm.stock_symbol) ||
+                  (!editPositionId && positionForm.record_trade && isGateBlocked(positionGate) && !positionGateAck)
+                }
               >
                 {editPositionId ? '保存' : '添加'}
               </Button>

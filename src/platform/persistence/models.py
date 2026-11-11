@@ -1811,6 +1811,8 @@ class StrategyPlaybook(Base):
     name = Column(String, default="")
     buy_conditions = Column(JSON, default=list)
     sell_conditions = Column(JSON, default=list)
+    # 禁买/风险条件:任一命中则当天不买(高开低走未修复、放量滞涨等)
+    avoid_conditions = Column(JSON, default=list)
     note = Column(String, default="")
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())

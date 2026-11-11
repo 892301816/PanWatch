@@ -302,11 +302,13 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
         parsed = _symbol_and_market(arguments)
         if parsed is None:
             return _failure_for_symbol(arguments)
-        symbol, _market = parsed
+        symbol, market = parsed
         try:
             from src.modules.strategy import playbooks as strategy_playbooks
 
-            data = await asyncio.to_thread(strategy_playbooks.check_symbol, symbol)
+            data = await asyncio.to_thread(
+                strategy_playbooks.check_symbol, symbol, None, market=market
+            )
         except Exception:  # noqa: BLE001
             return ToolResult.failure(
                 summary="策略检查暂时不可用。", error_code="strategy_unavailable"
@@ -320,7 +322,25 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
             )
         lines = []
         for item in data.get("buy_checks") or []:
-            lines.append(f"{'✓' if item['ok'] else '✗'} {item['label']} {item['actual']}（要求 {item['expect']}）")
+            lines.append(
+                f"买入{'✓' if item['ok'] else '✗'} {item['label']} {item['actual']}（要求 {item['expect']}）"
+            )
+        for item in data.get("sell_checks") or []:
+            if item.get("ok"):
+                lines.append(
+                    f"卖出✓ {item['label']} {item['actual']}（要求 {item['expect']}）"
+                )
+        avoid_hits = [c for c in data.get("avoid_checks") or [] if c.get("ok")]
+        if avoid_hits:
+            lines.append(
+                "禁买命中："
+                + "；".join(f"{c['label']} {c['actual']}" for c in avoid_hits)
+            )
+        pattern = data.get("pattern") or {}
+        if pattern.get("tags"):
+            lines.append("形态：" + "、".join(pattern["tags"]))
+        if pattern.get("risk_hint"):
+            lines.append("风险：" + pattern["risk_hint"])
         summary = f"{symbol} 当前：{data.get('verdict')}。" + ("；".join(lines) if lines else "")
         return ToolResult.success(
             summary=summary,
@@ -994,7 +1014,11 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
         ToolSpec(
             name="check_trade_strategy",
             title="检查交易策略",
-            description="按用户配置的买入/卖出策略条件，检查一只股票当前是否满足，返回逐条对照与结论。",
+            description=(
+                "按用户配置的买入/卖出/禁买条件检查一只股票当前是否满足，"
+                "返回逐条对照、形态诊断（高开低走、放量、是否修复等）与结论。"
+                "用户问『能不能买/该不该卖/符合我的策略吗』时优先用这个工具。"
+            ),
             risk=ToolRisk.READ,
             input_schema={
                 "type": "object",

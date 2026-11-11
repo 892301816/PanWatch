@@ -1,4 +1,4 @@
-"""交易策略卡与单票回测 API。"""
+"""交易策略卡、买卖前体检与单票回测 API。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from src.modules.strategy import gate as gate_service
 from src.modules.strategy import playbooks
 from src.modules.strategy.backtest.single import FEATURES, run_single_backtest
 from src.platform.persistence.database import get_db
@@ -29,6 +30,7 @@ class PlaybookIn(BaseModel):
     name: str = ""
     buy: list[ConditionIn] = Field(default_factory=list)
     sell: list[ConditionIn] = Field(default_factory=list)
+    avoid: list[ConditionIn] = Field(default_factory=list)
     note: str = ""
     enabled: bool = True
 
@@ -43,14 +45,31 @@ class BoardIn(BaseModel):
 
 class BacktestIn(BaseModel):
     symbol: str
+    market: str = "CN"
     buy: list[ConditionIn] = Field(default_factory=list)
     sell: list[ConditionIn] = Field(default_factory=list)
+    avoid: list[ConditionIn] = Field(default_factory=list)
     days: int = 500
+
+
+class GateIn(BaseModel):
+    symbol: str
+    side: str = Field("buy", description="buy / sell")
+    market: str = "CN"
+    price: float | None = None
+    quantity: float | None = None
+    use_ai: bool = True
+    model_id: int | None = None
 
 
 @router.get("/playbooks")
 def list_playbooks(db: Session = Depends(get_db)):
     return playbooks.list_playbooks(db=db)
+
+
+@router.get("/presets")
+def list_presets():
+    return playbooks.presets()
 
 
 @router.post("/playbooks")
@@ -83,6 +102,25 @@ def fields():
     return {"fields": FEATURES}
 
 
+@router.post("/gate")
+async def trade_gate(payload: GateIn, db: Session = Depends(get_db)):
+    """买卖前体检:规则 + 形态 + AI(没配 AI 也能出规则结论)。"""
+    try:
+        return await gate_service.evaluate(
+            payload.symbol,
+            side=payload.side,
+            market=payload.market,
+            price=payload.price,
+            quantity=payload.quantity,
+            use_ai=payload.use_ai,
+            model_id=payload.model_id,
+            db=db,
+        )
+    except Exception as exc:  # noqa: BLE001 — 体检失败要给出可读错误
+        logger.exception("[策略] 买卖前体检失败")
+        raise HTTPException(500, f"体检失败: {exc}")
+
+
 @router.post("/backtest")
 def backtest(payload: BacktestIn):
     try:
@@ -90,7 +128,9 @@ def backtest(payload: BacktestIn):
             payload.symbol,
             buy=[c.model_dump() for c in payload.buy] or None,
             sell=[c.model_dump() for c in payload.sell] or None,
+            avoid=[c.model_dump() for c in payload.avoid] or None,
             days=payload.days,
+            market=payload.market,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("[策略] 回测失败")

@@ -2049,7 +2049,7 @@ export default function StockInsightModal(props: {
             )}
 
             {tab === 'strategy' && (
-              <StrategyBacktest symbol={symbol} />
+              <StrategyBacktest symbol={symbol} market={market} />
             )}
 
             {tab === 'reports' && (

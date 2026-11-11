@@ -2324,6 +2324,22 @@ def _m131_hot_themes(conn: Connection) -> None:
     )
 
 
+def _m134_strategy_playbook_avoid(conn: Connection) -> None:
+    """策略卡新增「禁买条件」。
+
+    ``strategy_playbooks`` 表由 create_all 建出;这里补列,兼容已存在的库。
+    列含义:任一条件命中即当天不买(高开低走未修复、放量滞涨等风控)。
+    """
+    if not _has_table(conn, "strategy_playbooks"):
+        return
+    _add_column_if_missing(
+        conn,
+        "strategy_playbooks",
+        "avoid_conditions",
+        "ALTER TABLE strategy_playbooks ADD COLUMN avoid_conditions JSON DEFAULT '[]'",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2358,6 +2374,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(131, "hot_themes", _m131_hot_themes),
     Migration(132, "stock_group_name", _m132_stock_group_name),
     Migration(133, "wealth_accounts", _m133_wealth_accounts),
+    Migration(134, "strategy_playbook_avoid", _m134_strategy_playbook_avoid),
 )
 
 

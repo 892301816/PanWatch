@@ -284,7 +284,7 @@ export default function DashboardPage() {
         if (!alive) return
         setStrategyHits(
           (r.items || []).filter((x) =>
-            ['符合买入', '符合卖出', '接近买入'].includes(x.verdict)
+            ['符合买入', '符合卖出', '接近买入', '禁止买入'].includes(x.verdict)
           )
         )
       })
@@ -538,12 +538,12 @@ export default function DashboardPage() {
                       className={
                         x.verdict === '符合买入'
                           ? 'text-stock-up'
-                          : x.verdict === '符合卖出'
+                          : x.verdict === '符合卖出' || x.verdict === '禁止买入'
                             ? 'text-stock-down'
                             : 'text-amber-500'
                       }
                     >
-                      {x.verdict === '符合卖出' ? '⚠' : x.verdict === '符合买入' ? '✓' : '○'}
+                      {x.verdict === '符合卖出' ? '⚠' : x.verdict === '禁止买入' ? '⛔' : x.verdict === '符合买入' ? '✓' : '○'}
                     </span>
                     <span className="truncate">{x.name || x.symbol}</span>
                     <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">

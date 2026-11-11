@@ -38,7 +38,7 @@ def global_playbook():
 
 
 def test_global_playbook_resolves(global_playbook, monkeypatch):
-    monkeypatch.setattr(P, "_current_bars", lambda symbol: _bars())
+    monkeypatch.setattr(P, "_current_bars", lambda *a, **k: _bars())
     data = P.check_symbol("600000")
     assert data["has_playbook"] is True
     assert data["verdict"] == "符合买入"
@@ -56,7 +56,7 @@ def test_stock_playbook_overrides_global(global_playbook, monkeypatch):
         }
     )
     try:
-        monkeypatch.setattr(P, "_current_bars", lambda symbol: _bars())
+        monkeypatch.setattr(P, "_current_bars", lambda *a, **k: _bars())
         data = P.check_symbol("600000")
         assert data["name"] == "个股覆盖"
         assert data["verdict"] != "符合买入"
@@ -66,7 +66,7 @@ def test_stock_playbook_overrides_global(global_playbook, monkeypatch):
 
 def test_single_backtest_runs(monkeypatch):
     bars = _bars(120, start=10.0)
-    monkeypatch.setattr(S, "load_bars", lambda symbol, days=500: bars)
+    monkeypatch.setattr(S, "load_bars", lambda *a, **k: bars)
     r = S.run_single_backtest(
         "600000",
         buy=[{"field": "runup_3d", "op": "between", "value": [-99, 99]}],
