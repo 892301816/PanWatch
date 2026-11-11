@@ -375,6 +375,8 @@ def describe_condition(cond: dict) -> str:
     op = str(cond.get("op") or "eq")
     value = cond.get("value")
     label = FIELD_MAP.get(field, {}).get("label", field or "?")
+    if field == "gap_drop_flag" and op == "eq":
+        return f"{label} = {'是' if (_num(value) or 0) else '否'}"
     if op == "between" and isinstance(value, (list, tuple)) and len(value) == 2:
         return f"{label} 介于 {format_value(field, value)}"
     if op in ("in", "not_in"):
