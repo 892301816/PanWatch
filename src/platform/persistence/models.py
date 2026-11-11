@@ -1790,3 +1790,28 @@ class DividendLedger(Base):
     price = Column(Float, default=0)
     trade_id = Column(Integer, ForeignKey("trade_records.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class StrategyPlaybook(Base):
+    """交易策略卡:全局默认 + 个股覆盖。
+
+    ``scope=global`` 时 symbol 为空,对所有股票生效;``scope=stock`` 时按 symbol 覆盖全局
+    (完全替换,不做合并,避免规则歧义)。条件格式与选股一致:{field, op, value}。
+    """
+
+    __tablename__ = "strategy_playbooks"
+    __table_args__ = (
+        UniqueConstraint("scope", "symbol", name="uq_strategy_playbook_scope_symbol"),
+        Index("ix_strategy_playbook_symbol", "symbol"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope = Column(String, nullable=False, default="global")  # global / stock
+    symbol = Column(String, default="")
+    name = Column(String, default="")
+    buy_conditions = Column(JSON, default=list)
+    sell_conditions = Column(JSON, default=list)
+    note = Column(String, default="")
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

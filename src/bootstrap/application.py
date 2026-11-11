@@ -47,7 +47,7 @@ from src.modules.research.api import (
     insights,
     recommendations,
 )
-from src.modules.strategy.api import factors
+from src.modules.strategy.api import factors, playbooks
 from src.web.response import ResponseWrapperMiddleware
 
 app = FastAPI(
@@ -190,6 +190,12 @@ app.include_router(
     factors.router,
     prefix="/api/factors",
     tags=["factors"],
+    dependencies=protected,
+)
+app.include_router(
+    playbooks.router,
+    prefix="/api/strategy",
+    tags=["strategy"],
     dependencies=protected,
 )
 app.include_router(

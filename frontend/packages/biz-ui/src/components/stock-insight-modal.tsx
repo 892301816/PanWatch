@@ -20,6 +20,7 @@ import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { SuggestionBadge, type KlineSummary, type SuggestionInfo } from '@panwatch/biz-ui/components/suggestion-badge'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import StrategyBacktest from '@panwatch/biz-ui/components/StrategyBacktest'
 import { KlineIndicators } from '@panwatch/biz-ui/components/kline-indicators'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
@@ -224,7 +225,7 @@ interface PortfolioSummaryResponse {
   }>
 }
 
-type InsightTab = 'overview' | 'kline' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep'
+type InsightTab = 'overview' | 'kline' | 'strategy' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep'
 
 interface StockAgentInfo {
   agent_name: string
@@ -1573,6 +1574,7 @@ export default function StockInsightModal(props: {
                 { id: 'reports', label: `报告 (${reports.length})` },
                 { id: 'deep', label: deepResult ? '深度 (1)' : '深度' },
                 { id: 'kline', label: 'K线' },
+                { id: 'strategy', label: '策略回测' },
                 { id: 'announcements', label: `公告 (${announcements.length})` },
                 { id: 'news', label: `新闻 (${news.length})` },
               ].map(item => (
@@ -2044,6 +2046,10 @@ export default function StockInsightModal(props: {
                   initialInterval={klineInterval}
                 />
               </div>
+            )}
+
+            {tab === 'strategy' && (
+              <StrategyBacktest symbol={symbol} />
             )}
 
             {tab === 'reports' && (
