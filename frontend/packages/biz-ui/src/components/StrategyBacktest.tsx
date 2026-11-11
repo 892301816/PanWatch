@@ -203,6 +203,11 @@ export default function StrategyBacktest({ symbol, market = 'CN' }: { symbol: st
   const chart = useMemo(() => buildChart(result), [result])
   const rules = result?.rules
   const metrics = result?.metrics
+  // 只有当前策略名仍是模板名时才显示模板的一句话解读,避免手动改名后残留旧描述
+  const presetHint =
+    appliedPreset && appliedPreset.name === (effective?.name || name)
+      ? appliedPreset.description
+      : ''
 
   return (
     <div className="space-y-3">
@@ -345,8 +350,8 @@ export default function StrategyBacktest({ symbol, market = 'CN' }: { symbol: st
                 {rulesText(rules?.avoid || effective?.avoid, fields, '未设置')}
               </div>
             ) : null}
-            {appliedPreset?.description && (
-              <div className="pt-0.5 text-foreground/70">交易解读：{appliedPreset.description}</div>
+            {presetHint && (
+              <div className="pt-0.5 text-foreground/70">交易解读：{presetHint}</div>
             )}
           </div>
         )}
