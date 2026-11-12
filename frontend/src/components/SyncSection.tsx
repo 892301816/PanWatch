@@ -333,6 +333,35 @@ export default function SyncSection({
     void runImagePreview(file)
   }
 
+  const onDropImage = (event: React.DragEvent) => {
+    event.preventDefault()
+    const file = Array.from(event.dataTransfer.files).find((entry) =>
+      entry.type.startsWith('image/'),
+    )
+    if (file) void runImagePreview(file)
+  }
+
+  // 弹窗里任意位置 Ctrl+V 都能粘贴截图（不必先点中某个输入框）
+  const runImageRef = useRef<(file: File) => void>(() => {})
+  runImageRef.current = (file: File) => {
+    void runImagePreview(file)
+  }
+  useEffect(() => {
+    const handler = (event: ClipboardEvent) => {
+      const items = event.clipboardData?.items
+      if (!items) return
+      const item = Array.from(items).find((entry) => entry.type.startsWith('image/'))
+      const file = item?.getAsFile()
+      if (!file) return
+      event.preventDefault()
+      runImageRef.current(file)
+    }
+    window.addEventListener('paste', handler)
+    return () => window.removeEventListener('paste', handler)
+    // runImageRef 每次渲染都会更新，监听只注册一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const curlToken = token || 'pwmcp_你的同步令牌'
   const curl = `curl -X POST '${window.location.origin}/api/portfolio/trades/ingest' \\
   -H 'Authorization: Bearer ${curlToken}' \\
@@ -653,9 +682,23 @@ export default function SyncSection({
           >
             <ImagePlus className="h-3.5 w-3.5" /> 选择截图
           </Button>
-          <span className="text-[10px] text-muted-foreground">也可 Ctrl+V 粘贴；手机可从相册/相机选</span>
+          <span className="text-[10px] text-muted-foreground">手机可从相册/相机选；电脑可拖拽或 Ctrl+V 粘贴</span>
           {shotName && <span className="text-[10px] text-muted-foreground">{shotName}</span>}
           {shotBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </div>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => shotRef.current?.click()}
+          onPaste={onPasteImage}
+          onDrop={onDropImage}
+          onDragOver={(event) => event.preventDefault()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') shotRef.current?.click()
+          }}
+          className="mt-2 cursor-pointer rounded-lg border border-dashed border-border/70 bg-muted/10 px-3 py-3 text-center text-[10px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+        >
+          拖拽截图到这里，或点这里选择；弹窗内任意位置按 Ctrl+V 也能粘贴
         </div>
         <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
           截图会发送给你配置的 AI 视觉模型；持仓截图只同步数量与成本，不写交易流水、不动可用资金。
