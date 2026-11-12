@@ -259,7 +259,11 @@ class MarketData:
         return [], None
 
     def quotes(self, symbols: list[str | Symbol], *, market: str | None = None) -> list[Quote]:
-        """批量报价。symbols 可跨市场:未显式给 market 时按代码自动识别并分组。"""
+        """批量报价。symbols 可跨市场:未显式给 market 时按代码自动识别并分组。
+
+        主源可能只覆盖部分标的(例如扶摇的 thscode 不认 ETF),此时对缺失代码逐只再走一次
+        同一引擎:单标的请求主源返回空 → 自动落到下一个数据源,避免整批行情里 ETF 为空。
+        """
         groups: dict[str, list[Symbol]] = {}
         for raw in symbols:
             sym = raw if isinstance(raw, Symbol) else Symbol.parse(raw, market)
@@ -269,8 +273,20 @@ class MarketData:
         for mkt, syms in groups.items():
             req = Request(symbols=tuple(s.code for s in syms), market=mkt)
             resp = self._quote_engine.fetch(req)
-            if resp.ok and resp.data:
-                out.extend(resp.data)
+            data = list(resp.data or []) if resp.ok else []
+            got = {q.symbol for q in data}
+            missing = [s.code for s in syms if s.code not in got]
+            for code in missing[:30]:
+                single = self._quote_engine.fetch(Request(symbols=(code,), market=mkt))
+                if single.ok and single.data:
+                    data.extend(single.data)
+
+            seen: set[str] = set()
+            for quote in data:
+                if quote.symbol in seen:
+                    continue
+                seen.add(quote.symbol)
+                out.append(quote)
         return out
 
     def index_quotes(self, tencent_symbols: list[str]) -> list[dict]:

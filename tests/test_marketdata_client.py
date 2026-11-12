@@ -30,6 +30,43 @@ def test_md_quote_rows_uses_marketdata(monkeypatch):
     assert all(r["current_price"] == 9.0 and r["market"] == "CN" for r in rows)
 
 
+def test_quotes_fill_missing_symbols_from_single_fallback():
+    """主源批量返回部分标的(如扶摇不认 ETF)时,缺失代码要逐只回退到后续数据源。"""
+    from marketdata.client import MarketData
+    from marketdata.types import Response
+
+    class _Cfg:
+        def sources_for(self, datatype, market):
+            return []
+
+    md = MarketData(_Cfg())
+
+    class _Engine:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, req):
+            self.calls.append(tuple(req.symbols))
+            if len(req.symbols) > 1:
+                return Response(
+                    ok=True,
+                    data=[Quote(symbol="600900", market="CN", current_price=29.6)],
+                    vendor="fuyao",
+                )
+            return Response(
+                ok=True,
+                data=[Quote(symbol=req.symbols[0], market="CN", current_price=1.56)],
+                vendor="tencent",
+            )
+
+    engine = _Engine()
+    md._quote_engine = engine
+    rows = md.quotes(["600900", "515080"], market="CN")
+
+    assert {q.symbol for q in rows} == {"600900", "515080"}
+    assert engine.calls == [("600900", "515080"), ("515080",)]
+
+
 def test_db_config_provider_maps_rows(monkeypatch):
     rows = [
         SimpleNamespace(provider="tencent", priority=1, config={"k": "v"}, supports_batch=True),
