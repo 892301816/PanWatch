@@ -1691,6 +1691,9 @@ class TradeRecord(Base):
     """
 
     __tablename__ = "trade_records"
+    __table_args__ = (
+        Index("ix_trade_external", "account_id", "external_id"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     account_id = Column(
@@ -1715,6 +1718,8 @@ class TradeRecord(Base):
     trade_date = Column(String, default="")  # YYYY-MM-DD
     note = Column(String, default="")
     source = Column(String, default="manual")  # manual / dca / dividend_auto
+    # 外部成交编号（券商交割单/短信），用于幂等去重；手工记账为空
+    external_id = Column(String, default="")
     created_at = Column(DateTime, server_default=func.now())
 
 

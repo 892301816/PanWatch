@@ -349,6 +349,85 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
             observed_at=datetime.now(UTC),
         )
 
+    async def record_trade(_request: RunRequest, arguments: dict) -> ToolResult:
+        """把口述/结构化的一笔成交记入账本（需要用户批准）。"""
+        from src.modules.portfolio import trade_ingest
+        from src.modules.portfolio.trade_text import parse_trade_text
+
+        text = str(arguments.get("text") or "").strip()
+        market = str(arguments.get("market") or "CN").upper()
+        if text:
+            parsed = parse_trade_text(text)
+            if not parsed.get("ok"):
+                return ToolResult.failure(
+                    summary=f"没从这句话里解析出成交：{parsed.get('reason') or '信息不足'}。"
+                    "请补充代码/名称、买卖方向、数量、价格，或直接告诉我结构化字段。",
+                    error_code="trade_parse_failed",
+                )
+            data = parsed
+        else:
+            action = str(arguments.get("action") or "").strip().lower()
+            if action not in ("buy", "sell"):
+                return ToolResult.failure(
+                    summary="需要 action=buy 或 sell。", error_code="action_invalid"
+                )
+            try:
+                quantity = int(arguments.get("quantity"))
+                price = float(arguments.get("price"))
+            except (TypeError, ValueError):
+                return ToolResult.failure(
+                    summary="数量和价格必须是数字。", error_code="quantity_price_invalid"
+                )
+            data = {
+                "action": action,
+                "symbol": str(arguments.get("symbol") or "").strip(),
+                "name": str(arguments.get("name") or "").strip(),
+                "quantity": quantity,
+                "price": price,
+                "trade_date": arguments.get("trade_date"),
+                "fees": {"total": float(arguments.get("fee") or 0)},
+                "external_id": str(arguments.get("external_id") or ""),
+                "note": str(arguments.get("note") or ""),
+            }
+
+        result = trade_ingest.ingest_trade(
+            session,
+            {
+                **data,
+                "account_id": arguments.get("account_id") or None,
+                "account_name": str(arguments.get("account_name") or ""),
+                "market": market,
+            },
+            source="assistant",
+        )
+        if not result.get("ok"):
+            return ToolResult.failure(
+                summary=f"记账失败：{result.get('error') or '未知错误'}",
+                error_code="trade_record_failed",
+            )
+        if result.get("duplicate"):
+            return ToolResult.success(
+                summary=f"这笔成交之前已经记过（#{result.get('trade', {}).get('id')}），没有重复写入。",
+                data=result,
+                sources=[{"name": "PanWatch 账本"}],
+                observed_at=datetime.now(UTC),
+            )
+        trade = result.get("trade") or {}
+        account = result.get("account") or {}
+        label = "买入" if trade.get("action") == "buy" else "卖出"
+        amount = float(trade.get("amount") or 0)
+        fee = float(trade.get("total_fee") or 0)
+        return ToolResult.success(
+            summary=(
+                f"已记录{label}：{trade.get('name') or ''}（{trade.get('symbol') or ''}）"
+                f"{trade.get('quantity')} 股 @ {trade.get('price')}，"
+                f"成交额 {amount:.2f}，费用 {fee:.2f}；账户「{account.get('name') or ''}」。"
+            ),
+            data=result,
+            sources=[{"name": "PanWatch 账本"}],
+            observed_at=datetime.now(UTC),
+        )
+
     async def get_kline_summary(_request: RunRequest, arguments: dict) -> ToolResult:
         parsed = _symbol_and_market(arguments)
         if parsed is None:
@@ -1030,6 +1109,40 @@ def build_panwatch_tool_registry(session: Session) -> ToolRegistry:
             },
         ),
         check_trade_strategy,
+    )
+    registry.register(
+        ToolSpec(
+            name="record_trade",
+            title="记录一笔成交",
+            description=(
+                "把用户口述或结构化的一笔成交记入 PanWatch 账本（加仓/减仓），需要用户批准。"
+                "最省事的方式是把用户原话放进 text，例如『29.5 买入宇晶股份 200 股』；"
+                "也可以给 symbol/action/quantity/price。不要用于修改历史交易或银证转账。"
+            ),
+            risk=ToolRisk.WRITE,
+            confirmation_required=True,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "成交原文/口述，如「今天 29.5 买入 002943 200股，手续费5元」",
+                    },
+                    "symbol": {"type": "string", "description": "股票代码，例如 002943"},
+                    "name": {"type": "string", "description": "股票名称，可选"},
+                    "action": {"type": "string", "enum": ["buy", "sell"]},
+                    "quantity": {"type": "integer", "exclusiveMinimum": 0},
+                    "price": {"type": "number", "exclusiveMinimum": 0},
+                    "trade_date": {"type": "string", "description": "YYYY-MM-DD，默认今天"},
+                    "fee": {"type": "number", "description": "费用合计，可选"},
+                    "external_id": {"type": "string", "description": "券商成交编号，可选（用于去重）"},
+                    "account_id": {"type": "integer", "description": "账户 id，只有一个账户时可不填"},
+                    "account_name": {"type": "string", "description": "账户名称，可选"},
+                    "market": {"type": "string", "default": "CN"},
+                },
+            },
+        ),
+        record_trade,
     )
     registry.register(
         ToolSpec(

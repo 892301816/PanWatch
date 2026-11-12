@@ -37,7 +37,7 @@ from src.modules.market.api import (
     themes,
 )
 from src.modules.paper_trading.api import paper_trading
-from src.modules.portfolio.api import accounts, dashboard, history, wealth
+from src.modules.portfolio.api import accounts, dashboard, history, ingest, wealth
 from src.modules.screener import api as screener_api
 from src.platform.dataset import api as dataset_api
 from src.modules.research.api import (
@@ -97,6 +97,10 @@ app.include_router(
 )
 app.include_router(
     wealth.router, prefix="/api", tags=["wealth"], dependencies=protected
+)
+# 成交同步：按路由单独鉴权（登录 JWT 或 trade:write PAT），不能挂全局 protected
+app.include_router(
+    ingest.router, prefix="/api", tags=["portfolio-ingest"]
 )
 app.include_router(
     agents.router, prefix="/api/agents", tags=["agents"], dependencies=protected

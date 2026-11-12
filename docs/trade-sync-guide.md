@@ -1,0 +1,228 @@
+# 成交同步实施指南（B / C / D / E / F）
+
+> A（券商官方 API / QMT）不在本文范围。这里讲其余五条路线的具体做法。
+> 所有路线最终都落到同一个入口，不需要为每种方式改一次账本逻辑。
+
+## 0. 架构：一个入口，多种适配器
+
+```
+手机短信/推送 ─┐
+iOS 快捷指令  ─┤
+AutoJs 读页面 ─┼─→ POST /api/portfolio/trades/ingest ─┐
+桌面目录监听  ─┤        （text 原文或结构化字段）        ├─→ trade_ingest ─→ 账本/持仓/现金
+交割单文件    ─┘                                        │
+                    POST /api/portfolio/trades/import/* ─┘
+```
+
+- `ingest`：单笔成交。`text` 走宽容解析，或直接给 `action/symbol/quantity/price`。
+- `import/preview`、`import/commit`：交割单整文件，先预览查重再写入。
+- 两条入口共用 `trade_ingest`：同一套费率、成本摊薄、现金变动、T+1 持仓逻辑。
+- 幂等：优先券商成交编号；没有编号时用「账户+代码+方向+数量+价格+日期」复合键。
+- 响应与其它 `/api/` 接口一样包在标准信封里：`{"code":0,"data":{...},"message":""}`，
+  `data.ok` 才是业务成功；自动化脚本取值时记得先取 `data`。
+
+**准备（所有路线通用）**
+
+1. 打开「设置 → 交易同步」，选择记账账户；
+2. 点「创建同步令牌」（scope `trade:write`，默认 365 天），复制 `pwmcp_...` 明文；
+3. 记住账户 id（设置页下拉里显示的就是接口用的 `account_id`）；
+4. 手机/电脑只需要能访问你的 PanWatch 地址（建议 HTTPS）。
+
+## 1. B：手机端捕获（准实时，推荐先做）
+
+### B1. Android 短信（MacroDroid，免费）
+
+券商成交短信是最好解析的来源。以 MacroDroid 为例：
+
+1. 新建宏 → 触发器「短信」→ 发件人填券商短号（如 955xx）→ 内容包含「成交」或「买入/卖出」；
+2. 动作「HTTP 请求」：
+   - 方法：`POST`
+   - URL：`https://你的域名/api/portfolio/trades/ingest`
+   - 请求头：
+     ```
+     Authorization: Bearer pwmcp_你的令牌
+     Content-Type: application/json
+     ```
+   - 请求体（在文本框里插入 MacroDroid 的短信内容变量）：
+     ```json
+     {"text":"[sms_message]","account_id":1,"source":"sms"}
+     ```
+3. 加一个「如果」条件：短信内容不包含「撤单/委托成功/验证码」，避免无效请求；
+4. 用「测试」发一条样例，确认返回信封里 `data.ok` 为 true（`duplicate: true` 也代表已经记过）。
+
+> MacroDroid 的变量名随版本略有差异，插入变量时从变量列表选「短信内容」即可；不要手打 `[sms_message]`。
+
+### B2. Android 通知（同花顺/券商 App 推送）
+
+如果券商把「成交回报」做成 App 推送而不是短信：
+
+1. MacroDroid 触发器「通知」→ 应用选同花顺/券商 → 通知文本包含「成交/买入/卖出」；
+2. 动作同上，请求体用通知文本变量：
+   ```json
+   {"text":"[notification_text]","account_id":1,"source":"notification"}
+   ```
+3. 部分机型需要关闭该 App 的「通知折叠」或允许 MacroDroid 读取通知。
+
+Tasker 等价做法：配置 `Event → UI → Notification`（App 选同花顺/券商），任务里用
+`Net → HTTP Request`，POST JSON，通知标题/正文变量通常是 `%evtprm2` / `%evtprm3`。
+
+### B3. iOS 快捷指令
+
+1. 快捷指令 → 自动化 → 「信息」→ 发件人填券商短号 → 勾选「立即运行」；
+2. 添加「获取 URL 内容」：
+   - 方法 `POST`
+   - URL 同上
+   - 请求头：`Authorization: Bearer pwmcp_...`
+   - 请求体 JSON：`{"text":"快捷指令输入","account_id":1,"source":"sms"}`
+     （「快捷指令输入」插入「信息」内容变量）
+
+iOS 的信息自动化在部分系统版本需要手动确认一次，之后可静默运行。
+
+### B4. 无障碍读同花顺成交页（AutoJs6，适合模拟盘/无短信）
+
+脚本已放在 `scripts/sync/autojs_ths_trade.js`：
+
+1. 安装 AutoJs6，开启无障碍服务；
+2. 修改脚本顶部 `CONFIG`（api/token/accountId）；
+3. 在同花顺「交易 → 查询 → 成交」页面运行脚本；
+4. 脚本会读取当前页面的 TextView 文本，正则拼出方向/代码/数量/价格后 POST；
+5. 可配合 AutoJs6 定时任务或 MacroDroid「打开应用时」自动执行。
+
+注意：页面改版、列表分页、滚动加载都会影响读取；脚本解析失败只提示不记账。
+
+### B5. 其他手机方式
+
+- 券商 App 支持「分享成交详情」时，用系统分享菜单转发到 PanWatch 的 PWA/快捷指令；
+- 安卓「通知转发」类小工具（Notification Forwarder）可直接 POST webhook，不一定需要 MacroDroid；
+- 不建议 root/注入/抓包同花顺，封号与合规风险不划算。
+
+## 2. C：交割单导入（确定性最高，必做兜底）
+
+### 2.1 导出
+
+- **同花顺 PC 端**：交易 → 查询 → 历史成交/交割单，选中日期范围后可导出/右键另存（有教程是保存成 `table.xls`）；不同券商入口略有差异。
+- **券商 App/PC**：交易 → 查询 → 对账单/交割单 → 导出/分享。常见格式 CSV、Excel；单次通常最多 1 年。
+- 如果拿到的是 `.xls` 但内容其实是 HTML 表格，本项目也能解析；`.xlsx` 用标准库解析，不需要 openpyxl；老式二进制 `.xls` 需要服务器装 `xlrd`，没有就另存 CSV。
+
+### 2.2 网页导入
+
+「设置 → 交易同步 → 交割单导入」：
+
+1. 选文件 → 自动预览：逐行显示日期、代码、名称、方向、数量、价格、费用、状态；
+2. 状态含义：
+   - `可导入`：将写入；
+   - `可导入（建自选）`：股票不在自选，导入时自动创建；
+   - `重复`：已有同编号/同字段成交，跳过；
+   - `跳过`：撤单、废单、申购、分红等非成交行；
+3. 点「确认导入」，按成交时间排序写入，单行失败不影响其它行。
+
+支持的列名（同义词自动识别）：成交日期/成交时间、证券代码、证券名称、买卖标志/操作、
+成交数量、成交价格、成交金额/发生金额、佣金/手续费、印花税、过户费、成交编号。
+
+费用口径：优先用「佣金+印花税+过户费+规费」；只有「手续费」时视为佣金；有「费用合计」时以它为准。
+
+### 2.3 目录监听（电脑自动上传）
+
+适合「同花顺导出到固定文件夹」的习惯：
+
+```bash
+python scripts/sync/statement_watch.py \
+  --url https://你的域名 \
+  --token pwmcp_你的令牌 \
+  --account 1 \
+  --dir "D:/trades/statements" \
+  --interval 60
+```
+
+- 只依赖标准库；按文件 sha256 记录，不会重复上传；
+- 服务端预览→有可导入行才提交；单文件失败不阻塞后续；
+- `--once` 适合 Windows 计划任务；`--dry-run` 只看解析结果。
+
+## 3. D：无障碍/OCR（B4 的通用版）
+
+- **AutoJs6**：直接读控件文本，稳定性和速度最好，但依赖页面结构；
+- **MacroDroid UI Interaction**：录制点击 + 读取屏幕文本，适合不会写脚本的用户；
+- **截图 + OCR**：AutoJs6 的 OCR 插件、PaddleOCR、系统 OCR 都可以，但表格列对齐、数字识别错误率更高，建议只作为最后手段；
+- **通用约束**：只读本机自己账户的数据；不要把账号密码写进脚本；令牌单独可吊销。
+
+## 4. E：桌面自动化
+
+推荐顺序：
+
+1. **导出 + 目录监听（最稳）**：同花顺/券商手动点一次导出，`statement_watch.py` 自动上传。人只需要点一次「导出」；
+2. **UI 自动化触发导出（脆弱）**：Windows 上用 `pywinauto`/`uiautomation` 点「查询 → 历史成交 → 导出」。控件名、弹窗、分辨率一变就失效，只适合固定环境；
+3. **屏幕 OCR 常驻**：定时截图识别「成交」窗口，误识别风险高，不建议用于记账；
+4. **剪贴板监听**：同花顺复制成交文本后自动 POST，作为半自动方案可用。
+
+pywinauto 思路（伪代码，不保证跨版本可用）：
+
+```python
+from pywinauto.application import Application
+app = Application(backend="uia").connect(title_re=".*同花顺.*")
+win = app.window(title_re=".*交易.*")
+win.child_window(title="查询").click_input()
+win.child_window(title="历史成交").click_input()
+win.child_window(title="导出").click_input()
+# 导出完成后由 statement_watch.py 自动上传
+```
+
+## 5. F：手动/对话式（兜底，零维护）
+
+### 5.1 助手直接记一笔
+
+PanWatch 助手新增 `record_trade` 工具（写入类，需要你批准）：
+
+- 「记一笔：今天 29.5 买入 002943 200 股，手续费 5 元」
+- 「卖出宇晶股份 100 股，成交价 30.1」
+- 也可以说结构化字段：「买入 600000 1000 股 @10.5，账户 1」
+
+工具会走和服务端相同的解析/幂等/费率逻辑，返回「已记录」或「这笔之前记过」。
+
+### 5.2 文本/接口快速记账
+
+「设置 → 交易同步」的文本框可以直接粘贴短信试解析，确认后记账；也可以直接调用：
+
+```bash
+curl -X POST 'https://你的域名/api/portfolio/trades/ingest' \
+  -H 'Authorization: Bearer pwmcp_你的令牌' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"【华泰证券】2026年11月11日10:31以29.50元买入002943宇晶股份200股，手续费5元","account_id":1}'
+```
+
+结构化字段（解析不了的短信可以手填）：
+
+```json
+{
+  "action": "buy",
+  "symbol": "002943",
+  "name": "宇晶股份",
+  "quantity": 200,
+  "price": 29.5,
+  "trade_date": "2026-11-11",
+  "fees": {"total": 5},
+  "account_id": 1,
+  "source": "sms"
+}
+```
+
+## 6. 安全与运维
+
+- 同步令牌 scope 只有 `trade:write`：不能读持仓、不能进 MCP、不能改账户/策略；在「MCP 令牌」列表可随时吊销；
+- 手机/脚本里只放令牌，不放登录密码；
+- 所有写入都留痕：`trade_records.source` 记录 sms/notification/import/assistant，`note` 保留原文摘要、券商、成交编号；
+- 幂等：重复投递返回 `duplicate: true`，不会重复扣钱；
+- 建议公网用 HTTPS；如果只在内网，至少不要直接把 8000 端口暴露到公网；
+- 自动记账后建议在企业微信/Bark 里收到回执（后续可加），发现记错到「持仓 → 交易流水」删除即可（删除不会自动回滚现金，需要手动调整，见排错）。
+
+## 7. 排错
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| `422` 或 `ok:false, stage:parse` | 文本缺方向/数量/价格 | 用设置页文本框试解析；补结构化字段 |
+| `401` | 令牌错误/过期/被吊销 | 重新创建 `trade:write` 令牌 |
+| `403` | 令牌只有 `mcp:read` | 重建令牌，选「交易同步」用途 |
+| `可卖数量不足` | 卖出先于买入到达 | 先补买入；交割单按时间排序导入即可 |
+| `duplicate: true` | 已同步过 | 正常；确需重复记账用 `force: true` |
+| xlsx 解析报缺少 openpyxl | 服务器没装依赖 | 另存 CSV，或给镜像加 `openpyxl` |
+| 记错账 | 文本解析偏差 | 在交易流水删除；现金/持仓按实际手动修正（当前删除不会自动回滚现金） |
+| 日期不对 | 短信没写日期，按“今天” | 在请求里带 `trade_date`，或让自动化把短信时间一起发 |

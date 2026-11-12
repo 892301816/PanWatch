@@ -23,6 +23,10 @@ PAT_DISPLAY_PREFIX_LEN = 14    # 明文前 14 字符,如 pwmcp_a1b2c3d4
 
 # MCP scope(全只读)
 SCOPE_MCP_READ = "mcp:read"
+# 交易同步 scope(只写交易流水,不能下单、不能改账户)
+SCOPE_TRADE_WRITE = "trade:write"
+
+ALL_SCOPES = (SCOPE_MCP_READ, SCOPE_TRADE_WRITE)
 
 
 def hash_token(token: str) -> str:
@@ -49,3 +53,16 @@ def looks_like_pat(token: str) -> bool:
 def verify_pat_hash(provided_token: str, stored_hash: str) -> bool:
     """常数时间比较 PAT 的 sha256,防 timing attack。"""
     return hmac.compare_digest(hash_token(provided_token), stored_hash)
+
+
+def parse_scopes(raw: str | None) -> list[str]:
+    """把 ``scopes_json`` 解析成列表;脏数据一律按空权限处理。"""
+    if not raw:
+        return []
+    try:
+        import json
+
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [str(v) for v in value] if isinstance(value, list) else []

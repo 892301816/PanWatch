@@ -3,6 +3,7 @@ import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Downlo
 import { fetchAPI, type AIService, type AIModel, type NotifyChannel } from '@panwatch/api'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import PatSection from '@/components/PatSection'
+import SyncSection from '@/components/SyncSection'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -665,6 +666,7 @@ export default function SettingsPage() {
     { id: 'sec-system', label: '系统', hint: health?.timezone ? `TZ ${health.timezone}` : undefined },
     { id: 'sec-pack', label: '配置包' },
     { id: 'sec-feedback', label: '反馈' },
+    { id: 'sec-sync', label: '交易同步' },
     { id: 'sec-pat', label: 'MCP 令牌' },
   ]
 
@@ -1112,6 +1114,9 @@ export default function SettingsPage() {
             <div className="text-[12px] text-muted-foreground">暂无反馈数据</div>
           )}
         </section>
+
+        {/* 交易同步：手机短信/通知、交割单导入 */}
+        <SyncSection />
 
         {/* MCP 访问令牌 */}
         <PatSection />

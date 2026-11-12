@@ -12,14 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.modules.administration.pat import SCOPE_MCP_READ, generate_pat
+from src.modules.administration.pat import SCOPE_MCP_READ, SCOPE_TRADE_WRITE, generate_pat, parse_scopes
 from src.platform.persistence.database import get_db
 from src.platform.persistence.models import PersonalAccessToken
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_ALLOWED_SCOPES = {SCOPE_MCP_READ}
+_ALLOWED_SCOPES = {SCOPE_MCP_READ, SCOPE_TRADE_WRITE}
 
 
 class CreatePatBody(BaseModel):
@@ -36,10 +36,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _serialize(row: PersonalAccessToken) -> dict:
-    try:
-        scopes = json.loads(row.scopes_json or "[]")
-    except Exception:
-        scopes = []
+    scopes = parse_scopes(row.scopes_json)
     return {
         "id": row.id,
         "name": row.name,

@@ -2340,6 +2340,27 @@ def _m134_strategy_playbook_avoid(conn: Connection) -> None:
     )
 
 
+def _m135_trade_external_id(conn: Connection) -> None:
+    """交易流水补 ``external_id``（券商成交编号/短信幂等键）。
+
+    交割单导入与手机转发都会重复投递，靠它 + 复合键去重，避免重复记账。
+    """
+    if not _has_table(conn, "trade_records"):
+        return
+    _add_column_if_missing(
+        conn,
+        "trade_records",
+        "external_id",
+        "ALTER TABLE trade_records ADD COLUMN external_id TEXT DEFAULT ''",
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trade_external "
+            "ON trade_records(account_id, external_id)"
+        )
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2375,6 +2396,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(132, "stock_group_name", _m132_stock_group_name),
     Migration(133, "wealth_accounts", _m133_wealth_accounts),
     Migration(134, "strategy_playbook_avoid", _m134_strategy_playbook_avoid),
+    Migration(135, "trade_external_id", _m135_trade_external_id),
 )
 
 

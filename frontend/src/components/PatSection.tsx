@@ -16,6 +16,7 @@ export default function PatSection() {
   const [items, setItems] = useState<PatItem[]>([])
   const [loading, setLoading] = useState(false)
   const [name, setName] = useState('')
+  const [scope, setScope] = useState<'mcp:read' | 'trade:write'>('mcp:read')
   const [creating, setCreating] = useState(false)
   const [newToken, setNewToken] = useState<string | null>(null)
 
@@ -40,7 +41,7 @@ export default function PatSection() {
     }
     setCreating(true)
     try {
-      const res = await patsApi.create({ name: name.trim() })
+      const res = await patsApi.create({ name: name.trim(), scopes: [scope] })
       setNewToken(res.token)
       setName('')
       await load()
@@ -88,6 +89,15 @@ export default function PatSection() {
           placeholder="令牌用途备注,如 Claude Desktop"
           className="sm:max-w-xs"
         />
+        <select
+          value={scope}
+          onChange={e => setScope(e.target.value as 'mcp:read' | 'trade:write')}
+          className="h-9 rounded-lg border border-border bg-background px-2 text-[12px]"
+          title="令牌权限范围"
+        >
+          <option value="mcp:read">MCP 只读</option>
+          <option value="trade:write">交易同步</option>
+        </select>
         <Button size="sm" className="h-9" onClick={create} disabled={creating}>
           <Plus className="w-3.5 h-3.5" /> 创建令牌
         </Button>
@@ -125,6 +135,9 @@ export default function PatSection() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[12px] font-medium text-foreground truncate">{it.name || '未命名'}</span>
                   <code className="font-mono text-[11px] text-muted-foreground">{it.prefix}…</code>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600">
+                    {it.scopes?.includes('trade:write') ? '交易同步' : 'MCP 只读'}
+                  </span>
                   {it.revoked ? (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-600">已吊销</span>
                   ) : (
