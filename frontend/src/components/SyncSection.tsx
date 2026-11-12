@@ -17,6 +17,7 @@ import {
   syncApi,
   type ImageCommitResult,
   type ImageExtract,
+  type ImageRow,
   type ImportCommit,
   type ImportPreview,
   type SyncParsed,
@@ -68,7 +69,9 @@ const STATUS_LABEL: Record<string, string> = {
 const POSITION_STATUS_LABEL: Record<string, string> = {
   create: '新建持仓',
   new_stock: '新建自选',
-  update: '更新持仓',
+  update: '成本更新',
+  add: '加仓',
+  reduce: '减仓',
   unchanged: '无变化',
   close: '清仓',
   unresolved: '未识别',
@@ -78,6 +81,8 @@ const POSITION_STATUS_CHIP: Record<string, string> = {
   create: 'bg-stock-up/15 text-stock-up',
   new_stock: 'bg-sky-500/15 text-sky-600',
   update: 'bg-amber-500/15 text-amber-600',
+  add: 'bg-stock-up/15 text-stock-up',
+  reduce: 'bg-stock-down/15 text-stock-down',
   unchanged: 'bg-accent/40 text-muted-foreground',
   close: 'bg-stock-down/15 text-stock-down',
   unresolved: 'bg-amber-500/15 text-amber-600',
@@ -151,6 +156,7 @@ export default function SyncSection({
   const [shotName, setShotName] = useState('')
   const [removeMissing, setRemoveMissing] = useState(false)
   const [syncCash, setSyncCash] = useState(true)
+  const [recordTrades, setRecordTrades] = useState(true)
   const shotRef = useRef<HTMLInputElement>(null)
 
   const loadAccounts = useCallback(async () => {
@@ -308,11 +314,12 @@ export default function SyncSection({
         account_id: accountId,
         remove_missing: shot.mode === 'positions' ? removeMissing : false,
         available_funds: typeof available === 'number' ? available : undefined,
+        record_trades: shot.mode === 'positions' ? recordTrades : false,
       })
       setShotResult(result)
       const detail =
         shot.mode === 'positions'
-          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，清仓 ${result.closed ?? 0}，无变化 ${result.unchanged ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}${result.cash_updated ? '，已同步可用资金' : ''}`
+          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，加仓 ${result.buy_trades ?? 0} 笔，减仓 ${result.sell_trades ?? 0} 笔，清仓 ${result.closed ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}${result.cash_updated ? '，已同步可用资金' : ''}`
           : `新增 ${result.created}，重复 ${result.duplicate ?? 0}，失败 ${result.failed ?? 0}`
       toast(`同步完成：${detail}`, 'success')
       setShot(null)
@@ -322,6 +329,14 @@ export default function SyncSection({
     } finally {
       setShotBusy(false)
     }
+  }
+
+  const updateShotRow = (index: number, patch: Partial<ImageRow>) => {
+    setShot((prev) =>
+      prev
+        ? { ...prev, rows: prev.rows.map((row, i) => (i === index ? { ...row, ...patch } : row)) }
+        : prev,
+    )
   }
 
   const onPasteImage = (event: React.ClipboardEvent) => {
@@ -762,9 +777,17 @@ export default function SyncSection({
                   <span className="rounded bg-stock-up/15 px-1.5 py-0.5 text-stock-up">
                     新建 {shot.summary.create ?? 0}
                   </span>
-                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-600">
-                    更新 {shot.summary.update ?? 0}
+                  <span className="rounded bg-stock-up/15 px-1.5 py-0.5 text-stock-up">
+                    加仓 {shot.summary.add ?? 0}
                   </span>
+                  <span className="rounded bg-stock-down/15 px-1.5 py-0.5 text-stock-down">
+                    减仓 {shot.summary.reduce ?? 0}
+                  </span>
+                  {(shot.summary.update ?? 0) > 0 && (
+                    <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-600">
+                      成本更新 {shot.summary.update}
+                    </span>
+                  )}
                   <span className="rounded bg-accent/40 px-1.5 py-0.5 text-muted-foreground">
                     无变化 {shot.summary.unchanged ?? 0}
                   </span>
@@ -811,6 +834,14 @@ export default function SyncSection({
                 <label className="flex items-center gap-1">
                   <input
                     type="checkbox"
+                    checked={recordTrades}
+                    onChange={(e) => setRecordTrades(e.target.checked)}
+                  />
+                  按变动生成交易流水（加仓/减仓/清仓）
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
                     checked={removeMissing}
                     onChange={(e) => setRemoveMissing(e.target.checked)}
                   />
@@ -825,10 +856,10 @@ export default function SyncSection({
                     <tr>
                       <th className="px-2 py-1 text-left font-normal">代码</th>
                       <th className="px-2 py-1 text-left font-normal">名称</th>
-                      <th className="px-2 py-1 text-right font-normal">持仓/可用</th>
-                      <th className="px-2 py-1 text-right font-normal">成本</th>
-                      <th className="px-2 py-1 text-right font-normal">现价</th>
-                      <th className="px-2 py-1 text-right font-normal">当前持仓</th>
+                      <th className="px-2 py-1 text-right font-normal">当前→截图</th>
+                      <th className="px-2 py-1 text-right font-normal">变动</th>
+                      <th className="px-2 py-1 text-right font-normal">成本/现价</th>
+                      <th className="px-2 py-1 text-right font-normal">推算价（可改）</th>
                       <th className="px-2 py-1 text-left font-normal">状态</th>
                     </tr>
                   ) : (
@@ -849,15 +880,47 @@ export default function SyncSection({
                     shot.mode === 'positions' ? (
                       <tr key={`p-${row.symbol}-${index}`} className="border-t border-border/40">
                         <td className="px-2 py-0.5 font-mono">{row.symbol}</td>
-                        <td className="px-2 py-0.5">{row.name}</td>
-                        <td className="px-2 py-0.5 text-right">
-                          {row.quantity}
+                        <td className={`px-2 py-0.5 ${row.closing ? 'text-muted-foreground' : ''}`}>
+                          {row.name}
+                        </td>
+                        <td className="px-2 py-0.5 text-right text-muted-foreground">
+                          {row.current_quantity ?? '--'} → {row.quantity}
                           {row.available != null ? `/${row.available}` : ''}
                         </td>
-                        <td className="px-2 py-0.5 text-right">{row.cost_price}</td>
-                        <td className="px-2 py-0.5 text-right">{row.last_price ?? '--'}</td>
-                        <td className="px-2 py-0.5 text-right text-muted-foreground">
-                          {row.current_quantity != null ? `${row.current_quantity} @ ${row.current_cost}` : '--'}
+                        <td
+                          className={`px-2 py-0.5 text-right ${
+                            (row.delta ?? 0) > 0
+                              ? 'text-stock-up'
+                              : (row.delta ?? 0) < 0
+                                ? 'text-stock-down'
+                                : 'text-muted-foreground'
+                          }`}
+                        >
+                          {row.closing
+                            ? '清仓'
+                            : row.delta
+                              ? `${row.delta > 0 ? '+' : ''}${row.delta}`
+                              : '--'}
+                        </td>
+                        <td className="px-2 py-0.5 text-right">
+                          {row.cost_price} / {row.last_price ?? '--'}
+                        </td>
+                        <td className="px-2 py-0.5 text-right">
+                          {row.trade_action ? (
+                            <input
+                              type="number"
+                              step="0.001"
+                              value={row.trade_price ?? ''}
+                              onChange={(e) =>
+                                updateShotRow(index, {
+                                  trade_price: e.target.value === '' ? null : Number(e.target.value),
+                                })
+                              }
+                              className="w-16 rounded border border-border bg-background px-1 py-0.5 text-right text-[11px]"
+                            />
+                          ) : (
+                            <span className="text-muted-foreground">--</span>
+                          )}
                         </td>
                         <td className="px-2 py-0.5">
                           <span
@@ -900,7 +963,7 @@ export default function SyncSection({
         {shotResult && (
           <div className="mt-2 rounded border border-border/60 bg-muted/20 p-2 text-[11px]">
             {shotResult.mode === 'positions'
-              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，清仓 ${shotResult.closed ?? 0}，无变化 ${shotResult.unchanged ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
+              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，加仓 ${shotResult.buy_trades ?? 0} 笔，减仓 ${shotResult.sell_trades ?? 0} 笔，清仓 ${shotResult.closed ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
               : `成交同步完成：新增 ${shotResult.created}，重复 ${shotResult.duplicate ?? 0}，失败 ${shotResult.failed ?? 0}。`}
             {shotResult.mode === 'positions' && shotResult.cash_updated ? ' 可用资金已更新。' : ''}
           </div>

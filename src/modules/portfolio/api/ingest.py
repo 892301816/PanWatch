@@ -77,6 +77,9 @@ class ImageCommitIn(BaseModel):
     available_funds: float | None = Field(
         None, description="持仓模式：同时把账户可用资金设为截图里的『可用』"
     )
+    record_trades: bool = Field(
+        False, description="持仓模式：按截图变动生成加仓/减仓/清仓交易流水"
+    )
 
 
 def _decode_import(payload: ImportIn) -> bytes | str:
@@ -249,6 +252,7 @@ def image_commit(
             rows=rows,
             remove_missing=payload.remove_missing,
             available_funds=payload.available_funds,
+            record_trades=payload.record_trades,
         )
     annotated = trade_ingest.annotate_rows(db, rows, account=account)
     result = trade_ingest.commit_rows(db, annotated, account=account, source="screenshot")

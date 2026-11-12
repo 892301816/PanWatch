@@ -23,7 +23,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from src.modules.portfolio import trade_ingest
+from src.modules.portfolio import trade_ingest, wealth
 from src.platform.persistence.models import Account, Position, Stock
 
 logger = logging.getLogger(__name__)
@@ -356,19 +356,71 @@ def _annotate_positions(db: Session, rows: list[dict], account: Account) -> list
         )
         row["current_quantity"] = int(position.quantity or 0) if position is not None else None
         row["current_cost"] = round(float(position.cost_price or 0), 4) if position is not None else None
+        row["delta"] = 0
+        row["trade_action"] = ""
+        row["trade_quantity"] = 0
+        row["trade_price"] = None
+        row["price_source"] = ""
 
-        if row.get("closing") or int(row.get("quantity") or 0) == 0:
-            # 截图里持仓为 0：已清仓；PanWatch 有旧持仓就标记为清仓，提交时删除
-            row["status"] = "close" if position is not None else "unchanged"
-            row["message"] = "截图显示已清仓" if position is not None else "本来就无持仓"
+        target_qty = int(row.get("quantity") or 0)
+        target_cost = float(row.get("cost_price") or 0)
+        last_price = float(row.get("last_price") or 0)
+
+        if row.get("closing") or target_qty == 0:
+            # 截图里持仓为 0：已清仓；PanWatch 有旧持仓就标记为清仓
+            if position is not None:
+                old_qty = int(position.quantity or 0)
+                price = last_price or float(position.cost_price or 0)
+                row["status"] = "close"
+                row["delta"] = -old_qty
+                row["trade_action"] = "sell"
+                row["trade_quantity"] = old_qty
+                row["trade_price"] = round(price, 4) if price > 0 else None
+                row["price_source"] = "last_price" if last_price > 0 else "cost"
+                row["message"] = "截图显示已清仓"
+            else:
+                row["status"] = "unchanged"
+                row["message"] = "本来就无持仓"
             continue
 
         if position is None:
             row["status"] = "create"
+            row["delta"] = target_qty
+            row["message"] = "新建持仓（不补历史交易）"
             continue
-        same_qty = int(position.quantity or 0) == int(row["quantity"])
-        same_cost = abs(float(position.cost_price or 0) - float(row["cost_price"])) <= 0.0005
-        row["status"] = "unchanged" if same_qty and same_cost else "update"
+
+        old_qty = int(position.quantity or 0)
+        old_cost = float(position.cost_price or 0)
+        delta = target_qty - old_qty
+        row["delta"] = delta
+        if delta > 0:
+            # 加仓价用「截图成本 - 原成本」反推：Q2*C2 = Q1*C1 + ΔQ*P
+            implied = (target_qty * target_cost - old_qty * old_cost) / delta
+            if 0.001 <= implied <= 100000:
+                price, source = round(implied, 4), "implied_cost"
+            elif last_price > 0:
+                price, source = round(last_price, 4), "last_price"
+            else:
+                price, source = round(target_cost, 4), "cost"
+            row["status"] = "add"
+            row["trade_action"] = "buy"
+            row["trade_quantity"] = delta
+            row["trade_price"] = price
+            row["price_source"] = source
+            row["message"] = f"加仓 {delta} 股"
+        elif delta < 0:
+            # 减仓价截图里只有现价，按现价估算；费用未计
+            price = last_price or old_cost
+            row["status"] = "reduce"
+            row["trade_action"] = "sell"
+            row["trade_quantity"] = -delta
+            row["trade_price"] = round(price, 4) if price > 0 else None
+            row["price_source"] = "last_price" if last_price > 0 else "cost"
+            row["message"] = f"减仓 {-delta} 股"
+        else:
+            same_cost = abs(old_cost - target_cost) <= 0.0005
+            row["status"] = "unchanged" if same_cost else "update"
+            row["message"] = "" if same_cost else "仅成本变化，不生成交易"
     return rows
 
 
@@ -439,15 +491,30 @@ def apply_positions(
     rows: list[dict],
     remove_missing: bool = False,
     available_funds: float | None = None,
+    record_trades: bool = False,
 ) -> dict:
     """把持仓快照写入持仓表。
 
-    数量为 0 的行表示已清仓，会删除对应持仓；可选同步截图里的可用资金。
-    不写交易流水。
+    - 数量为 0 的行表示已清仓；
+    - ``record_trades=True`` 时，按「截图数量 - 当前持仓」推断加仓/减仓/清仓，
+      用 ``wealth.execute_trade`` 生成交易流水（source=screenshot）：
+      加仓价按成本差反推，减仓/清仓价按截图现价估算，费用未计；
+    - 可同步截图里的可用资金；不写历史建仓交易。
     """
     created = updated = unchanged = closed = failed = 0
+    buy_trades = sell_trades = 0
     seen: set[str] = set()
     results: list[dict] = []
+
+    def _zero_fee(qty: int, price: float) -> dict:
+        return {
+            "gross": round(qty * price, 2),
+            "commission": 0.0,
+            "stamp_duty": 0.0,
+            "transfer_fee": 0.0,
+            "total_fee": 0.0,
+        }
+
     for index, row in enumerate(rows or []):
         symbol = _normalize_symbol(row.get("symbol"))
         name = str(row.get("name") or "").strip()
@@ -458,7 +525,7 @@ def apply_positions(
             results.append({"row": index + 1, "status": "error", "message": "缺少持仓数量"})
             continue
 
-        # 截图里数量为 0 且有名称/代码：已清仓，删除 PanWatch 旧持仓
+        # 截图里数量为 0：已清仓
         if quantity == 0:
             try:
                 stock, _note = trade_ingest.resolve_stock(db, symbol, name, create=False)
@@ -474,18 +541,39 @@ def apply_positions(
                     .filter(Position.account_id == account.id, Position.stock_id == stock.id)
                     .first()
                 )
-                if position is not None:
+                if position is None:
+                    unchanged += 1
+                    results.append(
+                        {"row": index + 1, "status": "unchanged", "symbol": stock.symbol,
+                         "name": stock.name, "message": "本来就无持仓"}
+                    )
+                    continue
+                old_qty = int(position.quantity or 0)
+                trade_price = _to_float(row.get("trade_price"))
+                if record_trades and old_qty > 0 and trade_price and trade_price > 0:
+                    wealth.execute_trade(
+                        db,
+                        account=account,
+                        stock=stock,
+                        action="sell",
+                        quantity=old_qty,
+                        price=trade_price,
+                        trade_date=row.get("trade_date") or date_cls.today().isoformat(),
+                        note=f"[截图] 清仓 {old_qty} 股 @ {trade_price}（现价估算，费用未计）",
+                        source="screenshot",
+                        fee_override=_zero_fee(old_qty, trade_price),
+                        deduct_cash=True,
+                    )
+                    db.commit()
+                    sell_trades += 1
+                    message = "按截图清仓并生成卖出流水（费用未计）"
+                else:
                     db.delete(position)
                     db.commit()
-                    closed += 1
-                    status = "closed"
                     message = "截图显示已清仓，已删除原持仓"
-                else:
-                    unchanged += 1
-                    status = "unchanged"
-                    message = "本来就无持仓"
+                closed += 1
                 results.append(
-                    {"row": index + 1, "status": status, "symbol": stock.symbol,
+                    {"row": index + 1, "status": "closed", "symbol": stock.symbol,
                      "name": stock.name, "message": message}
                 )
             except Exception as exc:  # noqa: BLE001
@@ -526,25 +614,77 @@ def apply_positions(
                     trading_style="swing",
                 )
                 db.add(position)
+                db.commit()
                 created += 1
-                status = "created"
-            else:
-                same = (
-                    int(position.quantity or 0) == int(quantity)
-                    and abs(float(position.cost_price or 0) - float(cost)) <= 0.0005
+                results.append(
+                    {"row": index + 1, "status": "created", "symbol": stock.symbol,
+                     "name": stock.name, "message": "新建持仓（不补历史交易）"}
                 )
-                if same:
-                    unchanged += 1
-                    status = "unchanged"
-                else:
-                    position.quantity = int(quantity)
+                continue
+
+            old_qty = int(position.quantity or 0)
+            old_cost = float(position.cost_price or 0)
+            delta = int(quantity) - old_qty
+            trade_price = _to_float(row.get("trade_price"))
+            can_trade = bool(record_trades and delta != 0 and trade_price and trade_price > 0)
+
+            if can_trade:
+                action = "buy" if delta > 0 else "sell"
+                wealth.execute_trade(
+                    db,
+                    account=account,
+                    stock=stock,
+                    action=action,
+                    quantity=abs(delta),
+                    price=float(trade_price),
+                    trade_date=row.get("trade_date") or date_cls.today().isoformat(),
+                    note=(
+                        f"[截图] 持仓 {old_qty}→{int(quantity)}，"
+                        f"{'加仓' if delta > 0 else '减仓'} {abs(delta)} 股 @ {trade_price}"
+                        f"（{'成本差反推' if delta > 0 else '现价估算'}，费用未计）"
+                    ),
+                    source="screenshot",
+                    fee_override=_zero_fee(abs(delta), float(trade_price)),
+                    deduct_cash=True,
+                )
+                # 交易后按截图成本对齐（减仓时平均成本可能被券商调整）
+                position = (
+                    db.query(Position)
+                    .filter(Position.account_id == account.id, Position.stock_id == stock.id)
+                    .first()
+                )
+                if position is not None and int(quantity) > 0:
                     position.cost_price = round(float(cost), 4)
                     position.invested_amount = round(int(quantity) * float(cost), 2)
-                    updated += 1
-                    status = "updated"
+                db.commit()
+                if action == "buy":
+                    buy_trades += 1
+                else:
+                    sell_trades += 1
+                updated += 1
+                results.append(
+                    {"row": index + 1, "status": "traded", "symbol": stock.symbol,
+                     "name": stock.name,
+                     "message": f"{'加仓' if action == 'buy' else '减仓'} {abs(delta)} 股，已生成交易流水（费用未计）"}
+                )
+                continue
+
+            same = old_qty == int(quantity) and abs(old_cost - float(cost)) <= 0.0005
+            if same:
+                unchanged += 1
+                status = "unchanged"
+                message = ""
+            else:
+                position.quantity = int(quantity)
+                position.cost_price = round(float(cost), 4)
+                position.invested_amount = round(int(quantity) * float(cost), 2)
+                updated += 1
+                status = "updated"
+                message = "仅更新持仓（未生成交易）" if delta != 0 else "仅成本变化"
             db.commit()
             results.append(
-                {"row": index + 1, "status": status, "symbol": symbol, "name": stock.name}
+                {"row": index + 1, "status": status, "symbol": symbol,
+                 "name": stock.name, "message": message}
             )
         except Exception as exc:  # noqa: BLE001
             db.rollback()
@@ -554,11 +694,7 @@ def apply_positions(
     removed = 0
     if remove_missing and seen:
         try:
-            stale = (
-                db.query(Position)
-                .filter(Position.account_id == account.id)
-                .all()
-            )
+            stale = db.query(Position).filter(Position.account_id == account.id).all()
             for position in stale:
                 stock = db.query(Stock).filter(Stock.id == position.stock_id).first()
                 if stock is not None and stock.symbol not in seen:
@@ -584,6 +720,8 @@ def apply_positions(
         "updated": updated,
         "unchanged": unchanged,
         "closed": closed,
+        "buy_trades": buy_trades,
+        "sell_trades": sell_trades,
         "failed": failed,
         "removed": removed,
         "cash_updated": cash_updated,

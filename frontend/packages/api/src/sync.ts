@@ -117,6 +117,12 @@ export interface ImageRow {
   current_quantity?: number | null
   current_cost?: number | null
   closing?: boolean
+  /** 持仓变动（截图 - 当前）与推算交易 */
+  delta?: number
+  trade_action?: 'buy' | 'sell' | ''
+  trade_quantity?: number
+  trade_price?: number | null
+  price_source?: 'implied_cost' | 'last_price' | 'cost' | '' | string
   /** 成交模式 */
   action?: 'buy' | 'sell' | null
   price?: number
@@ -155,6 +161,8 @@ export interface ImageCommitResult {
   updated?: number
   unchanged?: number
   closed?: number
+  buy_trades?: number
+  sell_trades?: number
   duplicate?: number
   failed?: number
   removed?: number
@@ -240,6 +248,7 @@ export const syncApi = {
     account_id?: number | null
     remove_missing?: boolean
     available_funds?: number | null
+    record_trades?: boolean
   }) =>
     fetchAPI<ImageCommitResult>('/portfolio/trades/import/image/commit', {
       method: 'POST',

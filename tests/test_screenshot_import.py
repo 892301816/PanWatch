@@ -217,7 +217,7 @@ def test_image_preview_positions(book, monkeypatch):
         )
     )
     assert result["ok"] is True
-    assert result["summary"]["update"] == 1
+    assert result["summary"]["add"] == 1
     assert result["summary"].get("close", 0) == 0  # 截图测试账户本来没有 002943 持仓
     assert result["account_summary"]["available"] == 8638.07
     assert "中信建投证券" in result["broker_warning"]
@@ -329,3 +329,112 @@ def test_image_routes_mounted():
     paths = set(app.openapi().get("paths", {}).keys())
     assert "/api/portfolio/trades/import/image/preview" in paths
     assert "/api/portfolio/trades/import/image/commit" in paths
+
+
+def test_annotate_delta_add_uses_implied_cost(book):
+    db, account, _stock = book  # 600900 当前 100 @ 28.0
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 200, "cost_price": 30.0,
+          "last_price": 29.6}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    row = annotated[0]
+    assert row["status"] == "add"
+    assert row["delta"] == 100
+    assert row["trade_action"] == "buy"
+    assert row["trade_quantity"] == 100
+    # (200*30 - 100*28) / 100 = 32
+    assert row["trade_price"] == 32.0
+    assert row["price_source"] == "implied_cost"
+
+
+def test_annotate_delta_reduce_uses_last_price(book):
+    db, account, _stock = book
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 50, "cost_price": 28.0,
+          "last_price": 30.0}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    row = annotated[0]
+    assert row["status"] == "reduce"
+    assert row["delta"] == -50
+    assert row["trade_action"] == "sell"
+    assert row["trade_quantity"] == 50
+    assert row["trade_price"] == 30.0
+    assert row["price_source"] == "last_price"
+
+
+def test_apply_positions_record_trades_buy(book):
+    db, account, _stock = book
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 200, "cost_price": 30.0,
+          "last_price": 29.6}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    result = shot.apply_positions(db, account=account, rows=annotated, record_trades=True)
+    assert result["buy_trades"] == 1
+    assert result["updated"] == 1
+    position = db.query(Position).filter(Position.account_id == account.id).first()
+    assert position.quantity == 200
+    assert abs(position.cost_price - 30.0) <= 0.0005
+    trade = db.query(TradeRecord).first()
+    assert trade is not None
+    assert trade.source == "screenshot"
+    assert trade.action == "buy" and trade.quantity == 100 and trade.price == 32.0
+
+
+def test_apply_positions_record_trades_sell(book):
+    db, account, _stock = book
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 50, "cost_price": 28.0,
+          "last_price": 30.0}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    result = shot.apply_positions(db, account=account, rows=annotated, record_trades=True)
+    assert result["sell_trades"] == 1
+    position = db.query(Position).filter(Position.account_id == account.id).first()
+    assert position.quantity == 50
+    assert abs(position.cost_price - 28.0) <= 0.0005
+    trade = db.query(TradeRecord).first()
+    assert trade.action == "sell" and trade.quantity == 50 and trade.price == 30.0
+    assert abs(trade.realized_pnl - 100.0) <= 0.01
+
+
+def test_apply_positions_record_trades_close(book):
+    db, account, _stock = book
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 0, "cost_price": 28.0,
+          "last_price": 30.0}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    result = shot.apply_positions(db, account=account, rows=annotated, record_trades=True)
+    assert result["closed"] == 1
+    assert result["sell_trades"] == 1
+    assert db.query(Position).filter(Position.account_id == account.id).count() == 0
+    trade = db.query(TradeRecord).first()
+    assert trade.action == "sell" and trade.quantity == 100 and trade.price == 30.0
+
+
+def test_apply_positions_without_record_trades_creates_no_trade(book):
+    db, account, _stock = book
+    rows = [{"symbol": "600900", "name": "长江电力", "quantity": 50, "cost_price": 28.0}]
+    result = shot.apply_positions(db, account=account, rows=rows, record_trades=False)
+    assert result["updated"] == 1
+    assert db.query(TradeRecord).count() == 0
+    position = db.query(Position).filter(Position.account_id == account.id).first()
+    assert position.quantity == 50
+
+
+def test_apply_positions_record_trades_and_cash(book):
+    db, account, _stock = book
+    rows = shot.normalize_holdings(
+        [{"symbol": "600900", "name": "长江电力", "quantity": 50, "cost_price": 28.0,
+          "last_price": 30.0}]
+    )
+    annotated = shot._annotate_positions(db, rows, account)
+    result = shot.apply_positions(
+        db, account=account, rows=annotated, record_trades=True, available_funds=12345.67
+    )
+    assert result["cash_updated"] is True
+    db.refresh(account)
+    assert account.available_funds == 12345.67
