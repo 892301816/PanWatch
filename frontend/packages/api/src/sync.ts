@@ -93,6 +93,66 @@ export interface ImportCommit {
   results: Array<{ line: number; status: string; message: string; trade_id?: number }>
 }
 
+export interface ImageRow {
+  symbol: string
+  name: string
+  /** 持仓模式 */
+  quantity?: number
+  available?: number | null
+  cost_price?: number
+  last_price?: number | null
+  market_value?: number | null
+  current_quantity?: number | null
+  current_cost?: number | null
+  /** 成交模式 */
+  action?: 'buy' | 'sell' | null
+  price?: number
+  trade_date?: string
+  time?: string
+  fees?: SyncFees
+  external_id?: string
+  amount?: number | null
+  /** 预览状态 */
+  ok?: boolean
+  reason?: string
+  status?: string
+  message?: string
+  line?: number
+}
+
+export interface ImageExtract {
+  ok: boolean
+  mode: 'positions' | 'trades'
+  rows: ImageRow[]
+  summary: Record<string, number>
+  hint?: string
+  warnings?: string[]
+  model?: string
+  account?: { id: number; name: string }
+}
+
+export interface ImageCommitResult {
+  ok: boolean
+  mode: string
+  account?: { id: number; name: string }
+  total: number
+  created: number
+  updated?: number
+  unchanged?: number
+  duplicate?: number
+  failed?: number
+  removed?: number
+  results?: Array<{
+    row?: number
+    line?: number
+    status: string
+    message?: string
+    symbol?: string
+    name?: string
+    trade_id?: number
+  }>
+}
+
 export interface IngestPayload {
   text?: string
   account_id?: number | null
@@ -142,5 +202,30 @@ export const syncApi = {
       method: 'POST',
       body: JSON.stringify(payload),
       timeoutMs: 60000,
+    }),
+
+  /** 截图识别（视觉模型），返回可复核的行 */
+  imagePreview: (payload: {
+    image_base64: string
+    mode: 'positions' | 'trades'
+    account_id?: number | null
+    model_id?: number | null
+  }) =>
+    fetchAPI<ImageExtract>('/portfolio/trades/import/image/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 180000,
+    }),
+
+  imageCommit: (payload: {
+    mode: 'positions' | 'trades'
+    rows: ImageRow[]
+    account_id?: number | null
+    remove_missing?: boolean
+  }) =>
+    fetchAPI<ImageCommitResult>('/portfolio/trades/import/image/commit', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 120000,
     }),
 }

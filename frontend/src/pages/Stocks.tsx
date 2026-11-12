@@ -2687,7 +2687,7 @@ export default function StocksPage() {
               把券商成交短信/推送或同花顺/券商导出的交割单同步进账本；写入的是交易流水，不会下单。
             </DialogDescription>
           </DialogHeader>
-          <SyncSection embedded />
+          <SyncSection embedded onSynced={() => { void loadPortfolio(); setWealthRefreshKey((k) => k + 1) }} />
         </DialogContent>
       </Dialog>
       {/* Kline Dialog */}

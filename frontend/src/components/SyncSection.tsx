@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Copy,
   FileSpreadsheet,
+  ImagePlus,
   KeyRound,
   Loader2,
   RefreshCw,
@@ -14,6 +15,8 @@ import {
   fetchAPI,
   patsApi,
   syncApi,
+  type ImageCommitResult,
+  type ImageExtract,
   type ImportCommit,
   type ImportPreview,
   type SyncParsed,
@@ -62,8 +65,58 @@ const STATUS_LABEL: Record<string, string> = {
   invalid: '跳过',
 }
 
-/** 交易同步面板：令牌、文本试解析、交割单导入（理财页弹窗内嵌，也可单独成卡片）。 */
-export default function SyncSection({ embedded = false }: { embedded?: boolean } = {}) {
+const POSITION_STATUS_LABEL: Record<string, string> = {
+  create: '新建持仓',
+  new_stock: '新建自选',
+  update: '更新持仓',
+  unchanged: '无变化',
+}
+
+const POSITION_STATUS_CHIP: Record<string, string> = {
+  create: 'bg-stock-up/15 text-stock-up',
+  new_stock: 'bg-sky-500/15 text-sky-600',
+  update: 'bg-amber-500/15 text-amber-600',
+  unchanged: 'bg-accent/40 text-muted-foreground',
+}
+
+/** 把截图压到最长边 1600、JPEG 0.85，降低上传与视觉模型 token。 */
+async function imageToBase64(file: File, maxSide = 1600): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+  const fallback = dataUrl.includes(',') ? dataUrl.split(',')[1] || '' : ''
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('图片无法解码'))
+      img.src = dataUrl
+    })
+    const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.width * scale))
+    canvas.height = Math.max(1, Math.round(image.height * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return fallback
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+    const jpeg = canvas.toDataURL('image/jpeg', 0.85)
+    return jpeg.includes(',') ? jpeg.split(',')[1] || fallback : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** 交易同步面板：令牌、文本试解析、交割单/截图导入（理财页弹窗内嵌，也可单独成卡片）。 */
+export default function SyncSection({
+  embedded = false,
+  onSynced,
+}: {
+  embedded?: boolean
+  onSynced?: () => void
+} = {}) {
   const { toast } = useToast()
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [accountId, setAccountId] = useState<number | null>(null)
@@ -82,6 +135,15 @@ export default function SyncSection({ embedded = false }: { embedded?: boolean }
   const [commitResult, setCommitResult] = useState<ImportCommit | null>(null)
   const [importBusy, setImportBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // 截图导入：持仓截图 or 成交截图
+  const [shotMode, setShotMode] = useState<'positions' | 'trades'>('positions')
+  const [shot, setShot] = useState<ImageExtract | null>(null)
+  const [shotResult, setShotResult] = useState<ImageCommitResult | null>(null)
+  const [shotBusy, setShotBusy] = useState(false)
+  const [shotName, setShotName] = useState('')
+  const [removeMissing, setRemoveMissing] = useState(false)
+  const shotRef = useRef<HTMLInputElement>(null)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -147,6 +209,7 @@ export default function SyncSection({ embedded = false }: { embedded?: boolean }
         toast('已记账', 'success')
         setText('')
         setParsed(null)
+        onSynced?.()
       }
     } catch (e) {
       toast(e instanceof Error ? e.message : '请求失败', 'error')
@@ -190,11 +253,73 @@ export default function SyncSection({ embedded = false }: { embedded?: boolean }
       setCommitResult(result)
       toast(`导入完成：新增 ${result.created}，重复 ${result.duplicate}，失败 ${result.failed}`, 'success')
       setPreview(null)
+      onSynced?.()
     } catch (e) {
       toast(e instanceof Error ? e.message : '导入失败', 'error')
     } finally {
       setImportBusy(false)
     }
+  }
+
+  const runImagePreview = async (file: File) => {
+    setShot(null)
+    setShotResult(null)
+    setShotName(file.name || '截图')
+    setShotBusy(true)
+    try {
+      const base64 = await imageToBase64(file)
+      if (!base64) {
+        toast('图片读取失败，请换一张截图', 'error')
+        return
+      }
+      const result = await syncApi.imagePreview({
+        image_base64: base64,
+        mode: shotMode,
+        account_id: accountId,
+      })
+      setShot(result)
+      if (!result.ok) {
+        toast(result.hint || result.warnings?.[0] || '没识别到数据行', 'error')
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '图片识别失败', 'error')
+    } finally {
+      setShotBusy(false)
+    }
+  }
+
+  const commitImage = async () => {
+    if (!shot || shot.rows.length === 0) return
+    setShotBusy(true)
+    try {
+      const result = await syncApi.imageCommit({
+        mode: shot.mode,
+        rows: shot.rows,
+        account_id: accountId,
+        remove_missing: shot.mode === 'positions' ? removeMissing : false,
+      })
+      setShotResult(result)
+      const detail =
+        shot.mode === 'positions'
+          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，无变化 ${result.unchanged ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}`
+          : `新增 ${result.created}，重复 ${result.duplicate ?? 0}，失败 ${result.failed ?? 0}`
+      toast(`同步完成：${detail}`, 'success')
+      setShot(null)
+      onSynced?.()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '同步失败', 'error')
+    } finally {
+      setShotBusy(false)
+    }
+  }
+
+  const onPasteImage = (event: React.ClipboardEvent) => {
+    const item = Array.from(event.clipboardData.items).find((entry) => entry.type.startsWith('image/'))
+    if (!item) return
+    const file = item.getAsFile()
+    if (!file) return
+    event.preventDefault()
+    void runImagePreview(file)
   }
 
   const curlToken = token || 'pwmcp_你的同步令牌'
@@ -208,6 +333,7 @@ export default function SyncSection({ embedded = false }: { embedded?: boolean }
     <Wrapper
       id={embedded ? undefined : 'sec-sync'}
       className={embedded ? 'space-y-4' : 'card p-4 md:p-6 lg:col-span-12'}
+      onPaste={onPasteImage}
     >
       {!embedded && (
         <div className="mb-4 flex items-start gap-2">
@@ -460,6 +586,215 @@ export default function SyncSection({ embedded = false }: { embedded?: boolean }
                 {commitResult.results.filter((r) => r.status === 'error').slice(0, 2).map((r) => `第${r.line}行：${r.message}`).join('；')}
               </span>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* 截图导入：持仓 / 成交 */}
+      <div className="mt-4 rounded-lg border border-border/60 p-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <ImagePlus className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[12px] font-medium">截图导入</span>
+          <span className="text-[10px] text-muted-foreground">AI 识别，预览后同步</span>
+          <div className="ml-auto flex overflow-hidden rounded border border-border text-[10px]">
+            <button
+              type="button"
+              className={`px-2 py-1 ${shotMode === 'positions' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+              onClick={() => {
+                setShotMode('positions')
+                setShot(null)
+                setShotResult(null)
+              }}
+            >
+              持仓截图
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 ${shotMode === 'trades' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+              onClick={() => {
+                setShotMode('trades')
+                setShot(null)
+                setShotResult(null)
+              }}
+            >
+              成交截图
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <input
+            ref={shotRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void runImagePreview(file)
+              e.target.value = ''
+            }}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            disabled={shotBusy}
+            onClick={() => shotRef.current?.click()}
+          >
+            <ImagePlus className="h-3.5 w-3.5" /> 选择截图
+          </Button>
+          <span className="text-[10px] text-muted-foreground">也可 Ctrl+V 粘贴；手机可从相册/相机选</span>
+          {shotName && <span className="text-[10px] text-muted-foreground">{shotName}</span>}
+          {shotBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </div>
+        <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+          截图会发送给你配置的 AI 视觉模型；持仓截图只同步数量与成本，不写交易流水、不动可用资金。
+        </div>
+
+        {shot?.warnings?.length ? (
+          <div className="mt-1 flex items-start gap-1 text-[10px] text-amber-600">
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+            {shot.warnings.join('；')}
+          </div>
+        ) : null}
+
+        {shot && shot.rows.length > 0 && (
+          <div className="mt-2">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="rounded bg-accent/40 px-1.5 py-0.5">识别 {shot.rows.length} 行</span>
+              {shot.mode === 'positions' ? (
+                <>
+                  <span className="rounded bg-stock-up/15 px-1.5 py-0.5 text-stock-up">
+                    新建 {shot.summary.create ?? 0}
+                  </span>
+                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-600">
+                    更新 {shot.summary.update ?? 0}
+                  </span>
+                  <span className="rounded bg-accent/40 px-1.5 py-0.5 text-muted-foreground">
+                    无变化 {shot.summary.unchanged ?? 0}
+                  </span>
+                  <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-600">
+                    新建自选 {shot.summary.new_stock ?? 0}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="rounded bg-stock-up/15 px-1.5 py-0.5 text-stock-up">
+                    可导入 {shot.summary.ok ?? 0}
+                  </span>
+                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-600">
+                    重复 {shot.summary.duplicate ?? 0}
+                  </span>
+                  <span className="rounded bg-stock-down/15 px-1.5 py-0.5 text-stock-down">
+                    跳过 {shot.summary.invalid ?? 0}
+                  </span>
+                </>
+              )}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {shot.mode === 'positions' && (
+                  <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={removeMissing}
+                      onChange={(e) => setRemoveMissing(e.target.checked)}
+                    />
+                    删除截图里没有的持仓
+                  </label>
+                )}
+                <Button
+                  size="sm"
+                  className="h-8"
+                  disabled={shotBusy || shot.rows.length === 0}
+                  onClick={() => void commitImage()}
+                >
+                  确认同步
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-1.5 max-h-64 overflow-auto rounded border border-border/50">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-muted/60 text-[10px] text-muted-foreground">
+                  {shot.mode === 'positions' ? (
+                    <tr>
+                      <th className="px-2 py-1 text-left font-normal">代码</th>
+                      <th className="px-2 py-1 text-left font-normal">名称</th>
+                      <th className="px-2 py-1 text-right font-normal">持仓/可用</th>
+                      <th className="px-2 py-1 text-right font-normal">成本</th>
+                      <th className="px-2 py-1 text-right font-normal">现价</th>
+                      <th className="px-2 py-1 text-right font-normal">当前持仓</th>
+                      <th className="px-2 py-1 text-left font-normal">状态</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="px-2 py-1 text-left font-normal">日期</th>
+                      <th className="px-2 py-1 text-left font-normal">代码</th>
+                      <th className="px-2 py-1 text-left font-normal">名称</th>
+                      <th className="px-2 py-1 text-left font-normal">方向</th>
+                      <th className="px-2 py-1 text-right font-normal">数量</th>
+                      <th className="px-2 py-1 text-right font-normal">价格</th>
+                      <th className="px-2 py-1 text-right font-normal">费用</th>
+                      <th className="px-2 py-1 text-left font-normal">状态</th>
+                    </tr>
+                  )}
+                </thead>
+                <tbody>
+                  {shot.rows.map((row, index) =>
+                    shot.mode === 'positions' ? (
+                      <tr key={`p-${row.symbol}-${index}`} className="border-t border-border/40">
+                        <td className="px-2 py-0.5 font-mono">{row.symbol}</td>
+                        <td className="px-2 py-0.5">{row.name}</td>
+                        <td className="px-2 py-0.5 text-right">
+                          {row.quantity}
+                          {row.available != null ? `/${row.available}` : ''}
+                        </td>
+                        <td className="px-2 py-0.5 text-right">{row.cost_price}</td>
+                        <td className="px-2 py-0.5 text-right">{row.last_price ?? '--'}</td>
+                        <td className="px-2 py-0.5 text-right text-muted-foreground">
+                          {row.current_quantity != null ? `${row.current_quantity} @ ${row.current_cost}` : '--'}
+                        </td>
+                        <td className="px-2 py-0.5">
+                          <span
+                            className={`rounded px-1 py-0.5 text-[10px] ${
+                              POSITION_STATUS_CHIP[row.status || ''] || 'bg-accent/40 text-muted-foreground'
+                            }`}
+                          >
+                            {POSITION_STATUS_LABEL[row.status || ''] || row.status || '--'}
+                          </span>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={`t-${row.symbol}-${index}`} className="border-t border-border/40">
+                        <td className="px-2 py-0.5">{row.trade_date}</td>
+                        <td className="px-2 py-0.5 font-mono">{row.symbol}</td>
+                        <td className="px-2 py-0.5">{row.name}</td>
+                        <td className="px-2 py-0.5">
+                          {row.action === 'buy' ? '买入' : row.action === 'sell' ? '卖出' : '--'}
+                        </td>
+                        <td className="px-2 py-0.5 text-right">{row.quantity}</td>
+                        <td className="px-2 py-0.5 text-right">{row.price}</td>
+                        <td className="px-2 py-0.5 text-right">{row.fees?.total ?? 0}</td>
+                        <td className="px-2 py-0.5">
+                          <span className={`rounded px-1 py-0.5 text-[10px] ${statusChip(row.status || '')}`}>
+                            {STATUS_LABEL[row.status || ''] || row.status || '--'}
+                          </span>
+                          {row.message && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">{row.message}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {shotResult && (
+          <div className="mt-2 rounded border border-border/60 bg-muted/20 p-2 text-[11px]">
+            {shotResult.mode === 'positions'
+              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，无变化 ${shotResult.unchanged ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
+              : `成交同步完成：新增 ${shotResult.created}，重复 ${shotResult.duplicate ?? 0}，失败 ${shotResult.failed ?? 0}。`}
           </div>
         )}
       </div>

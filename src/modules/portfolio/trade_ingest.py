@@ -23,6 +23,7 @@ SOURCE_LABELS = {
     "sms": "短信",
     "notification": "通知",
     "import": "交割单",
+    "screenshot": "截图",
     "assistant": "助手",
     "manual": "手工",
 }

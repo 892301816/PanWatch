@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.modules.administration.pat_auth import authenticate_sync
-from src.modules.portfolio import trade_import, trade_ingest
+from src.modules.portfolio import screenshot_import, trade_import, trade_ingest
 from src.modules.portfolio.trade_text import parse_trade_text
 from src.platform.persistence.database import get_db
 
@@ -56,6 +56,24 @@ class ImportIn(BaseModel):
     account_id: int | None = None
     account_name: str = ""
     lines: list[int] | None = Field(None, description="只提交这些行号（预览里的 line）")
+
+
+class ImagePreviewIn(BaseModel):
+    """截图识别：持仓截图或成交截图。"""
+
+    image_base64: str = Field("", max_length=24_000_000)
+    mode: str = Field("positions", description="positions / trades")
+    account_id: int | None = None
+    account_name: str = ""
+    model_id: int | None = None
+
+
+class ImageCommitIn(BaseModel):
+    mode: str = Field("positions", description="positions / trades")
+    rows: list[dict] = Field(default_factory=list)
+    account_id: int | None = None
+    account_name: str = ""
+    remove_missing: bool = Field(False, description="持仓模式：删除截图里没有的持仓（默认不删）")
 
 
 def _decode_import(payload: ImportIn) -> bytes | str:
@@ -175,3 +193,56 @@ def import_commit(payload: ImportIn, db: Session = Depends(get_db), _auth=Depend
         annotated = [row for row in annotated if int(row.get("line") or 0) in wanted]
     result = trade_ingest.commit_rows(db, annotated, account=account, source="import")
     return {"ok": True, "account": {"id": account.id, "name": account.name}, **result}
+
+
+@router.post("/portfolio/trades/import/image/preview")
+async def image_preview(
+    payload: ImagePreviewIn,
+    db: Session = Depends(get_db),
+    _auth=Depends(authenticate_sync),
+):
+    """截图 → 视觉模型识别 → 预览（不写库）。"""
+    account = _resolve_or_400(db, payload.account_id, payload.account_name)
+    raw = (payload.image_base64 or "").strip()
+    if raw.startswith("data:"):
+        raw = raw.split(",", 1)[-1]
+    if not raw:
+        raise HTTPException(400, "没有收到图片内容")
+    try:
+        image_bytes = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "图片 base64 内容无法解码")
+    try:
+        return await screenshot_import.extract_from_image(
+            image_bytes,
+            mode=payload.mode,
+            db=db,
+            account=account,
+            model_id=payload.model_id,
+        )
+    except screenshot_import.ScreenshotError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("截图识别失败")
+        raise HTTPException(500, f"截图识别失败: {exc}")
+
+
+@router.post("/portfolio/trades/import/image/commit")
+def image_commit(
+    payload: ImageCommitIn,
+    db: Session = Depends(get_db),
+    _auth=Depends(authenticate_sync),
+):
+    """确认截图识别结果：持仓快照或成交流水。"""
+    account = _resolve_or_400(db, payload.account_id, payload.account_name)
+    mode = payload.mode if payload.mode in screenshot_import.MODES else "positions"
+    rows = [row for row in (payload.rows or []) if isinstance(row, dict)][:500]
+    if not rows:
+        raise HTTPException(400, "没有可提交的行")
+    if mode == "positions":
+        return screenshot_import.apply_positions(
+            db, account=account, rows=rows, remove_missing=payload.remove_missing
+        )
+    annotated = trade_ingest.annotate_rows(db, rows, account=account)
+    result = trade_ingest.commit_rows(db, annotated, account=account, source="screenshot")
+    return {"ok": True, "mode": "trades", "account": {"id": account.id, "name": account.name}, **result}
