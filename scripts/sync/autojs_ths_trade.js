@@ -17,8 +17,8 @@
 
 const CONFIG = {
   api: "https://你的域名/api/portfolio/trades/ingest", // 末尾不要带 /
-  token: "pwmcp_在设置-交易同步里创建", // scope: trade:write
-  accountId: 1, // 设置 → 交易同步 里的账户 id
+  token: "pwmcp_在理财-交易同步里创建", // scope: trade:write
+  accountId: 1, // 理财 → 交易同步 里的账户 id
   market: "CN",
 };
 

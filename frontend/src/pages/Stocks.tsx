@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import WealthActionMenu from '@/components/WealthActionMenu'
-import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink } from 'lucide-react'
+import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, Smartphone } from 'lucide-react'
 import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel, type StrategyGate } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
@@ -25,6 +25,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectL
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import TradeGate, { isGateBlocked } from '@panwatch/biz-ui/components/TradeGate'
+import SyncSection from '@/components/SyncSection'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import WealthPanel from '@/components/WealthPanel'
 import WealthSummary from '@/components/WealthSummary'
@@ -424,6 +425,8 @@ export default function StocksPage() {
   }
   const [accountFilter, setAccountFilter] = useState<number | null>(null)
   const [recordPickerOpen, setRecordPickerOpen] = useState(false)
+  // 交易同步（短信/通知/交割单）：放在理财页，避免去设置里找
+  const [syncOpen, setSyncOpen] = useState(false)
   const [privateMode, setPrivateMode] = useLocalStorage('panwatch_wealth_private', false)
   const [workspacePanel, setWorkspacePanel] = useState<'analysis' | 'records' | 'accounts' | null>(null)
   const [panelAccountId, setPanelAccountId] = useState<number | null>(null)
@@ -1824,8 +1827,12 @@ export default function StocksPage() {
       <header className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div><h1 className="text-xl md:text-2xl font-semibold tracking-tight">理财工作台</h1><p className="text-xs text-muted-foreground mt-1">持有有计划，记录有归属。</p></div>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => setSyncOpen(true)}>
+            <Smartphone className="mr-1 h-3.5 w-3.5" />交易同步
+          </Button>
           {viewTab !== 'watchlist' && <Button ref={panelFallbackRef} variant="ghost" onClick={() => openWorkspacePanel('records')}>记录</Button>}
           <WealthActionMenu label="工作台管理" triggerText="管理" actions={[
+            { label: '交易同步', onSelect: () => setSyncOpen(true) },
             { label: '管理账户', onSelect: () => openWorkspacePanel('accounts', viewTab === 'watchlist' ? null : accountFilter) },
             { label: '新增账户', onSelect: () => openAccountDialog() },
           ]} />
@@ -2664,7 +2671,23 @@ export default function StocksPage() {
       </Dialog>
       <Dialog open={recordPickerOpen} onOpenChange={setRecordPickerOpen}>
         <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>记一笔交易</DialogTitle><DialogDescription>选择账户与持仓，进入原有加仓或减仓表单。</DialogDescription></DialogHeader>
+          <Button variant="secondary" size="sm" className="mb-3 w-full justify-start" onClick={() => { setRecordPickerOpen(false); setSyncOpen(true) }}>
+            <Smartphone className="mr-1.5 h-3.5 w-3.5" /> 从成交短信 / 交割单同步
+          </Button>
           <div className="max-h-[55vh] overflow-y-auto space-y-3">{scopedAccounts.map(a => <div key={a.id}><h3 className="text-sm font-semibold mb-2">{a.name}</h3>{a.positions.map(p => <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-border"><span>{p.name} <span className="text-xs text-muted-foreground">{p.symbol}</span></span><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'buy') }}>加仓</Button><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'sell') }}>减仓</Button></div></div>)}<Button variant="ghost" onClick={() => { setRecordPickerOpen(false); openPositionDialog(a.id) }}>＋ 新增持仓</Button></div>)}{!portfolio?.accounts.length && <Button onClick={() => { setRecordPickerOpen(false); openAccountDialog() }}>先添加账户</Button>}</div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 交易同步：券商短信/推送、同花顺/券商交割单 */}
+      <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
+        <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>交易同步</DialogTitle>
+            <DialogDescription>
+              把券商成交短信/推送或同花顺/券商导出的交割单同步进账本；写入的是交易流水，不会下单。
+            </DialogDescription>
+          </DialogHeader>
+          <SyncSection embedded />
         </DialogContent>
       </Dialog>
       {/* Kline Dialog */}

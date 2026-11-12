@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ElementType } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -62,8 +62,8 @@ const STATUS_LABEL: Record<string, string> = {
   invalid: '跳过',
 }
 
-/** 设置页「交易同步」：令牌、文本试解析、交割单导入。 */
-export default function SyncSection() {
+/** 交易同步面板：令牌、文本试解析、交割单导入（理财页弹窗内嵌，也可单独成卡片）。 */
+export default function SyncSection({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast()
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [accountId, setAccountId] = useState<number | null>(null)
@@ -203,18 +203,24 @@ export default function SyncSection() {
   -H 'Content-Type: application/json' \\
   -d '{"text":"${SAMPLE_TEXT}","account_id":${accountId ?? 1}}'`
 
+  const Wrapper: ElementType = embedded ? 'div' : 'section'
   return (
-    <section id="sec-sync" className="card p-4 md:p-6 lg:col-span-12">
-      <div className="mb-4 flex items-start gap-2">
-        <Smartphone className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div>
-          <h3 className="text-[12px] font-medium text-foreground md:text-[13px]">交易同步</h3>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            把手机上的券商成交短信/推送或同花顺/券商导出的交割单同步进账本。写入的是「交易流水」，
-            会按同一套费率与成本逻辑更新持仓和可用资金；不会下单。
-          </p>
+    <Wrapper
+      id={embedded ? undefined : 'sec-sync'}
+      className={embedded ? 'space-y-4' : 'card p-4 md:p-6 lg:col-span-12'}
+    >
+      {!embedded && (
+        <div className="mb-4 flex items-start gap-2">
+          <Smartphone className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div>
+            <h3 className="text-[12px] font-medium text-foreground md:text-[13px]">交易同步</h3>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              把手机上的券商成交短信/推送或同花顺/券商导出的交割单同步进账本。写入的是「交易流水」，
+              会按同一套费率与成本逻辑更新持仓和可用资金；不会下单。
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 账户 */}
       <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px]">
@@ -267,7 +273,7 @@ export default function SyncSection() {
           </div>
         )}
         <div className="mt-2 text-[10px] text-muted-foreground">
-          已有令牌可在下方「MCP 令牌」列表里查看/吊销；到期时间 365 天。
+          已有令牌可在「设置 → MCP 令牌」里查看/吊销；到期时间 365 天。
         </div>
       </div>
 
@@ -461,7 +467,7 @@ export default function SyncSection() {
       {/* curl 示例 */}
       <div className="mt-4">
         <div className="mb-1 text-[11px] font-medium">手机/电脑转发示例（curl）</div>
-        <pre className="overflow-auto rounded-lg border border-border/60 bg-muted/30 p-2.5 text-[10px] leading-relaxed">
+        <pre className="overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border/60 bg-muted/30 p-2.5 text-[10px] leading-relaxed">
 {curl}
         </pre>
         <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
@@ -471,6 +477,6 @@ export default function SyncSection() {
           iOS/Android 的自动化步骤见 docs/trade-sync-guide.md。
         </div>
       </div>
-    </section>
+    </Wrapper>
   )
 }

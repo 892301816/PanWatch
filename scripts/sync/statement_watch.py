@@ -15,7 +15,7 @@
     # 只跑一轮（适合 Windows 计划任务）
     python scripts/sync/statement_watch.py ... --once
 
-令牌在 PanWatch「设置 → 交易同步」里创建（scope: trade:write）。
+令牌在 PanWatch「理财 → 交易同步」里创建（scope: trade:write）。
 重复文件按内容 sha256 记录，不会重复上传；同一笔成交由服务端再按成交编号/复合键去重。
 """
 

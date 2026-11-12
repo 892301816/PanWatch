@@ -93,7 +93,7 @@ def ingest_trade(payload: IngestIn, db: Session = Depends(get_db), _auth=Depends
                 "stage": "parse",
                 "reason": parsed.get("reason") or "解析失败",
                 "parsed": parsed,
-                "hint": "可以把原文发到设置页「交易同步」里试解析，再按结构化字段提交",
+                "hint": "可以把原文发到理财页「交易同步」里试解析，再按结构化字段提交",
             }
         data = {
             **parsed,
