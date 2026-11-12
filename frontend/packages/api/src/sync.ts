@@ -93,6 +93,18 @@ export interface ImportCommit {
   results: Array<{ line: number; status: string; message: string; trade_id?: number }>
 }
 
+export interface ImageAccountSummary {
+  broker?: string
+  total_assets?: number | null
+  market_value?: number | null
+  available?: number | null
+  withdrawable?: number | null
+  floating_pnl?: number | null
+  daily_pnl?: number | null
+  daily_pnl_pct?: number | null
+  position_ratio?: number | null
+}
+
 export interface ImageRow {
   symbol: string
   name: string
@@ -104,6 +116,7 @@ export interface ImageRow {
   market_value?: number | null
   current_quantity?: number | null
   current_cost?: number | null
+  closing?: boolean
   /** 成交模式 */
   action?: 'buy' | 'sell' | null
   price?: number
@@ -125,6 +138,8 @@ export interface ImageExtract {
   mode: 'positions' | 'trades'
   rows: ImageRow[]
   summary: Record<string, number>
+  account_summary?: ImageAccountSummary
+  broker_warning?: string
   hint?: string
   warnings?: string[]
   model?: string
@@ -139,9 +154,11 @@ export interface ImageCommitResult {
   created: number
   updated?: number
   unchanged?: number
+  closed?: number
   duplicate?: number
   failed?: number
   removed?: number
+  cash_updated?: boolean
   results?: Array<{
     row?: number
     line?: number
@@ -222,6 +239,7 @@ export const syncApi = {
     rows: ImageRow[]
     account_id?: number | null
     remove_missing?: boolean
+    available_funds?: number | null
   }) =>
     fetchAPI<ImageCommitResult>('/portfolio/trades/import/image/commit', {
       method: 'POST',

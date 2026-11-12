@@ -74,6 +74,9 @@ class ImageCommitIn(BaseModel):
     account_id: int | None = None
     account_name: str = ""
     remove_missing: bool = Field(False, description="持仓模式：删除截图里没有的持仓（默认不删）")
+    available_funds: float | None = Field(
+        None, description="持仓模式：同时把账户可用资金设为截图里的『可用』"
+    )
 
 
 def _decode_import(payload: ImportIn) -> bytes | str:
@@ -241,7 +244,11 @@ def image_commit(
         raise HTTPException(400, "没有可提交的行")
     if mode == "positions":
         return screenshot_import.apply_positions(
-            db, account=account, rows=rows, remove_missing=payload.remove_missing
+            db,
+            account=account,
+            rows=rows,
+            remove_missing=payload.remove_missing,
+            available_funds=payload.available_funds,
         )
     annotated = trade_ingest.annotate_rows(db, rows, account=account)
     result = trade_ingest.commit_rows(db, annotated, account=account, source="screenshot")

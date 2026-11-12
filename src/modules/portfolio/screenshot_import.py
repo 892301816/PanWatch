@@ -39,10 +39,17 @@ SYSTEM_PROMPT = (
 )
 
 POSITION_PROMPT = (
-    "这是同花顺/券商『我的持仓』页截图。请逐行提取每只持仓，输出 JSON 对象："
-    '{"rows":[{"symbol":"6位代码","name":"名称","quantity":持仓数量,"available":可用数量,'
-    '"cost_price":成本价,"last_price":现价,"market_value":市值}],"hint":"无法识别时的说明"}。'
-    "注意：quantity 是持仓数量，不是可用数量；数字不要带千分位、货币符号和百分号。"
+    "这是券商/同花顺『我的持仓』页截图。请提取两部分，输出 JSON 对象："
+    '{"rows":[{"symbol":"6位代码（截图没有就 null）","name":"名称","quantity":持仓数量,'
+    '"available":可用数量,"cost_price":成本价,"last_price":现价,"market_value":市值}],'
+    '"summary":{"broker":"券商名称","total_assets":总资产,"market_value":总市值,'
+    '"available":可用资金,"withdrawable":可取资金,"floating_pnl":浮动盈亏,'
+    '"daily_pnl":当日参考盈亏,"daily_pnl_pct":当日盈亏百分比,"position_ratio":仓位百分比},'
+    '"hint":"无法识别时的说明"}。'
+    "要求："
+    "1) 持仓数量是『持仓』不是『可用』；数量为 0 的清仓股也要保留一行（quantity=0），不要漏；"
+    "2) 金额和数字不要带千分位、货币符号和百分号；看不清的字段填 null；"
+    "3) 只提取当前账户，忽略已清仓列表、合计行和表头。"
 )
 
 TRADE_PROMPT = (
@@ -147,24 +154,41 @@ def normalize_holdings(raw_rows: list[dict]) -> list[dict]:
         if not isinstance(raw, dict):
             continue
         symbol = _normalize_symbol(raw.get("symbol") or raw.get("code"))
-        quantity = _to_int(raw.get("quantity") or raw.get("hold_quantity"))
-        if not symbol or not quantity or quantity <= 0:
+        name = str(raw.get("name") or "").strip()
+        # 注意：数量 0 是合法的清仓行，不能用 `or` 兜底（0 会被当成假值）
+        quantity_value = raw.get("quantity")
+        if quantity_value is None:
+            quantity_value = raw.get("hold_quantity")
+        quantity = _to_int(quantity_value)
+        if quantity is None or quantity < 0:
             continue
-        cost = _to_float(raw.get("cost_price") or raw.get("cost")) or 0.0
-        last = _to_float(raw.get("last_price") or raw.get("price"))
+        if not symbol and not name:
+            continue
+        cost_value = raw.get("cost_price")
+        if cost_value is None:
+            cost_value = raw.get("cost")
+        cost = _to_float(cost_value) or 0.0
+        last_value = raw.get("last_price")
+        if last_value is None:
+            last_value = raw.get("price")
+        last = _to_float(last_value)
+        available_value = raw.get("available")
+        if available_value is None:
+            available_value = raw.get("available_quantity")
         if cost <= 0 and last:
             cost = last
-        if cost <= 0:
+        if quantity > 0 and cost <= 0:
             continue
         rows.append(
             {
                 "symbol": symbol,
-                "name": str(raw.get("name") or "").strip(),
+                "name": name,
                 "quantity": quantity,
-                "available": _to_int(raw.get("available")),
+                "available": _to_int(available_value),
                 "cost_price": round(cost, 4),
                 "last_price": round(last, 4) if last else None,
                 "market_value": _to_float(raw.get("market_value")),
+                "closing": quantity == 0,
                 "status": "",
                 "message": "",
                 "current_quantity": None,
@@ -172,6 +196,33 @@ def normalize_holdings(raw_rows: list[dict]) -> list[dict]:
             }
         )
     return rows
+
+
+def normalize_summary(raw: Any) -> dict:
+    summary = raw if isinstance(raw, dict) else {}
+    return {
+        "broker": str(summary.get("broker") or "").strip(),
+        "total_assets": _to_float(summary.get("total_assets")),
+        "market_value": _to_float(summary.get("market_value")),
+        "available": _to_float(summary.get("available")),
+        "withdrawable": _to_float(summary.get("withdrawable")),
+        "floating_pnl": _to_float(summary.get("floating_pnl")),
+        "daily_pnl": _to_float(summary.get("daily_pnl")),
+        "daily_pnl_pct": _to_float(summary.get("daily_pnl_pct")),
+        "position_ratio": _to_float(summary.get("position_ratio")),
+    }
+
+
+def _broker_warning(broker: str, account: Account) -> str:
+    if not broker or not account.name:
+        return ""
+    left, right = broker.strip(), account.name.strip()
+    if left == right or left in right or right in left:
+        return ""
+    # 只在两边都像券商名时提示，避免自定义账户名误报
+    if "证券" in left and "证券" in right:
+        return f"截图券商是「{left}」，当前记账账户是「{right}」，请确认没有记错账户"
+    return ""
 
 
 def normalize_trades(raw_rows: list[dict], today: date_cls | None = None) -> list[dict]:
@@ -275,28 +326,49 @@ async def _recognize(image_bytes: bytes, mode: str, db: Session, model_id: int |
 def _annotate_positions(db: Session, rows: list[dict], account: Account) -> list[dict]:
     stock_cache: dict[str, Stock | None] = {}
     for row in rows:
-        symbol = row["symbol"]
-        if symbol not in stock_cache:
-            stock, _note = trade_ingest.resolve_stock(db, symbol, row.get("name") or "", create=False)
-            stock_cache[symbol] = stock
-        stock = stock_cache[symbol]
-        if stock is not None:
-            row["name"] = row.get("name") or stock.name
-            position = (
-                db.query(Position)
-                .filter(Position.account_id == account.id, Position.stock_id == stock.id)
-                .first()
-            )
-            if position is None:
-                row["status"] = "create"
+        symbol = str(row.get("symbol") or "")
+        name = str(row.get("name") or "")
+        cache_key = symbol or f"name:{name}"
+        if cache_key not in stock_cache:
+            stock, _note = trade_ingest.resolve_stock(db, symbol, name, create=False)
+            stock_cache[cache_key] = stock
+        stock = stock_cache[cache_key]
+        if stock is None:
+            if symbol and not (row.get("closing") or int(row.get("quantity") or 0) == 0):
+                # 有代码但不在自选：提交时自动创建
+                row["symbol"] = symbol
+                row["status"] = "new_stock"
+                row["message"] = "股票不在自选，提交时创建"
+            elif row.get("closing") or int(row.get("quantity") or 0) == 0:
+                row["symbol"] = symbol
+                row["status"] = "unchanged"
+                row["message"] = "本来就无持仓"
             else:
-                row["current_quantity"] = int(position.quantity or 0)
-                row["current_cost"] = round(float(position.cost_price or 0), 4)
-                same_qty = int(position.quantity or 0) == int(row["quantity"])
-                same_cost = abs(float(position.cost_price or 0) - float(row["cost_price"])) <= 0.0005
-                row["status"] = "unchanged" if same_qty and same_cost else "update"
-        else:
-            row["status"] = "new_stock"
+                row["status"] = "unresolved"
+                row["message"] = "截图没有代码，且名称无法匹配"
+            continue
+        row["symbol"] = stock.symbol
+        row["name"] = row.get("name") or stock.name
+        position = (
+            db.query(Position)
+            .filter(Position.account_id == account.id, Position.stock_id == stock.id)
+            .first()
+        )
+        row["current_quantity"] = int(position.quantity or 0) if position is not None else None
+        row["current_cost"] = round(float(position.cost_price or 0), 4) if position is not None else None
+
+        if row.get("closing") or int(row.get("quantity") or 0) == 0:
+            # 截图里持仓为 0：已清仓；PanWatch 有旧持仓就标记为清仓，提交时删除
+            row["status"] = "close" if position is not None else "unchanged"
+            row["message"] = "截图显示已清仓" if position is not None else "本来就无持仓"
+            continue
+
+        if position is None:
+            row["status"] = "create"
+            continue
+        same_qty = int(position.quantity or 0) == int(row["quantity"])
+        same_cost = abs(float(position.cost_price or 0) - float(row["cost_price"])) <= 0.0005
+        row["status"] = "unchanged" if same_qty and same_cost else "update"
     return rows
 
 
@@ -327,9 +399,13 @@ async def extract_from_image(
     raw_rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
     hint = str(payload.get("hint") or "").strip()
 
+    account_summary: dict = {}
+    broker_warning = ""
     if mode == "positions":
         rows = normalize_holdings(raw_rows)
         rows = _annotate_positions(db, rows, account)
+        account_summary = normalize_summary(payload.get("summary"))
+        broker_warning = _broker_warning(account_summary.get("broker") or "", account)
     else:
         rows = normalize_trades(raw_rows)
         rows = trade_ingest.annotate_rows(db, rows, account=account)
@@ -337,6 +413,8 @@ async def extract_from_image(
     warnings: list[str] = []
     if hint:
         warnings.append(hint)
+    if broker_warning:
+        warnings.append(broker_warning)
     if not rows:
         warnings.append("没有识别到有效数据行，请确认截图类型与清晰度")
 
@@ -345,6 +423,8 @@ async def extract_from_image(
         "mode": mode,
         "rows": rows,
         "summary": _summary(rows),
+        "account_summary": account_summary,
+        "broker_warning": broker_warning,
         "hint": hint,
         "warnings": warnings,
         "model": "",
@@ -358,18 +438,69 @@ def apply_positions(
     account: Account,
     rows: list[dict],
     remove_missing: bool = False,
+    available_funds: float | None = None,
 ) -> dict:
-    """把持仓快照写入持仓表（不写交易流水、不动现金）。"""
-    created = updated = unchanged = failed = 0
+    """把持仓快照写入持仓表。
+
+    数量为 0 的行表示已清仓，会删除对应持仓；可选同步截图里的可用资金。
+    不写交易流水。
+    """
+    created = updated = unchanged = closed = failed = 0
     seen: set[str] = set()
     results: list[dict] = []
     for index, row in enumerate(rows or []):
         symbol = _normalize_symbol(row.get("symbol"))
+        name = str(row.get("name") or "").strip()
         quantity = _to_int(row.get("quantity"))
         cost = _to_float(row.get("cost_price"))
-        if not symbol or not quantity or quantity <= 0:
+        if quantity is None or quantity < 0:
             failed += 1
-            results.append({"row": index + 1, "status": "error", "message": "缺少代码或持仓数量"})
+            results.append({"row": index + 1, "status": "error", "message": "缺少持仓数量"})
+            continue
+
+        # 截图里数量为 0 且有名称/代码：已清仓，删除 PanWatch 旧持仓
+        if quantity == 0:
+            try:
+                stock, _note = trade_ingest.resolve_stock(db, symbol, name, create=False)
+                if stock is None:
+                    failed += 1
+                    results.append(
+                        {"row": index + 1, "status": "error", "message": "清仓行无法匹配股票"}
+                    )
+                    continue
+                seen.add(stock.symbol)
+                position = (
+                    db.query(Position)
+                    .filter(Position.account_id == account.id, Position.stock_id == stock.id)
+                    .first()
+                )
+                if position is not None:
+                    db.delete(position)
+                    db.commit()
+                    closed += 1
+                    status = "closed"
+                    message = "截图显示已清仓，已删除原持仓"
+                else:
+                    unchanged += 1
+                    status = "unchanged"
+                    message = "本来就无持仓"
+                results.append(
+                    {"row": index + 1, "status": status, "symbol": stock.symbol,
+                     "name": stock.name, "message": message}
+                )
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                failed += 1
+                results.append({"row": index + 1, "status": "error", "message": str(exc)[:200]})
+            continue
+
+        if not symbol and name:
+            stock, _note = trade_ingest.resolve_stock(db, "", name, create=False)
+            if stock is not None:
+                symbol = stock.symbol
+        if not symbol:
+            failed += 1
+            results.append({"row": index + 1, "status": "error", "message": "缺少代码且名称无法匹配"})
             continue
         if cost is None or cost <= 0:
             failed += 1
@@ -377,9 +508,7 @@ def apply_positions(
             continue
         seen.add(symbol)
         try:
-            stock, note = trade_ingest.resolve_stock(
-                db, symbol, str(row.get("name") or ""), create=True
-            )
+            stock, note = trade_ingest.resolve_stock(db, symbol, name, create=True)
             if stock is None:
                 raise ValueError(note or "股票无法创建")
             position = (
@@ -441,14 +570,22 @@ def apply_positions(
             logger.warning("删除截图中不存在的持仓失败: %s", exc)
             removed = 0
 
+    cash_updated = False
+    if available_funds is not None and available_funds >= 0:
+        account.available_funds = round(float(available_funds), 2)
+        db.commit()
+        cash_updated = True
+
     return {
-        "ok": failed == 0 or created + updated + unchanged > 0,
+        "ok": failed == 0 or created + updated + unchanged + closed > 0,
         "mode": "positions",
         "total": len(rows or []),
         "created": created,
         "updated": updated,
         "unchanged": unchanged,
+        "closed": closed,
         "failed": failed,
         "removed": removed,
+        "cash_updated": cash_updated,
         "results": results,
     }

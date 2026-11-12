@@ -70,6 +70,8 @@ const POSITION_STATUS_LABEL: Record<string, string> = {
   new_stock: '新建自选',
   update: '更新持仓',
   unchanged: '无变化',
+  close: '清仓',
+  unresolved: '未识别',
 }
 
 const POSITION_STATUS_CHIP: Record<string, string> = {
@@ -77,7 +79,12 @@ const POSITION_STATUS_CHIP: Record<string, string> = {
   new_stock: 'bg-sky-500/15 text-sky-600',
   update: 'bg-amber-500/15 text-amber-600',
   unchanged: 'bg-accent/40 text-muted-foreground',
+  close: 'bg-stock-down/15 text-stock-down',
+  unresolved: 'bg-amber-500/15 text-amber-600',
 }
+
+const moneyText = (value?: number | null) =>
+  value == null || !Number.isFinite(value) ? '--' : value.toFixed(2)
 
 /** 把截图压到最长边 1600、JPEG 0.85，降低上传与视觉模型 token。 */
 async function imageToBase64(file: File, maxSide = 1600): Promise<string> {
@@ -143,6 +150,7 @@ export default function SyncSection({
   const [shotBusy, setShotBusy] = useState(false)
   const [shotName, setShotName] = useState('')
   const [removeMissing, setRemoveMissing] = useState(false)
+  const [syncCash, setSyncCash] = useState(true)
   const shotRef = useRef<HTMLInputElement>(null)
 
   const loadAccounts = useCallback(async () => {
@@ -292,16 +300,19 @@ export default function SyncSection({
     if (!shot || shot.rows.length === 0) return
     setShotBusy(true)
     try {
+      const available =
+        shot.mode === 'positions' && syncCash ? shot.account_summary?.available : undefined
       const result = await syncApi.imageCommit({
         mode: shot.mode,
         rows: shot.rows,
         account_id: accountId,
         remove_missing: shot.mode === 'positions' ? removeMissing : false,
+        available_funds: typeof available === 'number' ? available : undefined,
       })
       setShotResult(result)
       const detail =
         shot.mode === 'positions'
-          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，无变化 ${result.unchanged ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}`
+          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，清仓 ${result.closed ?? 0}，无变化 ${result.unchanged ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}${result.cash_updated ? '，已同步可用资金' : ''}`
           : `新增 ${result.created}，重复 ${result.duplicate ?? 0}，失败 ${result.failed ?? 0}`
       toast(`同步完成：${detail}`, 'success')
       setShot(null)
@@ -657,6 +668,48 @@ export default function SyncSection({
           </div>
         ) : null}
 
+        {shot?.mode === 'positions' && shot.account_summary && (
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 rounded border border-border/60 bg-background/50 p-2 text-[11px] sm:grid-cols-4">
+            <div>
+              <span className="text-muted-foreground">券商：</span>
+              {shot.account_summary.broker || '--'}
+            </div>
+            <div>
+              <span className="text-muted-foreground">总资产：</span>
+              {moneyText(shot.account_summary.total_assets)}
+            </div>
+            <div>
+              <span className="text-muted-foreground">总市值：</span>
+              {moneyText(shot.account_summary.market_value)}
+            </div>
+            <div>
+              <span className="text-muted-foreground">可用：</span>
+              {moneyText(shot.account_summary.available)}
+            </div>
+            <div>
+              <span className="text-muted-foreground">可取：</span>
+              {moneyText(shot.account_summary.withdrawable)}
+            </div>
+            <div>
+              <span className="text-muted-foreground">浮动盈亏：</span>
+              {moneyText(shot.account_summary.floating_pnl)}
+            </div>
+            <div>
+              <span className="text-muted-foreground">当日盈亏：</span>
+              {moneyText(shot.account_summary.daily_pnl)}
+              {shot.account_summary.daily_pnl_pct != null
+                ? `（${moneyText(shot.account_summary.daily_pnl_pct)}%）`
+                : ''}
+            </div>
+            <div>
+              <span className="text-muted-foreground">仓位：</span>
+              {shot.account_summary.position_ratio != null
+                ? `${moneyText(shot.account_summary.position_ratio)}%`
+                : '--'}
+            </div>
+          </div>
+        )}
+
         {shot && shot.rows.length > 0 && (
           <div className="mt-2">
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -671,6 +724,9 @@ export default function SyncSection({
                   </span>
                   <span className="rounded bg-accent/40 px-1.5 py-0.5 text-muted-foreground">
                     无变化 {shot.summary.unchanged ?? 0}
+                  </span>
+                  <span className="rounded bg-stock-down/15 px-1.5 py-0.5 text-stock-down">
+                    清仓 {shot.summary.close ?? 0}
                   </span>
                   <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-600">
                     新建自选 {shot.summary.new_stock ?? 0}
@@ -690,16 +746,6 @@ export default function SyncSection({
                 </>
               )}
               <div className="ml-auto flex flex-wrap items-center gap-2">
-                {shot.mode === 'positions' && (
-                  <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={removeMissing}
-                      onChange={(e) => setRemoveMissing(e.target.checked)}
-                    />
-                    删除截图里没有的持仓
-                  </label>
-                )}
                 <Button
                   size="sm"
                   className="h-8"
@@ -710,7 +756,25 @@ export default function SyncSection({
                 </Button>
               </div>
             </div>
-
+            {shot.mode === 'positions' && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={syncCash} onChange={(e) => setSyncCash(e.target.checked)} />
+                  同步可用资金
+                  {shot.account_summary?.available != null
+                    ? `（设为 ${moneyText(shot.account_summary.available)}）`
+                    : '（截图未识别到）'}
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={removeMissing}
+                    onChange={(e) => setRemoveMissing(e.target.checked)}
+                  />
+                  删除截图里没有的持仓（截图不完整时别勾）
+                </label>
+              </div>
+            )}
             <div className="mt-1.5 max-h-64 overflow-auto rounded border border-border/50">
               <table className="w-full text-[11px]">
                 <thead className="sticky top-0 bg-muted/60 text-[10px] text-muted-foreground">
@@ -793,8 +857,9 @@ export default function SyncSection({
         {shotResult && (
           <div className="mt-2 rounded border border-border/60 bg-muted/20 p-2 text-[11px]">
             {shotResult.mode === 'positions'
-              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，无变化 ${shotResult.unchanged ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
+              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，清仓 ${shotResult.closed ?? 0}，无变化 ${shotResult.unchanged ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
               : `成交同步完成：新增 ${shotResult.created}，重复 ${shotResult.duplicate ?? 0}，失败 ${shotResult.failed ?? 0}。`}
+            {shotResult.mode === 'positions' && shotResult.cash_updated ? ' 可用资金已更新。' : ''}
           </div>
         )}
       </div>

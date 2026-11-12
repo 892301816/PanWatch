@@ -33,7 +33,7 @@ def _db():
 @pytest.fixture()
 def book():
     engine, db = _db()
-    account = Account(name="截图测试", available_funds=50000.0, enabled=True)
+    account = Account(name="东吴证券", available_funds=50000.0, enabled=True)
     stock = Stock(symbol="600900", name="长江电力", market="CN")
     db.add_all([account, stock])
     db.commit()
@@ -62,7 +62,7 @@ def test_parse_model_json_handles_fences_and_junk():
     assert shot.parse_model_json("完全不是 JSON") == {}
 
 
-def test_normalize_holdings_filters_invalid_rows():
+def test_normalize_holdings_filters_invalid_rows_and_keeps_closing():
     rows = shot.normalize_holdings(
         [
             {"symbol": "600900", "name": "长江电力", "quantity": "200", "available": "200",
@@ -73,13 +73,32 @@ def test_normalize_holdings_filters_invalid_rows():
             {"name": "没有代码", "quantity": 100, "cost_price": 1},
         ]
     )
-    assert len(rows) == 2
+    # 数量为 0 的清仓行要保留，名称-only 也保留（后续按名称匹配）
+    assert len(rows) == 4
     assert rows[0]["symbol"] == "600900"
     assert rows[0]["cost_price"] == 29.1
     assert rows[0]["market_value"] == 5922.0
+    assert rows[1]["symbol"] == "002943" and rows[1]["quantity"] == 0
+    assert rows[1]["closing"] is True
     # 没有成本价时用现价兜底
-    assert rows[1]["symbol"] == "601728"
-    assert rows[1]["cost_price"] == 6.61
+    assert rows[2]["symbol"] == "601728"
+    assert rows[2]["cost_price"] == 6.61
+    assert rows[3]["symbol"] == ""
+    assert rows[3]["name"] == "没有代码"
+
+
+def test_normalize_summary():
+    summary = shot.normalize_summary(
+        {"broker": "中信建投证券", "total_assets": "11,450.07", "market_value": 2812,
+         "available": "8638.07", "withdrawable": 5709.54, "floating_pnl": "-226.50",
+         "daily_pnl": -58, "daily_pnl_pct": "-0.50%", "position_ratio": "24.6%"}
+    )
+    assert summary["broker"] == "中信建投证券"
+    assert summary["total_assets"] == 11450.07
+    assert summary["available"] == 8638.07
+    assert summary["floating_pnl"] == -226.5
+    assert summary["daily_pnl_pct"] == -0.5
+    assert summary["position_ratio"] == 24.6
 
 
 def test_normalize_trades_maps_action_and_fees():
@@ -141,13 +160,31 @@ def test_apply_positions_remove_missing(book):
     assert symbols == ["002943"]
 
 
-def test_apply_positions_rejects_zero_quantity(book):
+def test_apply_positions_closes_zero_quantity(book):
+    db, account, stock = book
+    # book 里 600900 有 100 股；截图显示 0/0 → 应删除
+    result = shot.apply_positions(
+        db,
+        account=account,
+        rows=[{"symbol": "600900", "name": "长江电力", "quantity": 0, "available": 0,
+               "cost_price": 28.0}],
+    )
+    assert result["closed"] == 1
+    assert result["failed"] == 0
+    assert db.query(Position).filter(Position.account_id == account.id).count() == 0
+
+
+def test_apply_positions_syncs_available_funds(book):
     db, account, _stock = book
     result = shot.apply_positions(
-        db, account=account, rows=[{"symbol": "002943", "quantity": 0, "cost_price": 10}]
+        db,
+        account=account,
+        rows=[{"symbol": "600900", "name": "长江电力", "quantity": 100, "cost_price": 28.0}],
+        available_funds=8638.07,
     )
-    assert result["failed"] == 1
-    assert result["created"] == 0
+    assert result["cash_updated"] is True
+    db.refresh(account)
+    assert account.available_funds == 8638.07
 
 
 def _mock_recognize(monkeypatch, payload: dict):
@@ -164,8 +201,13 @@ def test_image_preview_positions(book, monkeypatch):
         {
             "rows": [
                 {"symbol": "600900", "name": "长江电力", "quantity": 300, "cost_price": 29.0},
-                {"symbol": "002943", "name": "宇晶股份", "quantity": 200, "cost_price": 29.5},
+                {"symbol": "002943", "name": "宇晶股份", "quantity": 0, "cost_price": 29.5},
             ],
+            "summary": {
+                "broker": "中信建投证券",
+                "total_assets": 11450.07,
+                "available": 8638.07,
+            },
             "hint": "",
         },
     )
@@ -176,7 +218,9 @@ def test_image_preview_positions(book, monkeypatch):
     )
     assert result["ok"] is True
     assert result["summary"]["update"] == 1
-    assert result["summary"]["new_stock"] == 1
+    assert result["summary"].get("close", 0) == 0  # 截图测试账户本来没有 002943 持仓
+    assert result["account_summary"]["available"] == 8638.07
+    assert "中信建投证券" in result["broker_warning"]
 
 
 def test_image_preview_trades(book, monkeypatch):
