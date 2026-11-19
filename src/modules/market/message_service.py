@@ -194,6 +194,93 @@ async def _collect_stock_news(symbols: list[str], *, hours: int = 24) -> list[di
         return []
 
 
+_RAW_CACHE = {"rows": None, "ts": 0.0, "updated_at": "", "error": "", "task": None}
+
+
+def _cached_news() -> list[dict]:
+    from datetime import datetime, timedelta, timezone
+    from src.platform.persistence.database import SessionLocal
+    from src.platform.persistence.models import NewsCache
+    db = SessionLocal()
+    try:
+        rows = db.query(NewsCache).filter(NewsCache.publish_time >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)).order_by(NewsCache.publish_time.desc()).limit(2000).all()
+        return [{"id": f"{r.source}:{r.external_id}", "source": r.source, "title": r.title,
+                 "content": r.content or "", "datetime": r.publish_time, "url": "",
+                 "importance": r.importance or 0, "symbols": r.symbols or []} for r in rows]
+    finally:
+        db.close()
+
+
+def _save_cached_news(rows: list[dict]) -> None:
+    from sqlalchemy.dialects.sqlite import insert
+    from src.platform.persistence.database import SessionLocal
+    from src.platform.persistence.models import NewsCache
+    db = SessionLocal()
+    try:
+        for row in rows:
+            dt = row.get("datetime")
+            if dt is None:
+                continue
+            from datetime import timezone
+            if dt.tzinfo:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            values = {"source": row["source"], "external_id": row["id"].removeprefix(row["source"] + ":"),
+                      "title": row["title"], "content": row["content"], "publish_time": dt,
+                      "importance": row["importance"], "symbols": row.get("symbols") or []}
+            statement = insert(NewsCache).values(**values)
+            db.execute(statement.on_conflict_do_update(index_elements=["source", "external_id"], set_=values))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+async def _refresh_cached_news(tracked: list[str]) -> None:
+    import time
+    from datetime import datetime, timezone
+    failures = []
+    fresh_count = 0
+    def ts(row):
+        dt = row["datetime"]
+        return dt.replace(tzinfo=timezone.utc).timestamp() if dt.tzinfo is None else dt.timestamp()
+    try:
+        tasks = [asyncio.wait_for(_collect_flash(), timeout=25),
+                 asyncio.wait_for(_collect_stock_news(tracked, hours=168), timeout=25)]
+        for completed in asyncio.as_completed(tasks):
+            try:
+                fresh = await completed
+            except Exception as exc:
+                failures.append(str(exc) or "新闻源刷新超时")
+                continue
+            if not fresh:
+                continue
+            merged = {r["id"]: r for r in (_RAW_CACHE["rows"] or [])}
+            merged.update({r["id"]: r for r in fresh})
+            _RAW_CACHE["rows"] = sorted(merged.values(), key=ts, reverse=True)[:2000]
+            _RAW_CACHE["updated_at"] = datetime.now(timezone.utc).isoformat()
+            fresh_count += len(fresh)
+            # 一个源完成就立即可见，不等待较慢的另一个源。
+            await asyncio.to_thread(_save_cached_news, fresh)
+        _RAW_CACHE["error"] = "；".join(failures) or ("本次未获取到新消息，保留缓存" if not fresh_count else "")
+    except Exception as exc:
+        _RAW_CACHE["error"] = str(exc)[:160]
+        logger.warning("[消息] 后台刷新失败: %s", exc)
+    finally:
+        _RAW_CACHE["ts"] = time.monotonic()
+
+
+def _start_news_refresh(tracked: list[str], *, force: bool = False) -> None:
+    import time
+    task = _RAW_CACHE["task"]
+    if task is not None and not task.done():
+        return
+    if not force and time.monotonic() - _RAW_CACHE["ts"] < 60:
+        return
+    _RAW_CACHE["task"] = asyncio.create_task(_refresh_cached_news(tracked))
+
+
 async def collect_messages(
     *,
     hours: int = 24,
@@ -202,6 +289,7 @@ async def collect_messages(
     watchlist_only: bool = False,
     position_only: bool = False,
     limit: int = 200,
+    refresh: bool = False,
 ) -> dict:
     """收集并分类最近的消息。
 
@@ -215,10 +303,10 @@ async def collect_messages(
     """
     watch, positions = _load_tracked_symbols()
     tracked = watch | positions
-    flash, stock_news = await asyncio.gather(
-        _collect_flash(),
-        _collect_stock_news(sorted(tracked), hours=hours),
-    )
+    if _RAW_CACHE["rows"] is None:
+        _RAW_CACHE["rows"] = await asyncio.to_thread(_cached_news)
+    _start_news_refresh(sorted(tracked), force=refresh)
+    flash, stock_news = list(_RAW_CACHE["rows"] or []), []
 
     from datetime import datetime, timedelta, timezone
 
@@ -251,7 +339,7 @@ async def collect_messages(
             source=raw["source"],
             title=title,
             content=raw["content"],
-            time=dt.strftime("%m-%d %H:%M"),
+            time=dt.astimezone(__import__("zoneinfo").ZoneInfo("Asia/Shanghai")).strftime("%m-%d %H:%M"),
             ts=dt.timestamp(),
             url=raw["url"],
             category=classify_category(title, raw["content"]),
@@ -287,6 +375,9 @@ async def collect_messages(
     messages = messages[: max(1, limit)]
 
     return {
+        "refreshing": bool(_RAW_CACHE["task"] and not _RAW_CACHE["task"].done()),
+        "updated_at": _RAW_CACHE["updated_at"],
+        "refresh_error": _RAW_CACHE["error"],
         "total": total,
         "returned": len(messages),
         "hours": hours,

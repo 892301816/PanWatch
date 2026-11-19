@@ -1361,6 +1361,30 @@ def register_mcp_log_cleanup(sched: AgentScheduler) -> None:
     logger.info("MCP 日志保留期清理任务已注册")
 
 
+def refresh_agent_schedule(agent_name: str) -> bool:
+    """在应用事件循环中替换单个任务，不关闭其他正在执行的 Agent。"""
+    current = globals().get("scheduler")
+    if current is None:
+        return False
+    db = SessionLocal()
+    try:
+        cfg = db.query(AgentConfig).filter(AgentConfig.name == agent_name).first()
+        if not cfg or not cfg.enabled or cfg.kind != AGENT_KIND_WORKFLOW or not cfg.schedule:
+            if current.scheduler.get_job(agent_name):
+                current.scheduler.remove_job(agent_name)
+            current.agents.pop(agent_name, None)
+            current.execution_modes.pop(agent_name, None)
+            return True
+        cls = AGENT_REGISTRY.get(agent_name)
+        if not cls:
+            return False
+        agent = cls(**(cfg.config or {}))
+        current.register(agent, cfg.schedule, cfg.execution_mode or "batch")
+        return True
+    finally:
+        db.close()
+
+
 def reload_scheduler() -> bool:
     """重载调度器（用于配置导入/批量修改后立即生效）"""
     global scheduler

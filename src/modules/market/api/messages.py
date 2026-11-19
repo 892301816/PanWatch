@@ -25,12 +25,13 @@ async def get_feed(
     watchlist_only: bool = Query(False, description="只看命中自选股的"),
     position_only: bool = Query(False, description="只看命中持仓股的"),
     limit: int = Query(200, ge=1, le=500),
+    refresh: bool = Query(False, description="后台刷新消息源，立即返回缓存"),
     with_brief: bool = Query(False, description="是否附带 AI 汇总(会调用一次模型)"),
 ):
     """最近消息（已按 分类 / 自选股关联 / 重要性 排好序）。"""
     data = await message_service.collect_messages(
         hours=hours, category=category, source=source,
-        watchlist_only=watchlist_only, position_only=position_only, limit=limit,
+        watchlist_only=watchlist_only, position_only=position_only, limit=limit, refresh=refresh,
     )
     if with_brief:
         data["brief"] = await message_service.write_ai_brief(

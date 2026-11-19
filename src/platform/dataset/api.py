@@ -224,11 +224,29 @@ def get_spark(
 def get_spark_ohlc(
     symbols: str = Query(default=""),
     days: int = Query(default=20, ge=5, le=60),
+    include_live: bool = Query(default=False, description="用已缓存行情更新当天K线，不实时联网"),
     fallback: bool = Query(default=True, description="本地缺数据时是否回退 K 线接口"),
 ):
     """批量迷你日K(OHLC)。列表页画蜡烛图用,本地 daily_bars 优先。"""
     codes = [s.strip() for s in symbols.split(",") if s.strip()][:200]
-    data = store.recent_bars(codes, days)
+    data = store.recent_bars(codes, days, with_dates=include_live)
+    if include_live:
+        from src.modules.screener import snapshot
+        quotes = {row["symbol"]: row for row in snapshot.get_snapshot()}
+        day = snapshot._MEM.get("trade_date") or ""
+        for code in codes:
+            quote = quotes.get(code) or {}
+            values = [quote.get(key) for key in ("open_price", "high_price", "low_price", "price")]
+            if not day or not all(value is not None and value > 0 for value in values):
+                continue
+            bars = data.get(code) or []
+            if bars and bars[-1].get("d", "") > day:
+                continue
+            bar = dict(zip(("o", "h", "l", "c"), values))
+            bar.update(d=day, v=int((quote.get("volume") or 0) / 100))
+            if bars and bars[-1].get("d") == day:
+                bars = bars[:-1]
+            data[code] = (bars + [bar])[-days:]
 
     missing = [c for c in codes if len(data.get(c) or []) < 2]
     if fallback and missing:

@@ -990,6 +990,7 @@ class IntradayMonitorAgent(BaseAgent):
 
         # AI 判断不需要提醒
         if not result.raw_data.get("should_alert", True):
+            result.raw_data["notify_skipped"] = "no_signal"
             logger.info(
                 f"AI 判断无需提醒: {result.raw_data.get('stock', {}).get('symbol')}"
             )
@@ -1006,6 +1007,7 @@ class IntradayMonitorAgent(BaseAgent):
         # 检查节流（测试模式可跳过）
         if not self.bypass_throttle:
             if not self._check_throttle(symbol):
+                result.raw_data["notify_skipped"] = "throttled"
                 logger.info(
                     f"通知节流: {symbol} 在 {self.throttle_minutes} 分钟内已通知"
                 )
@@ -1134,7 +1136,9 @@ class IntradayMonitorAgent(BaseAgent):
                 result.raw_data["notify_skipped"] = "suppressed"
                 return result
 
+            result.raw_data["notify_attempted"] = False
             if await self.should_notify(result):
+                result.raw_data["notify_attempted"] = True
                 notify_result = await context.notifier.notify_with_result(
                     result.title,
                     result.content,

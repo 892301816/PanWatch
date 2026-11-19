@@ -17,10 +17,11 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, text
 
 from src.platform.persistence.database import SessionLocal
 from src.platform.persistence.models import ScreenerSnapshot
@@ -49,14 +50,17 @@ _LOCK = threading.Lock()
 
 def latest_trade_date() -> date:
     """最近一个工作日。节假日不处理——数据源返回的是它自己的最新快照。"""
-    d = date.today()
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    d = now.date()
+    if (now.hour, now.minute) < (9, 15):
+        d -= timedelta(days=1)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
 
 
 def is_trading_session(now: datetime | None = None) -> bool:
-    now = now or datetime.now()
+    now = now or datetime.now(ZoneInfo("Asia/Shanghai"))
     if now.weekday() >= 5:
         return False
     hm = (now.hour, now.minute)
@@ -150,20 +154,28 @@ def fetch_full_market() -> list[dict]:
     rows: list[dict] = []
     seen: set[str] = set()
     with httpx.Client(headers=_HEADERS, follow_redirects=True, timeout=25) as client:
-        for page in range(1, _MAX_PAGES + 1):
-            try:
-                batch = _fetch_page(client, page)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"[选股] 快照第 {page} 页失败: {exc}")
-                continue
-            if not batch:
-                break
-            for r in batch:
-                if r["symbol"] not in seen:
-                    seen.add(r["symbol"])
-                    rows.append(r)
-            if len(batch) < _PAGE_SIZE:
-                break
+        # 少量并发分页，避免全市场 50 多页串行拖过数分钟。
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            finished = False
+            for start in range(1, _MAX_PAGES + 1, 6):
+                pages = list(range(start, min(start + 6, _MAX_PAGES + 1)))
+                futures = [pool.submit(_fetch_page, client, page) for page in pages]
+                for page, future in zip(pages, futures):
+                    if finished:
+                        continue
+                    try:
+                        batch = future.result()
+                    except Exception as exc:
+                        # 不用缺页快照覆盖完整缓存。
+                        raise RuntimeError(f"全市场快照第 {page} 页失败，保留旧缓存") from exc
+                    for row in batch:
+                        if row["symbol"] not in seen:
+                            seen.add(row["symbol"])
+                            rows.append(row)
+                    if len(batch) < _PAGE_SIZE:
+                        finished = True
+                if finished:
+                    break
 
     if not rows:
         raise RuntimeError("全市场快照抓取失败(新浪无返回)")
@@ -201,7 +213,7 @@ def refresh_snapshot(*, force: bool = False) -> dict:
 
         rows = fetch_full_market()
         _store(trade_date, rows)
-        _MEM.update(trade_date=trade_date, rows=rows, ts=time.monotonic())
+        _MEM.update(trade_date=trade_date, rows=rows, ts=time.monotonic(), updated_at=datetime.now(ZoneInfo("Asia/Shanghai")).isoformat())
         return {"trade_date": trade_date, "count": len(rows), "refreshed": True}
 
 
@@ -246,25 +258,80 @@ def _load_from_db(trade_date: str) -> list[dict]:
         db.close()
 
 
+_REFRESH_STATE = {"running": False, "last_attempt": 0.0, "error": ""}
+_REFRESH_LOCK = threading.Lock()
+
+
+def request_refresh(*, force: bool = False) -> bool:
+    """单个后台任务刷新行情，页面请求不等待远程全市场抓取。"""
+    with _REFRESH_LOCK:
+        if _REFRESH_STATE["running"] or (not force and time.monotonic() - _REFRESH_STATE["last_attempt"] < 60):
+            return False
+        _REFRESH_STATE.update(running=True, last_attempt=time.monotonic(), error="")
+    def run():
+        try:
+            refresh_snapshot(force=True)
+        except Exception as exc:
+            _REFRESH_STATE["error"] = str(exc)[:160]
+            logger.warning("[选股] 后台快照刷新失败: %s", exc)
+        finally:
+            _REFRESH_STATE["running"] = False
+    threading.Thread(target=run, name="screener-refresh", daemon=True).start()
+    return True
+
+
+def _local_daily_snapshot() -> tuple[str, list[dict]]:
+    db = SessionLocal()
+    try:
+        latest = db.execute(text("SELECT MAX(trade_date) FROM daily_bars")).scalar()
+        if not latest:
+            return "", []
+        previous = db.execute(text("SELECT MAX(trade_date) FROM daily_bars WHERE trade_date < :day"), {"day": latest}).scalar()
+        bars = db.execute(text(
+            "SELECT b.symbol,b.close,b.open,b.high,b.low,b.volume,b.amount,p.close prev_close "
+            "FROM daily_bars b LEFT JOIN daily_bars p ON p.symbol=b.symbol AND p.trade_date=:previous "
+            "WHERE b.trade_date=:day"
+        ), {"day": latest, "previous": previous}).mappings().all()
+        names = {s: n for s, n in db.execute(text("SELECT symbol,name FROM stocks WHERE market='CN'"))}
+        rows = []
+        for b in bars:
+            prev, price = b["prev_close"], b["close"]
+            if not price or not prev:
+                continue
+            name = names.get(b["symbol"], b["symbol"])
+            rows.append({"symbol": b["symbol"], "name": name, "market": "CN", "price": price,
+                         "prev_close": prev, "open_price": b["open"], "high_price": b["high"], "low_price": b["low"],
+                         "volume": (b["volume"] or 0) * 100, "amount": b["amount"],
+                         "change_pct": round((price / prev - 1) * 100, 2),
+                         "change_amount": round(price - prev, 4), "is_st": "ST" in name.upper(), "is_suspended": False})
+        return str(latest), rows
+    finally:
+        db.close()
+
+
 def get_snapshot(*, force_refresh: bool = False) -> list[dict]:
-    """取当日快照。优先内存 → 库 → 现抓。"""
-    trade_date = latest_trade_date().isoformat()
-
-    if not force_refresh and _MEM["rows"] and _MEM["trade_date"] == trade_date:
-        ttl = _MEM_TTL_TRADING_S if is_trading_session() else _MEM_TTL_CLOSED_S
-        if time.monotonic() - _MEM["ts"] <= ttl:
-            return _MEM["rows"]
-
-    rows = _load_from_db(trade_date)
-    if rows and not force_refresh:
-        _MEM.update(trade_date=trade_date, rows=rows, ts=time.monotonic())
-        return rows
-
-    refresh_snapshot(force=force_refresh)
-    rows = _load_from_db(trade_date)
+    """先返回本地快照/日K，过期行情在后台更新。"""
+    target = latest_trade_date().isoformat()
+    if force_refresh:
+        request_refresh(force=True)
+    ttl = _MEM_TTL_TRADING_S if is_trading_session() else _MEM_TTL_CLOSED_S
+    if _MEM["rows"] and time.monotonic() - _MEM["ts"] <= ttl:
+        if _MEM["trade_date"] != target or (is_trading_session() and time.monotonic() - _MEM["ts"] > 60):
+            request_refresh()
+        return _MEM["rows"]
+    db = SessionLocal()
+    try:
+        day = db.query(func.max(ScreenerSnapshot.trade_date)).filter(ScreenerSnapshot.trade_date <= target).scalar()
+        updated_at = db.query(func.max(ScreenerSnapshot.updated_at)).filter(ScreenerSnapshot.trade_date == day).scalar() if day else None
+    finally:
+        db.close()
+    rows = _load_from_db(str(day)) if day else []
     if not rows:
-        raise RuntimeError("全市场快照为空")
-    _MEM.update(trade_date=trade_date, rows=rows, ts=time.monotonic())
+        day, rows = _local_daily_snapshot()
+    _MEM["updated_at"] = updated_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Shanghai")).isoformat() if updated_at else str(day or "")
+    _MEM.update(trade_date=str(day or ""), rows=rows, ts=time.monotonic(), source="snapshot" if day and rows and rows[0].get("pe_ttm") is not None else "local")
+    if not rows or str(day) != target or is_trading_session():
+        request_refresh()
     return rows
 
 
@@ -305,5 +372,8 @@ def snapshot_status() -> dict:
         "count": int(count),
         "trading_session": is_trading_session(),
         "cached": bool(_MEM["rows"]) and _MEM["trade_date"] == trade_date,
-        "source": "sina",
+        "source": "local-cache",
+        "data_date": _MEM["trade_date"] or trade_date,
+        "refreshing": _REFRESH_STATE["running"],
+        "refresh_error": _REFRESH_STATE["error"],
     }

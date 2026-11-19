@@ -56,6 +56,7 @@ class AgentScheduler:
             id=agent.name,
             name=agent.display_name,
             replace_existing=True,
+            coalesce=True, max_instances=1, misfire_grace_time=60,
         )
 
         logger.info(f"注册 Agent: {agent.display_name} (schedule: {schedule})")
@@ -94,10 +95,13 @@ class AgentScheduler:
                     processed = 0
                     skipped = 0
                     errors: list[str] = []
+                    details: list[str] = []
+                    notify_attempted = notify_sent = False
                     for stock in list(context.watchlist):
                         market_def = MARKETS.get(stock.market)
                         if market_def and not market_def.is_trading_time():
                             skipped += 1
+                            details.append(f"{stock.name} {stock.symbol}：非交易时段，跳过检测")
                             logger.info(
                                 f"[调度] 跳过 {agent.display_name} {stock.symbol}（{market_def.name} 非交易时段）"
                             )
@@ -105,7 +109,17 @@ class AgentScheduler:
                         try:
                             with kline_source(f"agent:{agent_name}"):
                                 res = await agent.run_single(context, stock.symbol)  # type: ignore[attr-defined]
+                            if res is None:
+                                skipped += 1
+                                details.append(f"{stock.name} {stock.symbol}：没有可分析的行情，跳过")
+                                continue
                             processed += 1
+                            raw = res.raw_data or {}
+                            notify_attempted |= bool(raw.get("notify_attempted") or raw.get("notified") or raw.get("notify_error"))
+                            notify_sent |= bool(raw.get("notified"))
+                            reason = {"no_signal": "未触发提醒信号", "throttled": "处于通知间隔内", "suppressed": "本次禁止推送"}.get(raw.get("notify_skipped"), "未达到推送条件")
+                            outcome = "已推送" if raw.get("notified") else ("推送失败" if raw.get("notify_error") else reason)
+                            details.append(f"{stock.name} {stock.symbol}：检测完成，{outcome}\n{(res.content or '')[:1000]}")
                             try:
                                 notify_error = (
                                     (res.raw_data or {}).get("notify_error")
@@ -128,13 +142,14 @@ class AgentScheduler:
                     duration_ms = int((time.monotonic() - start) * 1000)
                     record_agent_run(
                         agent_name=agent_name,
-                        status="failed" if errors else "success",
-                        result=f"single mode executed {processed}, skipped {skipped}, total {len(context.watchlist)}",
+                        status="failed" if errors else ("success" if processed else "skipped"),
+                        result=f"检测 {processed}，跳过 {skipped}，共 {len(context.watchlist)}；推送{'成功' if notify_sent else '未发送'}\n" + "\n".join(details),
                         error="; ".join(errors),
                         duration_ms=duration_ms,
                         trace_id=trace_id,
                         trigger_source="schedule",
                         model_label=context.model_label,
+                        notify_attempted=notify_attempted, notify_sent=notify_sent,
                     )
                 else:
                     with kline_source(f"agent:{agent_name}"):

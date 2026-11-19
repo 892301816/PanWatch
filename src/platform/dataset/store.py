@@ -244,7 +244,7 @@ def recent_closes(symbols: list[str], days: int = 20) -> dict[str, list[float]]:
     return out
 
 
-def recent_bars(symbols: list[str], days: int = 20) -> dict[str, list[dict]]:
+def recent_bars(symbols: list[str], days: int = 20, *, with_dates: bool = False) -> dict[str, list[dict]]:
     """取每只股票最近 N 根日K的 OHLC(升序),供列表页迷你K线。
 
     与 recent_closes 同路数,只是多带 o/h/l;数值保留 3 位小数以控制响应体积。
@@ -257,7 +257,7 @@ def recent_bars(symbols: list[str], days: int = 20) -> dict[str, list[dict]]:
         for symbol in symbols:
             rows = db.execute(
                 text(
-                    "SELECT open, high, low, close, volume FROM daily_bars WHERE symbol = :symbol "
+                    "SELECT open, high, low, close, volume, trade_date FROM daily_bars WHERE symbol = :symbol "
                     "ORDER BY trade_date DESC LIMIT :limit"
                 ),
                 {"symbol": symbol, "limit": max(1, int(days))},
@@ -269,6 +269,7 @@ def recent_bars(symbols: list[str], days: int = 20) -> dict[str, list[dict]]:
                     "l": round(float(r[2]), 3),
                     "c": round(float(r[3]), 3),
                     "v": int(r[4] or 0),
+                    **({"d": str(r[5])} if with_dates else {}),
                 }
                 for r in rows
                 if r[0] is not None and r[1] is not None and r[2] is not None and r[3] is not None

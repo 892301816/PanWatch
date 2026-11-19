@@ -64,6 +64,8 @@ export interface ScreenerItem {
 }
 
 export interface ScreenerRunResponse {
+  refreshing?: boolean
+  data_source?: string
   trade_date: string
   /** 命中总数(分页前) */
   count: number

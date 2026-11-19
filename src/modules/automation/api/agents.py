@@ -269,13 +269,19 @@ def list_capabilities(db: Session = Depends(get_db)):
 
 
 @router.put("/{agent_name}", response_model=AgentConfigResponse)
-def update_agent(
+async def update_agent(
     agent_name: str, update: AgentConfigUpdate, db: Session = Depends(get_db)
 ):
     agent = db.query(AgentConfig).filter(AgentConfig.name == agent_name).first()
     if not agent:
         raise HTTPException(404, f"Agent {agent_name} 不存在")
 
+    if update.schedule:
+        from src.platform.scheduling.schedule_parser import parse_schedule
+        try:
+            parse_schedule(update.schedule, timezone=Settings().app_timezone)
+        except Exception as exc:
+            raise HTTPException(400, f"调度表达式无效: {exc}") from exc
     for key, value in update.model_dump(exclude_unset=True).items():
         setattr(agent, key, value)
 
@@ -287,6 +293,8 @@ def update_agent(
 
     db.commit()
     db.refresh(agent)
+    from server import refresh_agent_schedule
+    refresh_agent_schedule(agent_name)
     return _agent_to_response(agent)
 
 

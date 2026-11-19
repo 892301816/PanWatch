@@ -179,7 +179,7 @@ def get_boards(
 def list_concepts():
     """今日索引里的概念名(供条件编辑器做候选,避免手输与索引口径不一致)。"""
     trade_date = snapshot.latest_trade_date().isoformat()
-    concepts.ensure_concept_index(trade_date)
+    concepts.refresh_index_background(trade_date)
     mapping = concepts.get_concept_map(trade_date)
     seen: dict[str, int] = {}
     for cons in mapping.values():
@@ -245,14 +245,10 @@ async def parse_text(payload: ParseIn, db: Session = Depends(get_db)):
 
 @router.post("/refresh")
 def refresh_snapshot():
-    """强制刷新全市场快照与概念索引(盘后跑一次即可)。"""
-    try:
-        result = snapshot.refresh_snapshot(force=True)
-        rows = concepts.build_concept_index(result["trade_date"])
-        return {**result, "concept_rows": rows}
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("[选股] 刷新失败")
-        raise HTTPException(500, f"刷新失败: {exc}")
+    """请求后台刷新，立即返回已有快照状态。"""
+    queued = snapshot.request_refresh(force=True)
+    concepts.refresh_index_background(snapshot.latest_trade_date().isoformat())
+    return {**snapshot.snapshot_status(), "queued": queued}
 
 
 @router.get("/status")

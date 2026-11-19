@@ -70,6 +70,11 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
         ).fetchall()
     finally:
         db.close()
+    quotes = snapshot_mod.get_snapshot()
+    if snapshot_mod._MEM.get("trade_date") == trade_date:
+        rows = [r for r in rows if str(r[1]) != trade_date]
+        rows += [(q["symbol"], trade_date, q["price"], q["prev_close"]) for q in quotes
+                 if q.get("price") and q.get("prev_close")]
     if not rows:
         return []
 
@@ -91,7 +96,7 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
         return []
 
     try:
-        names = {r["symbol"]: r.get("name") or "" for r in snapshot_mod.get_snapshot()}
+        names = {r["symbol"]: r.get("name") or "" for r in quotes}
     except Exception:  # noqa: BLE001
         names = {}
 
@@ -101,6 +106,12 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
         i = day_index[trade_date]
         while i >= 0 and (symbol, dates[i]) in hit:
             streak += 1
+            if i > 0:
+                previous = date.fromisoformat(dates[i - 1]) + timedelta(days=1)
+                while previous.weekday() >= 5:
+                    previous += timedelta(days=1)
+                if previous.isoformat() != dates[i]:
+                    break
             i -= 1
         items.append(
             {
@@ -181,14 +192,14 @@ def get_zt_pool(date_str: str | None = None) -> list[dict]:
 
 
 _TECH_CACHE: dict = {"date": "", "ts": 0.0, "map": {}}
-_TECH_TTL_S = 600.0
+_TECH_TTL_S = 60.0
 _TECH_LOCK = threading.Lock()
 
 
 def _technical_map(trade_date: str) -> dict[str, dict]:
     """本地日K算出的技术指标(近20日均线/新高/量能)。
 
-    行情快照只有当天,趋势类条件必须回看日K;这里一次批量算全市场,结果缓存 10 分钟。
+    行情快照只有当天,趋势类条件必须回看日K;这里一次批量算全市场,结果缓存 1 分钟。
     ``ma20_dev`` 单位 %,``high20_gap`` 单位 %(0 = 正好新高),``amount_ratio_5d`` 倍数。
     """
     now = time.monotonic()
@@ -310,7 +321,7 @@ def ladder_is_local() -> bool:
 # 当日涨停池里的 stat_days/stat_count 只对「今天涨停」的股票有值,
 # 而"近5日有过涨停、今天回调"的股票不在今日池里 —— 必须回看历史池。
 _RECENT_ZT_CACHE: dict = {"date": "", "days": 0, "ts": 0.0, "map": {}, "local_dates": []}
-_RECENT_ZT_TTL_S = 600.0
+_RECENT_ZT_TTL_S = 60.0
 _RECENT_ZT_LOCK = threading.Lock()
 
 
@@ -330,6 +341,9 @@ def _local_limit_up_symbols(day: str) -> set[str]:
     阈值按板块:创业板/科创板 19.5%,北交所 29.5%,其余 9.5%;ST 的 5% 涨停会漏,
     但选股规则通常已排除 ST。返回空集表示本地也没有该日数据。
     """
+    if snapshot_mod._MEM.get("trade_date") == day and snapshot_mod._MEM.get("rows"):
+        return {q["symbol"] for q in snapshot_mod._MEM["rows"]
+                if q.get("price") and q.get("prev_close") and q["price"] / q["prev_close"] - 1 >= _limit_threshold(q["symbol"])}
     from sqlalchemy import text
 
     from src.platform.persistence.database import SessionLocal
@@ -372,7 +386,7 @@ def _local_limit_up_symbols(day: str) -> set[str]:
     return out
 
 
-def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
+def get_recent_limit_up(trade_date: str, days: int = 5, *, local_only: bool = False) -> dict[str, dict]:
     """近 N 个交易日的涨停统计:{symbol: {count, max_days, last_days_ago}}。
 
     节假日会返回空池,只影响计数不影响正确性(节假日本来也没有涨停)。
@@ -382,6 +396,7 @@ def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
     if (
         _RECENT_ZT_CACHE["date"] == trade_date
         and _RECENT_ZT_CACHE["days"] == days
+        and _RECENT_ZT_CACHE.get("local_only", False) == local_only
         and now - _RECENT_ZT_CACHE["ts"] <= _RECENT_ZT_TTL_S
     ):
         return _RECENT_ZT_CACHE["map"]
@@ -390,6 +405,7 @@ def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
         if (
             _RECENT_ZT_CACHE["date"] == trade_date
             and _RECENT_ZT_CACHE["days"] == days
+            and _RECENT_ZT_CACHE.get("local_only", False) == local_only
             and time.monotonic() - _RECENT_ZT_CACHE["ts"] <= _RECENT_ZT_TTL_S
         ):
             return _RECENT_ZT_CACHE["map"]
@@ -398,6 +414,8 @@ def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
         dates = _recent_weekdays(end, max(1, int(days)))
 
         def _fetch(d: date) -> tuple[date, list]:
+            if local_only:
+                return d, []
             # 东财偶发 TLS 中断,单日失败重试一次;两次都失败再由本地日K兜底
             for attempt in (1, 2):
                 try:
@@ -458,6 +476,7 @@ def get_recent_limit_up(trade_date: str, days: int = 5) -> dict[str, dict]:
             ts=time.monotonic(),
             map=result,
             local_dates=local_used,
+            local_only=local_only,
         )
         if local_used:
             logger.warning(
@@ -727,39 +746,14 @@ def run_screen(payload: dict) -> dict:
     trade_date = snapshot_mod.latest_trade_date().isoformat()
     rows = snapshot_mod.get_snapshot(force_refresh=bool(payload.get("refresh")))
 
-    concept_index.ensure_concept_index(trade_date)
+    data_date = snapshot_mod._MEM.get("trade_date") or trade_date
+    concept_index.refresh_index_background(trade_date)
     concept_map = concept_index.get_concept_map(trade_date)
-
-    # 涨停池和近5日统计都要联网,并行取并设总预算:东财不通时不能把请求拖到几十秒
-    budget = float(payload.get("remote_budget_s") or 8.0)
-    remote_timeout: list[str] = []
-    ladder_local = False
-    pool = ThreadPoolExecutor(max_workers=2)
-    try:
-        f_ladder = pool.submit(_ladder_by_symbol, trade_date)
-        f_recent = pool.submit(get_recent_limit_up, trade_date, 5)
-        done, _pending = wait([f_ladder, f_recent], timeout=budget)
-        if f_ladder in done:
-            try:
-                ladder = f_ladder.result()
-            except Exception:  # noqa: BLE001
-                ladder = {}
-        else:
-            remote_timeout.append("涨停池")
-            ladder_local = True
-            ladder = {x["symbol"]: x for x in _local_ladder(trade_date)}
-        if f_recent in done:
-            try:
-                recent_zt = f_recent.result()
-            except Exception:  # noqa: BLE001
-                recent_zt = {}
-        else:
-            remote_timeout.append("近5日涨停")
-            recent_zt = {}
-    finally:
-        # 超时的线程留在后台自己收尾,不阻塞本次响应
-        pool.shutdown(wait=False, cancel_futures=True)
-
+    # 默认选股不等待远程涨停池；封单等无法从日K推算的字段保留缺失。
+    cached_ladder = _LADDER_CACHE if _LADDER_CACHE["date"] == data_date and time.monotonic() - _LADDER_CACHE["ts"] < _LADDER_TTL_S else {}
+    ladder_local = not bool(cached_ladder.get("items"))
+    ladder = {x["symbol"]: x for x in (cached_ladder.get("items") or _local_ladder(data_date))}
+    recent_zt = get_recent_limit_up(data_date, 5, local_only=True)
     tech = _technical_map(trade_date)
     enriched: list[dict] = []
     for base in rows:
@@ -817,23 +811,23 @@ def run_screen(payload: dict) -> dict:
     local_dates = _RECENT_ZT_CACHE.get("local_dates") or []
     if local_dates:
         warnings.append(
-            f"东财涨停池暂不可用,近 5 日涨停次数已用本地日K推算({len(local_dates)} 个交易日)"
+            f"近 5 日涨停次数使用本地日K推算({len(local_dates)} 个交易日)"
         )
-    if remote_timeout:
-        warnings.append(
-            f"{'、'.join(remote_timeout)}获取超过 {int(budget)} 秒,已按本地数据降级"
-        )
-    elif not ladder:
+    if not ladder:
         warnings.append("今日涨停池为空:涨停相关字段(连板数、封板资金)可能不准确")
     elif ladder_local or ladder_is_local():
         warnings.append(
-            "涨停池暂不可用,连板数已用本地日K推算(封板资金、首封时间、炸板次数缺失)"
+            "连板数使用本地日K推算(封板资金、首封时间、炸板次数缺失)"
         )
 
+    if data_date != trade_date:
+        warnings.append(f"当前展示 {data_date} 的本地行情，最新行情在后台更新")
     warnings.extend(_concept_warnings(payload.get("conditions") or [], concept_map))
 
     return {
-        "trade_date": trade_date,
+        "trade_date": data_date,
+        "refreshing": snapshot_mod._REFRESH_STATE["running"],
+        "data_source": "local-cache",
         # count/total = 命中的总数;returned = 本次实际返回条数(分页后)
         "count": total,
         "total": total,
@@ -841,7 +835,7 @@ def run_screen(payload: dict) -> dict:
         "offset": offset,
         "universe": len(rows),
         "items": [_serialize_item(r) for r in matched],
-        "as_of": time.strftime("%H:%M"),
+        "as_of": snapshot_mod._MEM.get("updated_at") or "",
         "warnings": warnings,
         "_history": history_data,
         # 回显本次真正生效的条件,前端可直接展示,避免"条件看起来是 A、实际按 B 跑"

@@ -658,3 +658,26 @@ def concept_index_status(trade_date: str) -> dict:
             else None
         ),
     }
+
+
+_INDEX_REFRESH_LOCK = threading.Lock()
+_INDEX_REFRESH_AT = 0.0
+
+
+def refresh_index_background(trade_date: str) -> None:
+    """概念归属先读本地；更新不占用选股请求。"""
+    global _INDEX_REFRESH_AT
+    import threading
+    import time
+    if time.monotonic() - _INDEX_REFRESH_AT < 600 or not _INDEX_REFRESH_LOCK.acquire(blocking=False):
+        return
+    _INDEX_REFRESH_AT = time.monotonic()
+    def run():
+        try:
+            ensure_concept_index(trade_date)
+            _MEM.update(trade_date="", map=None)
+        except Exception:
+            logger.exception("[选股] 后台概念索引更新失败")
+        finally:
+            _INDEX_REFRESH_LOCK.release()
+    threading.Thread(target=run, name="screener-concepts", daemon=True).start()

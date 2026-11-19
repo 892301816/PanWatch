@@ -569,6 +569,7 @@ export default function AgentsPage() {
                       >
                         <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="text-[12px] text-foreground">{formatSchedule(agent.schedule)}</span>
+                        {agent.name === 'intraday_monitor' && <span className="text-[11px] text-muted-foreground">交易时段按计划检测；有信号才推送，同一股票通知间隔 {Number(agent.config.throttle_minutes ?? 30)} 分钟。每轮结果见运行记录。</span>}
                         <Settings2 className="w-3 h-3 text-muted-foreground/50" />
                       </button>
                       {agent.name === 'tradingagents' && (
@@ -720,15 +721,16 @@ export default function AgentsPage() {
                             <div key={r.id} className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="text-[11px] text-muted-foreground">
-                                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${r.status === 'failed' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${r.status === 'failed' ? 'bg-rose-500' : r.status === 'skipped' ? 'bg-zinc-400' : 'bg-emerald-500'}`} />
                                   <span className="font-mono">{r.created_at}</span>
                                   <span className="ml-2 font-mono opacity-70">{Math.round((r.duration_ms || 0) / 1000)}s</span>
                                 </div>
+                                {r.result && <div className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground">{r.result}</div>}
                                 {r.error ? (
                                   <div className="mt-0.5 text-[11px] text-rose-600 break-words">{r.error}</div>
                                 ) : null}
                               </div>
-                              <div className="text-[10px] text-muted-foreground/70 font-mono">{r.status}</div>
+                              <div className="text-[10px] text-muted-foreground/70">{({ success: '检测完成', skipped: '已跳过', failed: '失败', running: '进行中' } as Record<string, string>)[r.status] || r.status}</div>
                             </div>
                           ))}
                         </div>

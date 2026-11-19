@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ExternalLink,
   Loader2,
@@ -134,6 +134,10 @@ function conditionLabel(cond: ScreenerCondition, fields: ScreenerField[], ops: R
 }
 
 export default function ScreenerPage() {
+  const requestSeq = useRef(0)
+  const runBusy = useRef(false)
+  const [candleVersion, setCandleVersion] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   const [meta, setMeta] = useState<ScreenerMetaResponse | null>(null)
   const [view, setView] = useState<View>('screen')
 
@@ -220,9 +224,11 @@ export default function ScreenerPage() {
   const run = useCallback(
     async (
       conds: ScreenerCondition[],
-      opts?: { code?: string; logic?: 'all' | 'any'; exclude?: string[]; orderBy?: string; offset?: number; sector?: string | null }
+      opts?: { code?: string; logic?: 'all' | 'any'; exclude?: string[]; orderBy?: string; offset?: number; sector?: string | null; background?: boolean }
     ) => {
-      setRunning(true)
+      const request = ++requestSeq.current
+      runBusy.current = true
+      if (!opts?.background) setRunning(true)
       setError('')
       setConditions(conds)
       if (opts?.logic) setLogic(opts.logic)
@@ -243,10 +249,13 @@ export default function ScreenerPage() {
           order_by: opts?.orderBy || orderBy,
           limit: PAGE_SIZE,   // 服务端分页:一次只回一页
           offset,
-          save: autoSave,     // 首屏请求写入历史
+          save: opts?.background ? false : autoSave,     // 首屏请求写入历史
           code: opts?.code || activeCode,
           with_spark: false,  // 走势按页懒加载
         })
+        if (request !== requestSeq.current) return
+        setRefreshing(!!res.refreshing)
+        setCandleVersion(v => v + 1)
         setItems(res.items)
         setTotal(res.total ?? res.count)
         setTradeDate(res.trade_date)
@@ -256,15 +265,28 @@ export default function ScreenerPage() {
         setPage(Math.floor(offset / PAGE_SIZE) + 1)
         setCandlesTried({}) // 保留已抓到的K线,只重置"已尝试"标记以便刷新
       } catch (e) {
+        if (request !== requestSeq.current) return
         setError(e instanceof Error ? e.message : '选股失败')
         setItems([])
         setTotal(0)
       } finally {
-        setRunning(false)
+        if (request === requestSeq.current) { runBusy.current = false; setRunning(false) }
       }
     },
     [logic, exclude, orderBy, sectorFilter, autoSave, activeCode]
   )
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.hidden || view !== 'screen' || runBusy.current) return
+      const now = new Date()
+      const clock = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Shanghai', hour12: false }).slice(0, 5)
+      const weekday = now.toLocaleDateString('en-US', { timeZone: 'Asia/Shanghai', weekday: 'short' })
+      if (['Sat', 'Sun'].includes(weekday) || !((clock >= '09:30' && clock <= '11:30') || (clock >= '13:00' && clock <= '15:00'))) return
+      void run(conditions, { code: activeCode, offset: (page - 1) * PAGE_SIZE, background: true })
+    }, 60000)
+    return () => window.clearInterval(timer)
+  }, [view, run, conditions, activeCode, page])
 
   const applyStrategy = useCallback(
     (s: ScreenerStrategy) => {
@@ -370,8 +392,8 @@ export default function ScreenerPage() {
     }
     let alive = true
     setKline([])
-    fetchAPI<{ klines: KlineBar[] }>(`/klines/${detail.symbol}?market=CN&days=60`)
-      .then((r) => alive && setKline(r.klines || []))
+    fetchAPI<{ data: Record<string, Array<SparkBar & { d?: string }>> }>(`/dataset/spark-ohlc?symbols=${detail.symbol}&days=60&fallback=false&include_live=true`)
+      .then((r) => alive && setKline((r.data[detail.symbol] || []).map((b, i) => ({ date: b.d || String(i), open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v || 0 }))))
       .catch(() => alive && setKline([]))
     return () => {
       alive = false
@@ -590,7 +612,7 @@ export default function ScreenerPage() {
         return next
       })
     fetchAPI<{ data: Record<string, SparkBar[]> }>(
-      `/dataset/spark-ohlc?symbols=${need.join(',')}&days=20`
+      `/dataset/spark-ohlc?symbols=${need.join(',')}&days=20&fallback=false&include_live=true`
     )
       .then((r) => {
         if (!alive) return
@@ -604,7 +626,7 @@ export default function ScreenerPage() {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageKey])
+  }, [pageKey, candleVersion])
 
   const toggleSelect = (symbol: string) => {
     setSelected((prev) => {
@@ -685,7 +707,7 @@ export default function ScreenerPage() {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
-            {tradeDate && <span>数据日 {tradeDate}</span>}
+            {tradeDate && <span>数据日 {tradeDate} · 本地日K优先，盘中每分钟更新{refreshing ? ' · 行情后台刷新中' : ''}</span>}
             <button
               onClick={refreshAll}
               disabled={running}

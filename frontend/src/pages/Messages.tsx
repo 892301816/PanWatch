@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Newspaper, RefreshCw, Sparkles, Star, ExternalLink } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -19,6 +19,9 @@ interface MessageItem {
 }
 
 interface FeedResponse {
+  refreshing?: boolean
+  updated_at?: string
+  refresh_error?: string
   total: number
   returned: number
   hours: number
@@ -50,6 +53,9 @@ const CATEGORY_COLORS: Record<string, string> = {
 }
 
 export default function MessagesPage() {
+  const sequence = useRef(0)
+  const briefActive = useRef(false)
+  const briefScope = useRef('')
   const [data, setData] = useState<FeedResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -65,7 +71,9 @@ export default function MessagesPage() {
   })
 
   const load = useCallback(
-    async (withBrief = false) => {
+    async (withBrief = false, refresh = false) => {
+      const request = ++sequence.current
+      if (withBrief) briefActive.current = true
       try {
         setError('')
         const qs = new URLSearchParams({ hours: String(hours), limit: '300' })
@@ -73,13 +81,18 @@ export default function MessagesPage() {
         if (watchlistOnly) qs.set('watchlist_only', 'true')
         if (positionOnly) qs.set('position_only', 'true')
         if (withBrief) qs.set('with_brief', 'true')
+        if (refresh) qs.set('refresh', 'true')
         const res = await fetchAPI<FeedResponse>(`/messages/feed?${qs.toString()}`)
-        setData(res)
+        if (request === sequence.current) {
+          const scope = [hours, category, watchlistOnly, positionOnly].join('|')
+          if (withBrief) briefScope.current = scope
+          setData(prev => ({ ...res, brief: withBrief ? res.brief : briefScope.current === scope ? prev?.brief || res.brief : '' }))
+        }
       } catch (e) {
-        setError(e instanceof Error ? e.message : '加载失败')
+        if (request === sequence.current) setError(e instanceof Error ? e.message : '加载失败')
       } finally {
-        setLoading(false)
-        setBriefLoading(false)
+        if (request === sequence.current) setLoading(false)
+        if (withBrief) { briefActive.current = false; setBriefLoading(false) }
       }
     },
     [hours, category, watchlistOnly, positionOnly],
@@ -88,6 +101,10 @@ export default function MessagesPage() {
   useEffect(() => {
     setLoading(true)
     void load()
+    const timer = window.setInterval(() => {
+      if (!document.hidden && !briefActive.current) void load()
+    }, 10000)
+    return () => { sequence.current += 1; window.clearInterval(timer) }
   }, [load])
 
   const categories = useMemo(() => {
@@ -199,7 +216,7 @@ export default function MessagesPage() {
             </Button>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => void load(false, true)}
               className="text-muted-foreground transition-colors hover:text-primary"
               title="刷新"
             >
@@ -210,6 +227,9 @@ export default function MessagesPage() {
 
         {data && (
           <div className="mt-2 text-[11px] text-muted-foreground">
+            {data.refreshing ? '正在后台更新消息 · ' : '本地消息缓存 · '}
+            {data.updated_at ? `更新于 ${new Date(data.updated_at).toLocaleTimeString()} · ` : ''}
+            {data.refresh_error && <span className="text-amber-600">{data.refresh_error} · </span>}
             时间窗 {data.hours}h · 共 {data.total} 条 · 自选 {data.watchlist_size} 只/命中 {data.watchlist_hits} 条 · 持仓{' '}
             {data.position_size} 只/命中 {data.position_hits} 条
           </div>
@@ -234,7 +254,7 @@ export default function MessagesPage() {
         <div className="card py-10 text-center text-[12px] text-muted-foreground">加载中…</div>
       ) : !data || data.items.length === 0 ? (
         <div className="card py-10 text-center text-[12px] text-muted-foreground">
-          该条件下暂无消息
+          {data?.refreshing ? '缓存暂无消息，正在后台获取…' : '该条件下暂无消息'}
           {watchlistOnly || positionOnly
             ? ` · 试试取消「${positionOnly ? '只看持仓' : '只看自选股'}」`
             : ''}
