@@ -50,35 +50,49 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
     只能给出:代码、名称、涨跌幅、连板数、涨停统计(近似)。
     封板资金、首封时间、炸板次数这些只有东财涨停池才有,这里留空。
     """
-    from sqlalchemy import text
+    from sqlalchemy import bindparam, text
 
     from src.platform.persistence.database import SessionLocal
 
     end = date.fromisoformat(trade_date)
     since = (end - timedelta(days=max(30, days * 2))).isoformat()
+    quotes = snapshot_mod.get_snapshot()
+    live = snapshot_mod._MEM.get("trade_date") == trade_date
+    # 连板数只需要计算当日涨停股。全市场窗口函数会让 SQLite 扫描多年
+    # 的 (symbol, trade_date) 索引；先缩到几十只，再按同一索引回看历史。
+    candidates = (
+        {q["symbol"] for q in quotes if q.get("price") and q.get("prev_close")
+         and q["price"] / q["prev_close"] - 1 >= _limit_threshold(q["symbol"])}
+        if live else _local_limit_up_symbols(trade_date)
+    )
+    if not candidates:
+        return []
     db = SessionLocal()
     try:
+        dates = [str(r[0]) for r in db.execute(text(
+            "SELECT DISTINCT trade_date FROM daily_bars "
+            "WHERE trade_date BETWEEN :since AND :day ORDER BY trade_date"
+        ), {"since": since, "day": trade_date})]
         rows = db.execute(
             text(
                 "SELECT symbol, trade_date, close, prev_close FROM ("
                 "  SELECT symbol, trade_date, close,"
                 "         LAG(close) OVER (PARTITION BY symbol ORDER BY trade_date) AS prev_close"
-                "  FROM daily_bars WHERE trade_date BETWEEN :since AND :day"
+                "  FROM daily_bars WHERE symbol IN :symbols AND trade_date BETWEEN :since AND :day"
                 ") WHERE prev_close IS NOT NULL AND prev_close > 0"
-            ),
-            {"since": since, "day": trade_date},
+            ).bindparams(bindparam("symbols", expanding=True)),
+            {"since": since, "day": trade_date, "symbols": sorted(candidates)},
         ).fetchall()
     finally:
         db.close()
-    quotes = snapshot_mod.get_snapshot()
-    if snapshot_mod._MEM.get("trade_date") == trade_date:
+    if live:
         rows = [r for r in rows if str(r[1]) != trade_date]
         rows += [(q["symbol"], trade_date, q["price"], q["prev_close"]) for q in quotes
-                 if q.get("price") and q.get("prev_close")]
+                 if q["symbol"] in candidates]
+        dates = sorted(set(dates) | {trade_date})
     if not rows:
         return []
 
-    dates = sorted({str(r[1]) for r in rows})
     if trade_date not in dates:
         return []
     day_index = {d: i for i, d in enumerate(dates)}
@@ -753,21 +767,28 @@ def run_screen(payload: dict) -> dict:
     cached_ladder = _LADDER_CACHE if _LADDER_CACHE["date"] == data_date and time.monotonic() - _LADDER_CACHE["ts"] < _LADDER_TTL_S else {}
     ladder_local = not bool(cached_ladder.get("items"))
     ladder = {x["symbol"]: x for x in (cached_ladder.get("items") or _local_ladder(data_date))}
-    recent_zt = get_recent_limit_up(data_date, 5, local_only=True)
-    tech = _technical_map(trade_date)
+    # 首屏不展示的历史派生字段按条件/排序计算，避免浏览全部股票时先
+    # 为全市场加载数十万根历史K线。未计算的值保持未知，不伪装成零。
+    requested = {c.get("field") for c in (payload.get("conditions") or [])}
+    sort_parts = str(payload.get("order_by") or "change_pct desc").split()
+    requested.add(sort_parts[0] if sort_parts else "change_pct")
+    recent_fields = {"limit_up_count_5d", "limit_up_days_5d", "limit_up_last_days_ago"}
+    technical_fields = {"ma20_dev", "high20_gap", "amount_ratio_5d"}
+    recent_zt = get_recent_limit_up(data_date, 5, local_only=True) if requested & recent_fields else None
+    tech = _technical_map(trade_date) if requested & technical_fields else {}
     enriched: list[dict] = []
     for base in rows:
         symbol = base["symbol"]
         zt = ladder.get(symbol) or {}
-        recent = recent_zt.get(symbol) or {}
+        recent = (recent_zt or {}).get(symbol) or {}
         cons = concept_map.get(symbol) or []
         row = dict(base)
         row["limit_up_days"] = int(zt.get("limit_up_days") or 0)
         row["limit_up_stat_days"] = int(zt.get("stat_days") or 0)
         row["limit_up_stat_count"] = int(zt.get("stat_count") or 0)
-        row["limit_up_count_5d"] = int(recent.get("count") or 0)
-        row["limit_up_days_5d"] = int(recent.get("max_days") or 0)
-        row["limit_up_last_days_ago"] = int(recent.get("last_days_ago") or 99)
+        row["limit_up_count_5d"] = int(recent.get("count") or 0) if recent_zt is not None else None
+        row["limit_up_days_5d"] = int(recent.get("max_days") or 0) if recent_zt is not None else None
+        row["limit_up_last_days_ago"] = int(recent.get("last_days_ago", 99)) if recent_zt is not None else None
         row["seal_fund"] = zt.get("seal_fund")
         row["break_count"] = int(zt.get("break_count") or 0)
         row["first_seal_time"] = zt.get("first_seal_time") or ""
@@ -809,7 +830,7 @@ def run_screen(payload: dict) -> dict:
 
     warnings: list[str] = []
     local_dates = _RECENT_ZT_CACHE.get("local_dates") or []
-    if local_dates:
+    if recent_zt is not None and local_dates:
         warnings.append(
             f"近 5 日涨停次数使用本地日K推算({len(local_dates)} 个交易日)"
         )
@@ -895,9 +916,9 @@ def _serialize_item(row: dict) -> dict:
         "limit_up_days": row.get("limit_up_days") or 0,
         "limit_up_stat_days": row.get("limit_up_stat_days") or 0,
         "limit_up_stat_count": row.get("limit_up_stat_count") or 0,
-        "limit_up_count_5d": row.get("limit_up_count_5d") or 0,
-        "limit_up_days_5d": row.get("limit_up_days_5d") or 0,
-        "limit_up_last_days_ago": row.get("limit_up_last_days_ago") or 99,
+        "limit_up_count_5d": row.get("limit_up_count_5d"),
+        "limit_up_days_5d": row.get("limit_up_days_5d"),
+        "limit_up_last_days_ago": row.get("limit_up_last_days_ago"),
         "seal_fund": _yi(row.get("seal_fund")),
         "break_count": row.get("break_count") or 0,
         "first_seal_time": row.get("first_seal_time") or "",

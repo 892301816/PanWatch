@@ -81,10 +81,64 @@ def test_local_screen_does_not_call_remote_ladder_or_concept_builder(local_book,
     monkeypatch.setattr(engine, 'get_recent_limit_up', recent)
     monkeypatch.setattr(engine, '_ladder_by_symbol', Mock(side_effect=AssertionError('不应同步抓涨停池')))
     monkeypatch.setattr(concepts, 'ensure_concept_index', Mock(side_effect=AssertionError('不应同步建索引')))
-    result = engine.run_screen({'conditions': [], 'save': False})
+    result = engine.run_screen({'conditions': [{'field': 'limit_up_count_5d', 'op': 'gte', 'value': 0}], 'save': False})
     assert result['trade_date'] == '2026-11-18' and result['items'][0]['symbol'] == '600900'
     recent.assert_called_once_with('2026-11-18', 5, local_only=True)
     assert any('2026-11-18' in warning for warning in result['warnings'])
+
+
+def test_basic_screen_skips_unused_history_calculations(local_book, monkeypatch):
+    from src.modules.screener import engine
+    monkeypatch.setattr(engine, '_local_ladder', lambda _day: [])
+    monkeypatch.setattr(engine, '_technical_map', Mock(side_effect=AssertionError('普通首屏不应计算全市场均线')))
+    monkeypatch.setattr(engine, 'get_recent_limit_up', Mock(side_effect=AssertionError('普通首屏不应统计历史涨停')))
+    result = engine.run_screen({'conditions': [], 'save': False})
+    assert result['count'] == 1
+    assert result['items'][0]['ma20_dev'] is None
+    assert result['items'][0]['limit_up_count_5d'] is None
+
+
+@pytest.mark.parametrize('sort_only', [False, True])
+def test_technical_filter_and_sort_still_calculate_required_values(local_book, monkeypatch, sort_only):
+    from src.modules.screener import engine
+    monkeypatch.setattr(engine, '_local_ladder', lambda _day: [])
+    calculate = Mock(return_value={'600900': {'ma20_dev': 2.5}})
+    monkeypatch.setattr(engine, '_technical_map', calculate)
+    result = engine.run_screen({'save': False, 'order_by': 'ma20_dev desc' if sort_only else 'change_pct desc',
+        'conditions': [] if sort_only else [{'field': 'ma20_dev', 'op': 'gte', 'value': 2}]})
+    assert result['count'] == 1 and result['items'][0]['ma20_dev'] == 2.5
+    calculate.assert_called_once()
+
+
+def test_recent_limit_up_filter_preserves_zero_days_ago(local_book, monkeypatch):
+    from src.modules.screener import engine
+    monkeypatch.setattr(engine, '_local_ladder', lambda _day: [])
+    monkeypatch.setattr(engine, 'get_recent_limit_up', lambda *args, **kwargs: {'600900': {'count': 1, 'max_days': 1, 'last_days_ago': 0}})
+    result = engine.run_screen({'save': False, 'conditions': [{'field': 'limit_up_last_days_ago', 'op': 'eq', 'value': 0}]})
+    assert result['count'] == 1 and result['items'][0]['limit_up_last_days_ago'] == 0
+
+
+@pytest.mark.parametrize('has_previous_day,expected', [(False, 1), (True, 4)])
+def test_local_ladder_uses_cached_price_and_respects_missing_history(local_book, monkeypatch, has_previous_day, expected):
+    from src.modules.screener import snapshot, engine
+    from src.platform.persistence import database
+    from src.platform.persistence.models import DailyBar
+    db, session = local_book
+    monkeypatch.setattr(database, 'SessionLocal', session)
+    snapshot.get_snapshot()
+    snapshot._MEM.update(trade_date='2026-11-19', rows=[
+        dict(symbol='002324', name='普利特', price=13.31, prev_close=12.1),
+        dict(symbol='600900', name='长江电力', price=10, prev_close=11),
+    ])
+    db.add_all([DailyBar(symbol='002324', trade_date=day, close=close) for day, close in [
+        ('2026-11-13', 9.09), ('2026-11-16', 10), ('2026-11-17', 11),
+    ]])
+    if has_previous_day:
+        db.add(DailyBar(symbol='002324', trade_date='2026-11-18', close=12.1))
+    db.commit()
+    rows = engine._local_ladder('2026-11-19')
+    assert len(rows) == 1 and rows[0]['symbol'] == '002324'
+    assert rows[0]['limit_up_days'] == expected
 
 
 def test_messages_return_cached_items_while_external_sources_wait(monkeypatch):
