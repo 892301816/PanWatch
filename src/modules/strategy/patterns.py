@@ -52,6 +52,16 @@ FEATURES: list[dict] = [
     {"key": "profit_ratio", "label": "获利盘(近似)", "unit": "%", "group": "筹码"},
 ]
 
+from src.modules.strategy.factor_engine import FACTOR_FIELDS
+_legacy_keys={f['key']:f for f in FEATURES}
+for _f in FACTOR_FIELDS:
+    if _f['key'] in _legacy_keys:
+        _old=_legacy_keys[_f['key']]
+        _old.update({k:v for k,v in _f.items() if k not in ('label','unit','group')})
+FEATURES += [f for f in FACTOR_FIELDS if f['key'] not in _legacy_keys] + [
+    {"key":"template_entry","label":"所选模板入场信号","unit":"","group":"模板信号","kind":"boolean"},
+    {"key":"template_exit","label":"所选模板退出信号","unit":"","group":"模板信号","kind":"boolean"},
+]
 FIELD_MAP = {f["key"]: f for f in FEATURES}
 VALID_FIELDS = set(FIELD_MAP)
 
@@ -187,7 +197,7 @@ def unrepaired_gap_drop(bars: Sequence[Any], idx: int, lookback: int = GAP_DROP_
     return latest
 
 
-def compute_features(bars: Sequence[Any], idx: int) -> dict:
+def compute_features(bars: Sequence[Any], idx: int, extended: bool = True) -> dict:
     """返回 ``idx`` 当日的全部特征(键与 :data:`FEATURES` 一致,值可能为 None)。"""
     if not bars or idx < 0 or idx >= len(bars):
         return {}
@@ -213,7 +223,7 @@ def compute_features(bars: Sequence[Any], idx: int) -> dict:
     today_event = gap_drop_event(bars, idx)
     unrepaired = unrepaired_gap_drop(bars, idx)
 
-    return {
+    result = {
         "change_pct": round((price / prev - 1) * 100, 2) if prev > 0 else None,
         "runup_3d": _ret(bars, idx, 3),
         "runup_5d": _ret(bars, idx, 5),
@@ -232,6 +242,14 @@ def compute_features(bars: Sequence[Any], idx: int) -> dict:
         "gap_drop_days": int(unrepaired["days"]) if unrepaired else 0,
         "profit_ratio": _profit_ratio(bars, idx),
     }
+    if extended:
+        from src.modules.strategy.factor_engine import field_rows
+        for key,value in field_rows(bars[:idx+1])[-1].items():result.setdefault(key,value)
+    else:
+        for f in FACTOR_FIELDS:result.setdefault(f['key'],None)
+    result.update(template_entry=None,template_exit=None)
+    return result
+
 
 
 def _fmt_pct(value: Any) -> str:
@@ -371,6 +389,8 @@ def format_value(field: str, value: Any) -> str:
 
 def describe_condition(cond: dict) -> str:
     """单条条件 -> 「近3日涨跌幅 介于 -5% ~ 0%」。"""
+    if 'children' in cond:
+        return '(' + (' 且 ' if cond.get('logic','all')=='all' else ' 或 ').join(describe_condition(c) for c in cond['children']) + ')'
     field = str(cond.get("field") or "")
     op = str(cond.get("op") or "eq")
     value = cond.get("value")

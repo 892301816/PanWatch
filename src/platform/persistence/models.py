@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -1820,5 +1821,85 @@ class StrategyPlaybook(Base):
     avoid_conditions = Column(JSON, default=list)
     note = Column(String, default="")
     enabled = Column(Boolean, default=True)
+    market = Column(String, nullable=False, default="CN")
+    timing = Column(String, nullable=False, default="completed_daily")
+    active_revision_id = Column(Integer, nullable=True)
+    policy_config = Column(JSON, default=dict)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class StrategyReferenceValue(Base):
+    """Historical inputs retain availability date and source; never backfill current values."""
+    __tablename__ = 'strategy_reference_values'
+    __table_args__ = (UniqueConstraint('symbol','field','effective_date','known_at','source',name='uq_strategy_reference'),Index('ix_strategy_reference_symbol','symbol'))
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, nullable=False)
+    field = Column(String, nullable=False)
+    effective_date = Column(String, nullable=False)
+    known_at = Column(String, nullable=False)
+    value = Column(Float, nullable=False)
+    source = Column(String, nullable=False)
+
+
+class StrategyDraft(Base):
+    """Editable experiment; saving a draft never changes an active policy."""
+
+    __tablename__ = "strategy_drafts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope = Column(String, nullable=False, default="stock")
+    symbol = Column(String, nullable=False, default="")
+    market = Column(String, nullable=False, default="CN")
+    payload = Column(JSON, nullable=False, default=dict)
+    rules_hash = Column(String, nullable=False)
+    source_text = Column(Text, default="")
+    questions = Column(JSON, nullable=False, default=list)
+    archived_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class StrategyRevision(Base):
+    """Append-only applied policy, retained after edits or playbook deletion."""
+
+    __tablename__ = "strategy_revisions"
+    __table_args__ = (UniqueConstraint("scope", "symbol", "market", "version", name="uq_strategy_revision_version"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope = Column(String, nullable=False)
+    symbol = Column(String, nullable=False, default="")
+    market = Column(String, nullable=False, default="CN")
+    version = Column(Integer, nullable=False)
+    rules_hash = Column(String, nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    source_draft_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class StrategyDecision(Base):
+    """A pre-trade check and its evidence; an exception never changes its status."""
+
+    __tablename__ = "strategy_decisions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, nullable=True)
+    symbol = Column(String, nullable=False)
+    market = Column(String, nullable=False, default="CN")
+    side = Column(String, nullable=False)
+    price = Column(Float, nullable=True)
+    quantity = Column(Float, nullable=True)
+    revision_id = Column(Integer, nullable=True)
+    rules_hash = Column(String, default="")
+    input_hash = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    input_snapshot = Column(JSON, nullable=False, default=dict)
+    result = Column(JSON, nullable=False, default=dict)
+    data_as_of = Column(String, default="")
+    expires_at = Column(DateTime, nullable=False)
+    exception_reason = Column(Text, default="")
+    exception_at = Column(DateTime, nullable=True)
+    linked_trade_id = Column(Integer, ForeignKey("trade_records.id", ondelete="SET NULL"), nullable=True, unique=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+@event.listens_for(StrategyRevision, "before_update")
+def _immutable_strategy_revision(mapper, connection, target):
+    raise ValueError("生效策略版本不可修改，请创建新版本")

@@ -2361,6 +2361,32 @@ def _m135_trade_external_id(conn: Connection) -> None:
     )
 
 
+def _m136_strategy_workflow(conn: Connection) -> None:
+    """Drafts, immutable policy revisions and evidence-backed trade intentions."""
+    from src.platform.persistence.models import StrategyDraft, StrategyRevision, StrategyDecision
+
+    for table in (StrategyDraft.__table__, StrategyRevision.__table__, StrategyDecision.__table__):
+        table.create(conn, checkfirst=True)
+    if _has_table(conn, "strategy_playbooks"):
+        for column, definition in (
+            ("market", "TEXT NOT NULL DEFAULT 'CN'"),
+            ("timing", "TEXT NOT NULL DEFAULT 'completed_daily'"),
+            ("active_revision_id", "INTEGER"),
+        ):
+            _add_column_if_missing(conn, "strategy_playbooks", column, f"ALTER TABLE strategy_playbooks ADD COLUMN {column} {definition}")
+
+
+def _m137_strategy_factor_config(conn: Connection) -> None:
+    from src.platform.persistence.models import StrategyReferenceValue
+    StrategyReferenceValue.__table__.create(conn, checkfirst=True)
+    _add_column_if_missing(conn, "strategy_playbooks", "policy_config", "ALTER TABLE strategy_playbooks ADD COLUMN policy_config JSON DEFAULT '{}'")
+
+
+def _m138_strategy_draft_trash(conn: Connection) -> None:
+    if _has_table(conn, "strategy_drafts"):
+        _add_column_if_missing(conn, "strategy_drafts", "archived_at", "ALTER TABLE strategy_drafts ADD COLUMN archived_at DATETIME")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2397,6 +2423,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(133, "wealth_accounts", _m133_wealth_accounts),
     Migration(134, "strategy_playbook_avoid", _m134_strategy_playbook_avoid),
     Migration(135, "trade_external_id", _m135_trade_external_id),
+    Migration(136, "strategy_workflow", _m136_strategy_workflow),
+    Migration(137, "strategy_factor_config", _m137_strategy_factor_config),
+    Migration(138, "strategy_draft_trash", _m138_strategy_draft_trash),
 )
 
 

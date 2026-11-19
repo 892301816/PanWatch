@@ -879,9 +879,9 @@ export default function DashboardPage() {
             <button
               type="button"
               className="text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={() => navigate('/opportunities')}
+              onClick={() => navigate('/opportunities?view=opportunities&system=1')}
             >
-              进入机会页
+              进入策略中心 · 机会
             </button>
           </div>
           {opportunities.length === 0 ? (

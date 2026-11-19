@@ -1,576 +1,248 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  strategyApi,
-  type BacktestResult,
-  type StrategyCheck,
-  type StrategyCondition,
-  type StrategyField,
-  type StrategyPlaybook,
-  type StrategyPreset,
-} from '@panwatch/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { strategyApi, type BacktestOrder, type BacktestResult, type StrategyCondition, type StrategyDraft, type StrategyDraftInput, type StrategyField, type StrategyPlaybook, type StrategyPreset } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
-import { ConditionEditor, rulesText } from '@panwatch/biz-ui/components/strategy-rules'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
+import StrategyRuleEditor, { validateRuleDraft } from './StrategyRuleEditor'
+import { conditionText, rulesText } from './strategy-rules'
+import StrategyDataCoverage from './StrategyDataCoverage'
+import StrategyPortfolioBacktest from './StrategyPortfolioBacktest'
+import { strategySummary } from './strategy-description'
+export type StrategyStage = 'rules' | 'backtest' | 'apply'
 
-/** 单票策略检查 + 回测(同花顺「策略回测」的简化版)。 */
-export default function StrategyBacktest({ symbol, market = 'CN' }: { symbol: string; market?: string }) {
+type Params = { start_date: string; end_date: string; initial_capital: number; commission_rate: number; min_commission: number; stamp_duty_rate: number; transfer_fee_rate: number; slippage_bps: number }
+const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+const defaultParams = (): Params => { const end = new Date(); const start = new Date(end); start.setFullYear(start.getFullYear() - 2); return { start_date: localDate(start), end_date: localDate(end), initial_capital: 100000, commission_rate: .00025, min_commission: 5, stamp_duty_rate: .0005, transfer_fee_rate: .00001, slippage_bps: 5 } }
+const emptyDraft = (symbol: string, market: string): StrategyDraftInput => ({ scope: 'stock', symbol, market, name: '', buy: [], sell: [], avoid: [], note: '', timing: 'completed_daily', questions: [] })
+const fingerprint = (draft: StrategyDraftInput, params: Params) => JSON.stringify({ buy: draft.buy, sell: draft.sell, avoid: draft.avoid, timing: draft.timing || 'completed_daily', config: draft.config, params })
+const percentage = (value?: number) => typeof value === 'number' && Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : '--'
+const currency = (value?: number) => typeof value === 'number' && Number.isFinite(value) ? `¥${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : '--'
+const errorText = (error: unknown) => error instanceof Error ? error.message : '请求失败，请重试'
+function conditionDescription(conditions: BacktestOrder['conditions'], fields: StrategyField[]): string {
+  if (!conditions) return '此旧报告未提供逐条触发原因'
+  const groups: Array<[string, unknown[]]> = Array.isArray(conditions) ? [['', conditions]] : Object.entries(conditions)
+  const labels: Record<string, string> = { buy: '买入', sell: '卖出', avoid: '禁买' }
+  const descriptions = groups.flatMap(([group, items]) => items.map(item => {
+    if (typeof item === 'string') return item
+    if (!item || typeof item !== 'object' || !('field' in item)) return ''
+    const row = item as StrategyCondition & { actual?: unknown; matched?: boolean }
+    return `${labels[group] || group} ${conditionText(row, fields)}${row.actual != null ? `（实际 ${String(row.actual)}，${row.matched ? '命中' : '未命中'}）` : ''}`
+  })).filter(Boolean)
+  return descriptions.join('；') || '没有可解释的条件'
+}
+function feeDescription(fees: BacktestOrder['fees']): string {
+  if (typeof fees === 'number') return currency(fees)
+  if (!fees) return '未提供'
+  if (fees.explicit_fees != null) return `${currency(fees.explicit_fees)}，滑点影响 ${currency(fees.slippage_cost)}（已计入成交价）`
+  const labels: Record<string, string> = { commission: '佣金', stamp_duty: '印花税', transfer_fee: '过户费', slippage_cost: '滑点影响' }
+  return Object.entries(fees).map(([key, value]) => `${labels[key] || key} ${currency(value)}`).join('；')
+}
+
+/** One editable draft, one immutable test snapshot, and an explicit activation step. */
+export default function StrategyBacktest({ symbol: initialSymbol, market = 'CN', expanded = false, onExpandedChange, libraryDraft, onDraftSaved, guided = false, initialStage = 'rules', initialSource = '', libraryBindings = [], onStageChange, onSymbolChange }: { symbol: string; market?: string; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void; libraryDraft?: StrategyDraft; onDraftSaved?: (draft: StrategyDraft) => void; libraryBindings?: StrategyPlaybook[]; guided?: boolean; initialStage?: StrategyStage; initialSource?: string; onStageChange?: (stage: StrategyStage) => void; onSymbolChange?: (symbol: string) => void }) {
+  const [targetSymbol, setTargetSymbol] = useState(initialSymbol)
+  const [targetInput, setTargetInput] = useState(initialSymbol)
+  const symbol = libraryDraft ? targetSymbol : initialSymbol
+  const [stage, setStage] = useState<StrategyStage>(initialStage)
+  const [mode, setMode] = useState<'single' | 'portfolio'>('single')
+  const [portfolioEvidence, setPortfolioEvidence] = useState('')
+  const changeStage = (next: StrategyStage) => { setStage(next); onStageChange?.(next) }
+  useEffect(() => { setStage(initialStage) }, [initialStage])
+
   const [fields, setFields] = useState<StrategyField[]>([])
   const [presets, setPresets] = useState<StrategyPreset[]>([])
   const [playbooks, setPlaybooks] = useState<StrategyPlaybook[]>([])
-  const [check, setCheck] = useState<StrategyCheck | null>(null)
+  const [savedDrafts, setSavedDrafts] = useState<StrategyDraft[]>([])
+  const [draft, setDraft] = useState<StrategyDraftInput>(() => emptyDraft(symbol, market))
+  const [draftId, setDraftId] = useState<number>()
+  const [dirty, setDirty] = useState(false)
+  const [params, setParams] = useState<Params>(defaultParams)
+  const [recovery, setRecovery] = useState<{ draft: StrategyDraftInput; params: Params } | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [err, setErr] = useState('')
-  const [appliedPreset, setAppliedPreset] = useState<StrategyPreset | null>(null)
+  const [resultKey, setResultKey] = useState('')
+  const [resultParams, setResultParams] = useState<Params | null>(null)
+  const [testRulesHash, setTestRulesHash] = useState('')
+  const [selectedOrder, setSelectedOrder] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [applyOpen, setApplyOpen] = useState(false)
+  const [applyScope, setApplyScope] = useState<'stock' | 'global'>('stock')
+  const [confirmGlobal, setConfirmGlobal] = useState(false)
+  const [confirmUntested, setConfirmUntested] = useState(false)
+  const request = useRef(0)
+  const storageKey = libraryDraft ? `panwatch_strategy_library:${libraryDraft.id}` : `panwatch_strategy_draft:${market}:${symbol}`
+  const context = useRef(storageKey)
+  const generation = useRef(0)
+  if (context.current !== storageKey) { context.current = storageKey; generation.current += 1 }
 
-  const [buy, setBuy] = useState<StrategyCondition[]>([])
-  const [sell, setSell] = useState<StrategyCondition[]>([])
-  const [avoid, setAvoid] = useState<StrategyCondition[]>([])
-  const [name, setName] = useState('')
-  const [scope, setScope] = useState<'global' | 'stock'>('stock')
-
-  const own = playbooks.find((p) => p.scope === 'stock' && p.symbol === symbol)
-  const global = playbooks.find((p) => p.scope === 'global')
-  const effective = own || global
-
-  const load = useCallback(async () => {
-    try {
-      const list = await strategyApi.playbooks()
-      setFields(list.fields)
-      setPresets(list.presets || [])
-      setPlaybooks(list.items)
-      const mine = list.items.find((p) => p.scope === 'stock' && p.symbol === symbol)
-      const g = list.items.find((p) => p.scope === 'global')
-      const base = mine || g
-      setBuy((base?.buy as StrategyCondition[]) || list.defaults.buy)
-      setSell((base?.sell as StrategyCondition[]) || list.defaults.sell)
-      setAvoid((base?.avoid as StrategyCondition[]) || list.defaults.avoid || [])
-      setName(base?.name || '')
-      setScope(mine ? 'stock' : 'global')
-      if (base?.note && base.name) {
-        setAppliedPreset(
-          (prev) => prev || (list.presets || []).find((p) => p.name === base.name) || null,
-        )
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '策略加载失败')
-    }
-  }, [symbol])
-
-  const runCheck = useCallback(async () => {
-    try {
-      setCheck(await strategyApi.check(symbol, market))
-    } catch {
-      setCheck(null)
-    }
-  }, [symbol, market])
-
-  const runBacktest = useCallback(
-    async (
-      nextBuy: StrategyCondition[] = buy,
-      nextSell: StrategyCondition[] = sell,
-      nextAvoid: StrategyCondition[] = avoid,
-    ) => {
-      setLoading(true)
-      setErr('')
-      try {
-        const r = await strategyApi.backtest({
-          symbol,
-          market,
-          buy: nextBuy,
-          sell: nextSell,
-          avoid: nextAvoid,
-          days: 500,
-        })
-        setResult(r)
-        if (r.error) setErr(r.error)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : '回测失败')
-      } finally {
-        setLoading(false)
-      }
-    },
-    [symbol, market, buy, sell, avoid],
-  )
+  const own = playbooks.find(row => row.scope === 'stock' && row.symbol === symbol && (!row.market || row.market === market))
+  const global = playbooks.find(row => row.scope === 'global' && (!row.market || row.market === market))
+  const effective = own?.enabled ? own : global?.enabled ? global : undefined
+  const currentKey = JSON.stringify({ policy: fingerprint(draft, params), symbol, market })
+  const policyKey = JSON.stringify({ buy: draft.buy, sell: draft.sell, avoid: draft.avoid, timing: draft.timing, config: draft.config })
+  const rankOnly = draft.config?.template_id === 'factor_rank_research'
+  const portfolioFresh = !!portfolioEvidence && portfolioEvidence === policyKey
+  const fresh = !!result && !result.error && (!result.symbol || result.symbol===symbol) && resultKey === currentKey && (!result.rules_hash || result.rules_hash === testRulesHash)
+  const validated = mode === 'portfolio' ? portfolioFresh : fresh
+  const validation = validateRuleDraft(draft, fields)
 
   useEffect(() => {
-    void load()
-    void runCheck()
-    setResult(null)
-    setAppliedPreset(null)
-  }, [load, runCheck])
-
-  const save = useCallback(
-    async (
-      nextBuy: StrategyCondition[] = buy,
-      nextSell: StrategyCondition[] = sell,
-      nextAvoid: StrategyCondition[] = avoid,
-      nextName: string = name,
-      nextScope: 'global' | 'stock' = scope,
-      nextNote: string = appliedPreset?.note || '',
-    ) => {
-      setErr('')
-      setSaving(true)
+    let alive = true
+    request.current += 1
+    setLoading(true); setBusy(''); setDirty(false); setApplyOpen(false); setResult(null); setResultKey(''); setDraftId(undefined); setSavedDrafts([]); setRecovery(null); setError(''); setMessage(''); setSelectedOrder(null)
+    void strategyApi.playbooks().then(async list => {
+      if (!alive) return
+      setFields(list.fields); setPresets(list.presets || []); setPlaybooks(list.items)
+      const ownRow = list.items.find(row => row.scope === 'stock' && row.symbol === symbol && row.enabled && (!row.market || row.market === market))
+      const globalRow = list.items.find(row => row.scope === 'global' && row.enabled && (!row.market || row.market === market))
+      const active = ownRow || globalRow
+      setDraft({ ...emptyDraft(symbol, market), ...(active ? { config: active.config, name: active.name, buy: active.buy, sell: active.sell, avoid: active.avoid || [], note: active.note, timing: active.timing || 'completed_daily' } : {}) })
+      if (libraryDraft) { setDraft(libraryDraft); setDraftId(libraryDraft.id) }
+      setParams(defaultParams())
       try {
-        await strategyApi.save({
-          scope: nextScope,
-          symbol: nextScope === 'stock' ? symbol : '',
-          name: nextName || (nextScope === 'stock' ? `${symbol} 策略` : '全局策略'),
-          buy: nextBuy,
-          sell: nextSell,
-          avoid: nextAvoid,
-          note: nextNote,
-        })
-        await load()
-        await runCheck()
-        await runBacktest(nextBuy, nextSell, nextAvoid)
-        return true
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : '保存失败')
-        return false
-      } finally {
-        setSaving(false)
-      }
-    },
-    [scope, symbol, name, buy, sell, avoid, appliedPreset, load, runCheck, runBacktest],
-  )
+        const local = JSON.parse(localStorage.getItem(storageKey) || 'null')
+        if (local?.draft?.market === market && (libraryDraft || local.draft.symbol === symbol) && Array.isArray(local.draft.buy) && Array.isArray(local.draft.sell) && Array.isArray(local.draft.avoid) && local.params) setRecovery(local)
+      } catch { /* A malformed local recovery must not block the live rule. */ }
+      try { const saved = await strategyApi.drafts(symbol, market); if (alive) setSavedDrafts(saved.items) } catch { if (alive) setMessage('服务器草稿暂不可用，可继续编辑并稍后重试保存。') }
+    }).catch(e => { if (alive) setError(errorText(e)) }).finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false; request.current += 1; generation.current += 1 }
+  }, [market, storageKey])
 
-  const applyPreset = useCallback(
-    async (id: string) => {
-      const preset = presets.find((p) => p.id === id)
-      if (!preset) return
-      setBuy(preset.buy)
-      setSell(preset.sell)
-      setAvoid(preset.avoid)
-      setName(preset.name)
-      setScope('stock')
-      setAppliedPreset(preset)
-      setEditing(false)
-      await save(preset.buy, preset.sell, preset.avoid, preset.name, 'stock', preset.note)
-    },
-    [presets, save],
-  )
+  useEffect(() => { if (rankOnly) setMode('portfolio') }, [rankOnly])
 
-  const verdictClass = (v: string) =>
-    v === '符合买入'
-      ? 'text-stock-up'
-      : v === '符合卖出' || v === '禁止买入'
-        ? 'text-stock-down'
-        : v === '接近买入'
-          ? 'text-amber-500'
-          : 'text-muted-foreground'
+  useEffect(() => {
+    if (loading || recovery || !dirty) return
+    try { localStorage.setItem(storageKey, JSON.stringify({ draft, params })) } catch { /* Server saving remains available if browser storage is full. */ }
+  }, [draft, params, loading, recovery, dirty, storageKey])
 
-  const chart = useMemo(() => buildChart(result), [result])
-  const rules = result?.rules
-  const metrics = result?.metrics
-  // 只有当前策略名仍是模板名时才显示模板的一句话解读,避免手动改名后残留旧描述
-  const presetHint =
-    appliedPreset && appliedPreset.name === (effective?.name || name)
-      ? appliedPreset.description
-      : ''
-
-  return (
-    <div className="space-y-3">
-      <div className="card p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="text-[12px] font-medium">策略检查</div>
-          {check && (
-            <span className={`text-[12px] font-medium ${verdictClass(check.verdict)}`}>
-              {check.verdict}
-            </span>
-          )}
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-            {effective ? effective.name || (effective.scope === 'stock' ? '个股策略' : '全局策略') : '未配置策略'}
-          </span>
-          {check?.price != null && (
-            <span className="text-[10px] text-muted-foreground">
-              {check.price} {check.estimated ? '（盘中估算）' : ''}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-1.5">
-            {presets.length > 0 && (
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) void applyPreset(e.target.value)
-                }}
-                className="h-7 rounded border bg-background px-1.5 text-[11px] text-muted-foreground"
-                title="一键套用策略模板并回测"
-              >
-                <option value="">套用模板…</option>
-                {presets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            {effective && (
-              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => void runCheck()}>
-                重新检查
-              </Button>
-            )}
-            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEditing((v) => !v)}>
-              {editing ? '收起编辑' : '编辑策略'}
-            </Button>
-          </div>
-        </div>
-
-        {check?.pattern?.tags?.length ? (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {check.pattern.tags.map((tag) => (
-              <span key={tag} className="rounded bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {tag}
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        {check && check.has_playbook && (
-          <div className="mt-2 space-y-1.5">
-            <CheckRows title="买入（全部满足）" items={check.buy_checks} />
-            <CheckRows title="卖出（任一满足）" items={check.sell_checks} />
-            <CheckRows title="禁买（任一命中即不买）" items={check.avoid_checks || []} invert />
-            {check.pattern?.risk_hint && (
-              <div className="rounded bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
-                {check.pattern.risk_hint}
-              </div>
-            )}
-            {check.estimated && (
-              <div className="text-[10px] text-muted-foreground">盘中以现价估算，收盘后复核</div>
-            )}
-          </div>
-        )}
-        {check && !check.has_playbook && (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            还没有策略。点「编辑策略」配一条，或从右上角「套用模板」一键开始。
-          </div>
-        )}
-      </div>
-
-      {editing && (
-        <div className="card space-y-2 p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value as 'global' | 'stock')}
-              className="rounded border bg-background px-2 py-1"
-            >
-              <option value="stock">仅本股生效</option>
-              <option value="global">全局默认</option>
-            </select>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="策略名称"
-              className="w-40 rounded border bg-background px-2 py-1"
-            />
-            <Button size="sm" className="h-7 px-2 text-[11px]" disabled={saving} onClick={() => void save()}>
-              {saving ? '保存中…' : '保存并回测'}
-            </Button>
-          </div>
-          <ConditionEditor title="买入条件（全部满足）" value={buy} onChange={setBuy} fields={fields} />
-          <ConditionEditor title="卖出条件（任一满足）" value={sell} onChange={setSell} fields={fields} />
-          <ConditionEditor title="禁买条件（任一命中即不买）" value={avoid} onChange={setAvoid} fields={fields} />
-          <div className="text-[10px] text-muted-foreground">
-            个股策略会完全替换全局策略；禁买条件用来排除「高开低走未修复、大幅高开」这类形态，保存后立即用于检查与回测。
-          </div>
-        </div>
-      )}
-
-      <div className="card p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="text-[12px] font-medium">策略回测</div>
-          <span className="text-[11px] text-muted-foreground">近 2 年 · 次日开盘成交 · 含费用</span>
-          <Button
-            size="sm"
-            className="ml-auto h-7 px-3 text-[11px]"
-            disabled={loading}
-            onClick={() => void runBacktest()}
-          >
-            {loading ? '回测中…' : '运行回测'}
-          </Button>
-        </div>
-
-        {err && <div className="mt-2 text-[11px] text-destructive">{err}</div>}
-
-        {(rules || effective) && (
-          <div className="mt-2 space-y-0.5 rounded-md border border-border/50 bg-muted/20 p-2 text-[10px] text-muted-foreground">
-            <div>
-              <span className="text-stock-up">买入</span>：
-              {rulesText(rules?.buy || effective?.buy, fields, '未设置', ' 且 ')}
-            </div>
-            <div>
-              <span className="text-stock-down">卖出</span>：
-              {rulesText(rules?.sell || effective?.sell, fields, '未设置', ' 或 ')}
-            </div>
-            {(rules?.avoid?.length || effective?.avoid?.length) ? (
-              <div>
-                <span className="text-amber-500">禁买</span>：
-                {rulesText(rules?.avoid || effective?.avoid, fields, '未设置', ' 或 ')}
-              </div>
-            ) : null}
-            {presetHint && (
-              <div className="pt-0.5 text-foreground/70">交易解读：{presetHint}</div>
-            )}
-          </div>
-        )}
-
-        {result && !result.error && (
-          <>
-            <div className="mt-2 grid grid-cols-3 gap-1.5">
-              <Metric label="当前状态" value={result.current_status} />
-              <Metric label="胜率" value={`${result.win_rate}%`} />
-              <Metric
-                label="区间收益"
-                value={`${result.total_return > 0 ? '+' : ''}${result.total_return}%`}
-                tone={result.total_return >= 0 ? 'up' : 'down'}
-              />
-              <Metric
-                label="跑赢个股"
-                value={`${result.excess_return > 0 ? '+' : ''}${result.excess_return}%`}
-                tone={result.excess_return >= 0 ? 'up' : 'down'}
-              />
-              <Metric
-                label="最大回撤"
-                value={metrics ? `${metrics.max_drawdown}%` : '--'}
-                tone={metrics && metrics.max_drawdown < -20 ? 'down' : undefined}
-              />
-              <Metric
-                label="年化"
-                value={metrics ? `${metrics.annual_return > 0 ? '+' : ''}${metrics.annual_return}%` : '--'}
-                tone={metrics && metrics.annual_return >= 0 ? 'up' : 'down'}
-              />
-            </div>
-            <div className="mt-1.5 text-[10px] text-muted-foreground">
-              {result.start} ~ {result.end} · {result.trade_count} 笔 · 买入持有{' '}
-              {result.buy_hold_return > 0 ? '+' : ''}
-              {result.buy_hold_return}%
-              {metrics ? ` · 平均持有 ${metrics.avg_hold_days} 天` : ''}
-              {metrics?.profit_factor != null ? ` · 盈亏比 ${metrics.profit_factor}` : ''}
-            </div>
-            {chart && <Chart data={chart} />}
-            <div className="mt-1.5 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <i className="inline-block h-0.5 w-4 bg-sky-400" /> 区间股价
-              </span>
-              <span className="flex items-center gap-1">
-                <i className="inline-block h-0.5 w-4 bg-amber-400" /> 策略收益
-              </span>
-              <span className="flex items-center gap-1">
-                <i className="inline-block h-2 w-2 rounded-full bg-stock-up" /> 买入
-              </span>
-              <span className="flex items-center gap-1">
-                <i className="inline-block h-2 w-2 rounded-full bg-stock-down" /> 卖出
-              </span>
-            </div>
-            {result.explain && (
-              <div className="mt-2 rounded-md border border-border/50 bg-muted/20 p-2 text-[11px] leading-relaxed text-muted-foreground">
-                <div className="mb-0.5 text-[10px] font-medium text-foreground">交易解读</div>
-                {result.explain}
-              </div>
-            )}
-            {result.trades.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-auto text-[11px]">
-                <table className="w-full">
-                  <thead className="text-[10px] text-muted-foreground">
-                    <tr className="border-b">
-                      <th className="py-1 text-left font-normal">买入</th>
-                      <th className="py-1 text-left font-normal">卖出</th>
-                      <th className="py-1 text-right font-normal">收益</th>
-                      <th className="py-1 text-right font-normal">持有</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.trades.slice().reverse().map((t, i) => (
-                      <tr key={`${t.entry_date}-${i}`} className="border-b last:border-0">
-                        <td className="py-0.5">{t.entry_date.slice(5)}</td>
-                        <td className="py-0.5">{t.exit_date.slice(5)}</td>
-                        <td className={`py-0.5 text-right ${t.pnl_pct >= 0 ? 'text-stock-up' : 'text-stock-down'}`}>
-                          {t.pnl_pct > 0 ? '+' : ''}
-                          {t.pnl_pct}%
-                        </td>
-                        <td className="py-0.5 text-right text-muted-foreground">{t.hold_days}天</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Metric({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
-  return (
-    <div className="rounded-md border bg-muted/20 px-2 py-1.5">
-      <div className="text-[10px] text-muted-foreground">{label}</div>
-      <div className={`text-[13px] font-medium ${tone === 'up' ? 'text-stock-up' : tone === 'down' ? 'text-stock-down' : ''}`}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function CheckRows({
-  title,
-  items,
-  invert = false,
-}: {
-  title: string
-  items: StrategyCheck['buy_checks']
-  invert?: boolean
-}) {
-  if (!items.length) return null
-  return (
-    <div>
-      <div className="text-[10px] text-muted-foreground">{title}</div>
-      {items.map((c) => {
-        const good = invert ? !c.ok : c.ok
-        return (
-          <div key={`${title}-${c.field}`} className="flex items-center gap-2 text-[11px]">
-            <span className={good ? 'text-stock-up' : 'text-muted-foreground'}>
-              {invert ? (c.ok ? '✗' : '✓') : c.ok ? '✓' : '✗'}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{c.label}</span>
-            <span className="text-muted-foreground">{c.expect}</span>
-            <span className={good ? 'text-foreground' : 'text-muted-foreground'}>{c.actual}</span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-interface ChartPoint {
-  x: number
-  priceY: number
-  equityY: number
-  buy: boolean
-  sell: boolean
-}
-
-interface ChartData {
-  points: ChartPoint[]
-  ticks: number[]
-  y: (v: number) => number
-  xLabels: Array<{ x: number; label: string }>
-}
-
-const CHART = { W: 340, H: 180, PL: 38, PR: 6, PT: 8, PB: 18 }
-
-function niceTicks(min: number, max: number): number[] {
-  const span = max - min || 1
-  const raw = span / 4
-  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-6))))
-  const step =
-    [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= 5.5) || mag * 10
-  const start = Math.ceil(min / step) * step
-  const out: number[] = []
-  for (let v = start; v <= max + 1e-9; v += step) {
-    out.push(Math.round(v * 10) / 10)
+  const updateDraft = (next: StrategyDraftInput) => { setDraft(next); setDirty(true); setMessage('草稿已修改，正在使用的策略没有变化。') }
+  const updateParams = (next: Params) => { setParams(next); setDirty(true) }
+  const rememberDraft = (saved: StrategyDraft) => { setDraftId(saved.draft_id || saved.id); setSavedDrafts(rows => [saved, ...rows.filter(row => row.id !== saved.id)]) }
+  const persist = async (scope: 'stock' | 'global' = 'stock') => {
+    const origin = generation.current
+    const saved = await strategyApi.saveDraft({ ...draft, enabled: true, draft_id: libraryDraft ? draftId : scope === 'stock' ? draftId : undefined, name: draft.name.trim() || `${symbol} 策略草稿`, scope: libraryDraft ? draft.scope : scope, symbol: libraryDraft ? draft.symbol : scope === 'stock' ? symbol : '', market })
+    if ((libraryDraft || scope === 'stock') && origin === generation.current) { rememberDraft(saved); onDraftSaved?.(saved) }
+    return saved
   }
-  return out
+  const saveDraft = async () => {
+    const origin = generation.current
+    setBusy('save'); setError('')
+    try { await persist(); if (generation.current !== origin) return; setDirty(false); localStorage.removeItem(storageKey); setMessage('草稿已保存到服务器，尚未应用。') } catch (e) { if (generation.current === origin) setError(errorText(e)) } finally { if (generation.current === origin) setBusy('') }
+  }
+  const makeAiDraft = async (text: string) => {
+    const origin = generation.current
+    setBusy('ai'); setError('')
+    try { const saved = await strategyApi.aiDraft({ text, draft_id: draftId, expected_hash: libraryDraft?.rules_hash || savedDrafts.find(row=>row.id===draftId)?.rules_hash, scope: libraryDraft ? draft.scope : 'stock', symbol: libraryDraft ? draft.symbol : symbol, market }); if (generation.current !== origin) return; setDraft(saved); rememberDraft(saved); onDraftSaved?.(saved); setMessage('AI 草稿已生成。请逐条核对；仍未改变生效策略。') } catch (e) { if (generation.current === origin) setError(errorText(e)) } finally { if (generation.current === origin) setBusy('') }
+  }
+  const runBacktest = async () => {
+    if (rankOnly) { setMode('portfolio'); setError('因子排名需要同日股票池，请使用组合回测'); return }
+    if (!symbol) { setError('请先选择验证标的，再运行回测。'); return }
+    const errors = validateRuleDraft(draft, fields)
+    if (errors.length) { setError(errors.join('；')); return }
+    if (!params.start_date || !params.end_date || params.start_date > params.end_date || params.initial_capital <= 0 || Object.values(params).some(value => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) { setError('请填写有效的起止日期、正数资金和非负费用参数。'); return }
+    const seq = ++request.current
+    const snapshot = currentKey
+    setBusy('backtest'); setError('')
+    try {
+      const saved = await persist()
+      if (request.current !== seq) return
+      const tested = await strategyApi.backtest({ symbol, market, draft_id: saved.id, buy: draft.buy, sell: draft.sell, avoid: draft.avoid, days: 5000, ...params })
+      if (request.current !== seq) return
+      setResult(tested); setResultKey(snapshot); setResultParams({ ...params }); setTestRulesHash(saved.rules_hash); setSelectedOrder(null)
+      if (libraryDraft) onDraftSaved?.(saved)
+      if (tested.error) setError(tested.error)
+      else setMessage('回测完成。结果对应这份规则快照，尚未应用。')
+    } catch (e) { if (request.current === seq) setError(errorText(e)) } finally { if (request.current === seq) setBusy('') }
+  }
+  const activate = async () => {
+    if (applyScope === 'stock' && !symbol) { setError('请先选择要应用的标的。'); return }
+    if (validation.length || (!validated && !confirmUntested) || (applyScope === 'global' && !confirmGlobal)) return
+    const origin = generation.current
+    setBusy('apply'); setError('')
+    try {
+      const saved = await persist(applyScope)
+      if (generation.current !== origin) return
+      if (libraryDraft) await strategyApi.applyLibrary(saved.id, { scope: applyScope, symbol: applyScope === 'stock' ? symbol : '', expected_hash: saved.rules_hash })
+      else await strategyApi.activateDraft(saved.id)
+      if (generation.current !== origin) return
+      const list = await strategyApi.playbooks()
+      if (generation.current !== origin) return
+      setPlaybooks(list.items); setApplyOpen(false); onDraftSaved?.(saved); setMessage(applyScope === 'stock' ? '已应用到本股，之后的操作检查使用此版本。' : '已更新默认策略，未单独绑定策略的股票将使用此版本。')
+    } catch (e) { if (generation.current === origin) setError(errorText(e)) } finally { if (generation.current === origin) setBusy('') }
+  }
+  const manageOwn = async (action: 'toggle' | 'remove') => {
+    if (!own || !window.confirm(action === 'remove' ? '删除本股生效规则？删除后将继承已启用的默认规则，草稿与回测记录不受影响。' : `${own.enabled ? '停用' : '启用'}本股规则？`)) return
+    const origin = generation.current
+    setBusy('manage'); setError('')
+    try {
+      if (action === 'remove') await strategyApi.remove(own.id); else if (libraryDraft) await strategyApi.setBindingEnabled(own.id, !own.enabled); else await strategyApi.save({ ...own, enabled: !own.enabled })
+      if (generation.current !== origin) return
+      const list = await strategyApi.playbooks()
+      if (generation.current !== origin) return
+      setPlaybooks(list.items); setMessage('生效规则已更新，回测草稿没有变化。')
+    } catch (e) { if (generation.current === origin) setError(errorText(e)) } finally { if (generation.current === origin) setBusy('') }
+  }
+
+  const orders = useMemo<BacktestOrder[]>(() => result?.orders || (result?.trades || []).flatMap(trade => [{ signal_date: trade.entry_signal_date || trade.entry_date, execution_date: trade.entry_date, side: 'buy', status: 'filled', price: trade.entry_price, quantity: trade.quantity, fees: trade.buy_fees, conditions: trade.trigger_conditions?.entry || trade.entry_conditions }, { signal_date: trade.exit_signal_date || trade.exit_date, execution_date: trade.exit_date, side: 'sell', status: 'filled', price: trade.exit_price, quantity: trade.quantity, fees: trade.sell_fees, conditions: trade.trigger_conditions?.exit || trade.exit_conditions }]), [result])
+  const selected = selectedOrder == null ? undefined : orders[selectedOrder]
+
+  if (loading) return <div className="py-8 text-sm text-muted-foreground" role="status">正在读取生效规则与草稿…</div>
+  return <div className="space-y-5 text-sm">
+
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-medium">{guided ? draft.name || '编辑策略' : `${symbol || '通用策略'} · 策略与回测`}</h2><p className="mt-1 text-sm text-muted-foreground">先写规则，再验证，确认后才应用。历史收益不代表未来表现。</p></div>{onExpandedChange && <Button variant="outline" onClick={() => onExpandedChange(!expanded)}>{expanded ? '收起全屏' : '全屏展开'}</Button>}</header>
+    {guided && <nav className="sc-stepbar" aria-label="策略设置步骤">{([['rules','1. 确认规则','买入、退出与禁买'],['backtest','2. 历史验证','单股信号或组合资金'],['apply','3. 用于操作检查','确认实际使用范围']] as const).map(([key,label,desc])=><button key={key} disabled={!!busy} aria-current={stage===key?'step':undefined} onClick={()=>changeStage(key)}>{label}<small>{desc}</small></button>)}</nav>}
+    {guided && libraryDraft && stage !== 'rules' && <form className="mb-5 flex flex-wrap items-end gap-3" onSubmit={e=>{e.preventDefault();const ticker=targetInput.trim().toUpperCase();if(!ticker||(market==='CN'&&!/^\d{6}$/.test(ticker))){setError('请填写有效证券代码，A股为6位数字');return}setTargetSymbol(ticker);onSymbolChange?.(ticker);setError('')}}><label className="text-sm">{stage==='apply'?'应用到个股时选择标的':'验证标的（组合回测无需单独选择）'}<input aria-label="验证标的" className="mt-2 block rounded-lg border border-border bg-background px-3 py-2" value={targetInput} disabled={!!busy||libraryDraft.scope==='stock'} onChange={e=>setTargetInput(e.target.value)} placeholder="例如 600000" /></label><Button variant="secondary" disabled={!!busy||libraryDraft.scope==='stock'} type="submit">确认标的</Button>{symbol&&<span className="pb-2 text-sm text-muted-foreground">当前 {symbol}</span>}</form>}
+    <section className="rounded-xl border border-border bg-muted/20 p-4" aria-label="当前生效规则"><div className="flex flex-wrap items-center justify-between gap-3"><div><span className="text-xs text-muted-foreground">当前生效</span><p className="mt-1 font-medium">{libraryDraft && !symbol ? libraryBindings.some(row=>row.enabled) ? libraryBindings.filter(row=>row.enabled).map(row=>`${row.scope==='global'?'默认':row.symbol} · v${row.version||'?'}`).join('；') : '这份策略尚未用于操作检查' : effective ? `${effective.name || '未命名策略'} · ${effective.scope === 'stock' ? '本股规则' : '继承默认'}${effective.version ? ` · v${effective.version}` : ''}` : '未启用规则'}</p></div>{own && <div className="flex gap-2"><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void manageOwn('toggle')}>{own.enabled ? '停用本股规则' : '启用本股规则'}</Button><Button size="sm" variant="destructive" disabled={!!busy} onClick={() => void manageOwn('remove')}>删除本股规则</Button></div>}</div><p className="mt-2 text-xs leading-6 text-muted-foreground">草稿、模板和回测都不会自动替换此规则。个股规则完全覆盖默认规则。</p>{effective && <details className="mt-3 text-sm"><summary className="cursor-pointer text-primary">查看生效规则</summary><div className="mt-2 space-y-1 leading-6 text-muted-foreground"><p>买入：{rulesText(effective.buy, fields, '不产生买入信号', ' 且 ')}</p><p>卖出：{rulesText(effective.sell, fields, '不产生主动卖出信号', ' 或 ')}</p><p>禁买：{rulesText(effective.avoid, fields, '无额外禁买限制', ' 或 ')}</p></div></details>}</section>
+    {error && <p className="rounded-lg border border-destructive/30 p-3 text-destructive" role="alert">{error}</p>}
+    {message && <p className="rounded-lg bg-muted p-3 text-sm" role="status">{message}</p>}
+    {recovery && <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 p-4"><span>发现上次留在本机的草稿。</span><Button size="sm" variant="secondary" onClick={() => { setDraft(recovery.draft); setDirty(true); setParams({ ...defaultParams(), ...recovery.params }); setRecovery(null); setMessage('已恢复本机草稿，尚未应用。') }}>恢复未保存草稿</Button><Button size="sm" variant="ghost" onClick={() => { localStorage.removeItem(storageKey); setRecovery(null) }}>忽略并使用生效规则副本</Button></div>}
+    <div className={expanded && !guided ? 'grid items-start gap-6 xl:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)]' : 'space-y-6'}>
+      <section className="min-w-0 rounded-xl border border-border p-4 md:p-5" aria-label="策略草稿" hidden={guided && stage!=='rules'}><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">1. 编辑草稿</h3>{!libraryDraft && <label className="text-xs text-muted-foreground">服务器草稿<select aria-label="恢复服务器草稿" value="" disabled={!!busy} className="ml-2 max-w-44 rounded-lg border border-border bg-background p-2" onChange={e => { const saved = savedDrafts.find(row => row.id === Number(e.target.value)); if (saved) { setDraft({ ...saved, scope: 'stock', symbol, market }); setDraftId(saved.scope === 'stock' && saved.symbol === symbol ? saved.id : undefined); setDirty(false); setMessage(saved.scope === 'global' ? '已复制默认草稿到本股，原草稿和生效规则均未改变。' : '服务器草稿已恢复，尚未应用。') } }}><option value="">选择已保存草稿</option>{savedDrafts.map(row => <option key={row.id} value={row.id}>{row.name || `草稿 ${row.id}`}</option>)}</select></label>}</div>
+        <StrategyRuleEditor value={draft} onChange={updateDraft} fields={fields} presets={presets} busy={!!busy} guided={guided} initialMode={initialSource} onAiDraft={makeAiDraft} />
+        <div className="mt-5 flex flex-wrap gap-2"><Button variant="secondary" disabled={!!busy} onClick={() => void saveDraft()}>{busy === 'save' ? '保存中…' : '保存草稿'}</Button>{guided && <Button disabled={!!busy || !!validation.length} onClick={()=>changeStage('backtest')}>确认规则，去回测</Button>}<Button variant="ghost" disabled={!!busy} onClick={() => { if (libraryDraft) { updateDraft({ ...draft, buy: [], sell: [], avoid: [], config: {}, questions: [], note: '' }) } else { updateDraft(emptyDraft(symbol, market)); setDraftId(undefined) } setMessage('已清空草稿规则，生效策略没有变化。') }}>从空白规则开始</Button></div>
+      </section>
+      <section className="min-w-0 space-y-5" aria-label="回测与应用" hidden={guided && stage==='rules'}>
+        <div hidden={guided && stage==='apply'}>
+          <div className="mb-5 grid gap-3 sm:grid-cols-2"><button className="rounded-lg border p-4 text-left" aria-pressed={mode==='single'} disabled={!!busy||rankOnly} onClick={()=>setMode('single')}><span className="block font-medium">看一只股票的买卖点</span><span className="mt-1 block text-xs text-muted-foreground">逐笔核对信号与成交原因</span></button><button className="rounded-lg border p-4 text-left" aria-pressed={mode==='portfolio'} disabled={!!busy} onClick={()=>setMode('portfolio')}><span className="block font-medium">看一组股票的资金表现</span><span className="mt-1 block text-xs text-muted-foreground">共享资金、持仓数量与因子排序</span></button></div>
+          {rankOnly && <p className="mb-4 text-sm text-muted-foreground">这是同日因子排名策略，只能使用组合回测</p>}
+          <div hidden={mode!=='single'||rankOnly} className="rounded-xl border border-border p-4 md:p-5"><h3 className="text-base font-medium">单股回测</h3><p className="mt-1 text-xs leading-6 text-muted-foreground">日线收盘产生信号，下一交易日开盘尝试成交；同时对照直接买入并持有。</p><fieldset disabled={!!busy} className="mt-4 grid gap-3 sm:grid-cols-3"><label>开始日期<input aria-label="回测开始日期" type="date" className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={params.start_date} onChange={e => updateParams({ ...params, start_date: e.target.value })} /></label><label>结束日期<input aria-label="回测结束日期" type="date" className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={params.end_date} onChange={e => updateParams({ ...params, end_date: e.target.value })} /></label><label>初始资金（元）<input aria-label="回测初始资金" type="number" min={1} className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={params.initial_capital} onChange={e => updateParams({ ...params, initial_capital: Number(e.target.value) })} /></label></fieldset>
+          <details className="mt-3"><summary className="cursor-pointer text-xs text-muted-foreground">费用与成交假设</summary><fieldset disabled={!!busy} className="mt-3 grid gap-3 sm:grid-cols-2">{([['commission_rate', '佣金费率'], ['min_commission', '最低佣金（元）'], ['stamp_duty_rate', '卖出印花税率'], ['transfer_fee_rate', '过户费率'], ['slippage_bps', '滑点（基点）']] as const).map(([key, label]) => <label key={key} className="text-xs">{label}<input aria-label={label} type="number" min={0} step="any" className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={params[key]} onChange={e => updateParams({ ...params, [key]: Number(e.target.value) })} /></label>)}</fieldset><p className="mt-2 text-xs text-muted-foreground">费率使用小数，例如 0.00025 = 0.025%；与券商的实际成交可能不同。</p></details>
+          <Button className="mt-4" disabled={!!busy} onClick={() => void runBacktest()}>{busy === 'backtest' ? '回测中…' : '运行草稿回测'}</Button>
+        </div>
+        <div hidden={mode!=='portfolio'&&!rankOnly}><StrategyPortfolioBacktest key={storageKey} storageKey={storageKey} embedded policyKey={policyKey} onEvidenceChange={valid=>setPortfolioEvidence(valid?policyKey:'')} disabled={!!busy||!!validation.length} prepare={async()=>{const errors=validateRuleDraft(draft,fields);if(errors.length)throw new Error(errors.join('；'));return persist()}}/></div>
+        {mode==='single' && !rankOnly && result && <section className="rounded-xl border border-border p-4 md:p-5" aria-label="回测结果"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold">回测结果</h3><span className={fresh ? 'text-xs text-muted-foreground' : 'text-xs text-amber-600 dark:text-amber-400'}>{fresh ? '对应当前草稿与参数' : '规则或参数已变化，旧结果不代表当前草稿'}</span></div>{!result.error && <>
+          <p className="mt-2 text-xs text-muted-foreground">实际区间 {result.start} — {result.end} · {result.bars} 根日K{result.backtest_id ? ` · 报告 #${result.backtest_id}` : ''}</p>
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="策略收益" value={percentage(result.total_return)} /><Metric label="买入持有收益" value={percentage(result.buy_hold_return)} description="区间首末收盘价涨跌，不含交易成本" /><Metric label="超额收益" value={percentage(result.excess_return)} description="策略净收益与上述价格基准之差" /><Metric label="最大回撤" value={percentage(result.metrics?.max_drawdown)} /></div>
+          <p className="my-4 text-xs leading-6 text-muted-foreground">已结束交易 {result.trade_count} 笔 · 胜率 {percentage(result.win_rate)} · 期末 {result.current_status} · 初始资金 {currency(result.initial_capital ?? resultParams?.initial_capital)}{result.open_position ? ' · 含未平仓市值，不将其算为已结束交易' : ''}</p>
+          <ResultChart result={result} orders={orders} selectedOrder={selectedOrder} onSelectOrder={setSelectedOrder} />
+          <div className="mt-3 space-y-1 rounded-lg bg-muted/30 p-3 text-xs leading-6"><p>买入：{strategySummary({buy:result.rules?.buy||[],sell:result.rules?.sell||[],avoid:result.rules?.avoid||[],config:result.rules_snapshot?.config as StrategyDraftInput['config']},fields,presets).buy}</p><p>卖出：{rulesText(result.rules?.sell, fields, '不产生主动卖出信号', ' 或 ')}</p><p>禁买：{rulesText(result.rules?.avoid, fields, '无额外禁买限制', ' 或 ')}</p></div>
+          {!!orders.length && <div className="mt-4"><h4 className="font-medium">信号与成交</h4><div className="mt-2 max-h-56 overflow-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-card"><tr><th className="p-2">方向 / 信号日</th><th className="p-2">成交日</th><th className="p-2 text-right">成交价</th><th className="p-2">状态</th></tr></thead><tbody>{orders.map((order, index) => <tr key={index} className={selectedOrder === index ? 'bg-primary/10' : ''}><td className="p-2"><button className="min-h-8 text-primary underline-offset-4 hover:underline" onClick={() => setSelectedOrder(index)}>{order.side === 'buy' ? '买入' : '卖出'} · {order.signal_date}</button></td><td className="p-2">{order.execution_date || '未成交'}</td><td className="p-2 text-right">{currency(order.fill_price ?? order.price)}</td><td className="p-2">{order.status === 'filled' ? '已成交' : '未成交'}</td></tr>)}</tbody></table></div></div>}
+          {selected && <div className="mt-3 rounded-lg border border-border p-3 text-sm leading-7" role="region" aria-label="所选成交解读"><p className="font-medium">{selected.side === 'buy' ? '买入' : '卖出'}：{selected.signal_date} 收盘后发出信号</p><p>{selected.execution_date || '未成交'} · {currency(selected.fill_price ?? selected.price)} · {selected.quantity ?? '--'} 股</p><p>费用：{feeDescription(selected.fees)}</p><p>原因：{selected.reason || conditionDescription(selected.conditions, fields)}</p></div>}
+          {result.explain && <p className="mt-4 text-sm leading-7 text-muted-foreground">{result.explain}</p>}
+          <p className="mt-4 text-xs leading-6 text-muted-foreground">数据：{result.data_info?.source || '由后端行情源提供'} · {result.data_info?.adjustment || '复权口径见数据源'}{result.data_info?.warmup_bars != null ? ` · 预热 ${result.data_info.warmup_bars} 根` : ''}</p>
+          <details className="mt-2 text-xs leading-6 text-muted-foreground"><summary className="cursor-pointer text-primary">数据来源与回测假设</summary><p className="mt-2">实际区间 {result.data_info?.actual_start || result.start} — {result.data_info?.actual_end || result.end}。费用及滑点使用本次回测参数，收益比较口径见主指标说明。</p><ul className="mt-2 list-disc space-y-1 pl-4">{(result.data_info?.limitations?.length ? result.data_info.limitations : ['单票全仓进出，历史撮合与真实市场存在差异。']).map((limitation, index) => <li key={index}>{limitation}</li>)}</ul></details>
+        </>}{result.error && <p className="mt-3 text-destructive">{result.error}</p>}</section>}
+        <div className="mt-5"><StrategyDataCoverage key={symbol} symbol={symbol}/></div>
+        {guided&&<div className="sc-foot"><Button variant="ghost" onClick={()=>changeStage('rules')}>返回修改规则</Button><Button disabled={!!busy} onClick={()=>changeStage('apply')}>{validated?'核对结果，选择使用范围':'查看使用范围（尚未验证）'}</Button></div>}
+        </div>
+        <section hidden={guided && stage!=='apply'} className="rounded-xl border border-border p-4 md:p-5"><h3 className="text-base font-medium">用于操作检查</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">应用后，操作前检查才会使用这份规则。回测不会替你下单，也不会自动改变持仓。</p><Button className="mt-4" variant="secondary" disabled={!!busy || !!validation.length} onClick={() => { setApplyScope('stock'); setConfirmGlobal(false); setConfirmUntested(false); setApplyOpen(true) }}>选择应用范围</Button>{!!validation.length && <p className="mt-2 text-xs text-muted-foreground">{validation[0]}</p>}</section>
+      </section>
+    </div>
+    <Dialog open={applyOpen} onOpenChange={setApplyOpen}><DialogContent className={guided ? "strategy-dialog max-w-lg" : "max-w-lg"}><DialogHeader><DialogTitle>确认应用这份规则</DialogTitle><DialogDescription>此操作会替换正在使用的规则；草稿保存和回测本身不会生效。</DialogDescription></DialogHeader><fieldset disabled={!!busy} className="space-y-3 text-sm"><label className="flex items-start gap-3"><input type="radio" name="apply-scope" checked={applyScope === 'stock'} onChange={() => setApplyScope('stock')} className="mt-1" /><span>仅应用到 {symbol || '个股（先选择标的）'}<span className="block text-xs text-muted-foreground">替换本股规则，其他股票不受影响。</span></span></label><label className="flex items-start gap-3"><input type="radio" name="apply-scope" checked={applyScope === 'global'} onChange={() => setApplyScope('global')} className="mt-1" /><span>设为默认规则<span className="block text-xs text-muted-foreground">影响所有没有单独规则的股票。</span></span></label>{applyScope === 'global' && <label className="flex gap-3 rounded-lg bg-amber-500/10 p-3"><input type="checkbox" checked={confirmGlobal} onChange={e => setConfirmGlobal(e.target.checked)} /><span>我确认要更改默认规则，并理解本股回测不能证明其他股票适用。</span></label>}{!validated && <label className="flex gap-3 rounded-lg bg-amber-500/10 p-3"><input type="checkbox" checked={confirmUntested} onChange={e => setConfirmUntested(e.target.checked)} /><span>当前草稿与参数尚无匹配的成功回测。我已了解，仍要应用。</span></label>}</fieldset>{error && <p className="text-sm text-destructive" role="alert">{error}</p>}<div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => setApplyOpen(false)}>取消</Button><Button disabled={!!busy || (applyScope === 'stock' && !symbol) || (!validated && !confirmUntested) || (applyScope === 'global' && !confirmGlobal)} onClick={() => void activate()}>{busy === 'apply' ? '应用中…' : applyScope === 'stock' ? '确认应用到本股' : '确认更新默认规则'}</Button></div></DialogContent></Dialog>
+  </div>
 }
 
-function buildChart(result: BacktestResult | null): ChartData | null {
-  if (!result || !result.curve?.length) return null
-  const { W, H, PL, PR, PT, PB } = CHART
-  const values = result.curve.flatMap((p) => [p.price_pct, p.equity_pct])
-  const min = Math.min(...values, 0)
-  const max = Math.max(...values, 0)
-  const ticks = niceTicks(min, max)
-  const lo = Math.min(min, ticks[0] ?? min)
-  const hi = Math.max(max, ticks[ticks.length - 1] ?? max)
-  const span = hi - lo || 1
-  const y = (v: number) => PT + ((hi - v) / span) * (H - PT - PB)
-  const n = result.curve.length
-  const px = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR)
-  const buys = new Set(result.trades.map((t) => t.entry_date))
-  const sells = new Set(result.trades.map((t) => t.exit_date))
-  const points = result.curve.map((p, i) => ({
-    x: px(i),
-    priceY: y(p.price_pct),
-    equityY: y(p.equity_pct),
-    buy: p.buy ?? buys.has(p.date),
-    sell: p.sell ?? sells.has(p.date),
-  }))
-  const idx = [0, Math.floor((n - 1) / 2), n - 1]
-  const xLabels = idx.map((i) => ({
-    x: px(i),
-    label: (result.curve[i]?.date || '').slice(5),
-  }))
-  return { points, ticks, y, xLabels }
-}
+function Metric({ label, value, description }: { label: string; value: string; description?: string }) { return <div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">{label}</p><strong className="mt-1 block text-lg font-semibold tabular-nums">{value}</strong>{description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}</div> }
 
-function Chart({ data }: { data: ChartData }) {
-  const { W, H, PL, PR, PB } = CHART
-  const pricePath = data.points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.priceY.toFixed(1)}`)
-    .join(' ')
-  const equityPath = data.points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.equityY.toFixed(1)}`)
-    .join(' ')
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="mt-2 h-auto w-full"
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="策略收益曲线"
-    >
-      {data.ticks.map((tick) => (
-        <g key={tick}>
-          <line
-            x1={PL}
-            y1={data.y(tick)}
-            x2={W - PR}
-            y2={data.y(tick)}
-            stroke="currentColor"
-            strokeOpacity={tick === 0 ? 0.28 : 0.08}
-            strokeWidth={0.8}
-          />
-          <text
-            x={PL - 4}
-            y={data.y(tick) + 3}
-            textAnchor="end"
-            fontSize="8"
-            fill="currentColor"
-            fillOpacity="0.55"
-          >
-            {tick}%
-          </text>
-        </g>
-      ))}
-      <path d={pricePath} fill="none" stroke="#38bdf8" strokeWidth="1.2" />
-      <path d={equityPath} fill="none" stroke="#fbbf24" strokeWidth="1.4" />
-      {data.points.map((p, i) =>
-        p.buy ? (
-          <circle key={`b${i}`} cx={p.x} cy={p.priceY} r="2.6" fill="#F04438" stroke="#fff" strokeWidth="0.6" />
-        ) : null,
-      )}
-      {data.points.map((p, i) =>
-        p.sell ? (
-          <circle key={`s${i}`} cx={p.x} cy={p.priceY} r="2.6" fill="#12B76A" stroke="#fff" strokeWidth="0.6" />
-        ) : null,
-      )}
-      {data.xLabels.map((item, i) => (
-        <text
-          key={`x${i}`}
-          x={item.x}
-          y={H - PB + 10}
-          textAnchor={i === 0 ? 'start' : i === data.xLabels.length - 1 ? 'end' : 'middle'}
-          fontSize="8"
-          fill="currentColor"
-          fillOpacity="0.55"
-        >
-          {item.label}
-        </text>
-      ))}
-    </svg>
-  )
+function ResultChart({ result, orders, selectedOrder, onSelectOrder }: { result: BacktestResult; orders: BacktestOrder[]; selectedOrder: number | null; onSelectOrder: (index: number) => void }) {
+  const curve = result.curve || []
+  if (!curve.length) return <p className="text-sm text-muted-foreground">此报告未提供收益曲线。</p>
+  const w = 760, h = 280, left = 48, top = 16, bottom = 32
+  const values = curve.flatMap(point => [point.price_pct, point.equity_pct]).filter(Number.isFinite)
+  const low = Math.min(0, ...values), high = Math.max(0, ...values), span = high - low || 1
+  const x = (index: number) => left + index / Math.max(1, curve.length - 1) * (w - left - 16)
+  const y = (value: number) => top + (high - value) / span * (h - top - bottom)
+  const path = (key: 'price_pct' | 'equity_pct') => curve.map((point, index) => `${index ? 'L' : 'M'}${x(index)},${y(point[key])}`).join(' ')
+  return <div><div className="overflow-x-auto"><svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[640px]" role="group" aria-label="同一区间策略收益与买入持有收益，买卖点可点击查看成交原因">{[0, .25, .5, .75, 1].map(tick => { const value = low + tick * span; return <g key={tick}><line x1={left} x2={w - 16} y1={y(value)} y2={y(value)} stroke="currentColor" opacity=".12" /><text x={left - 5} y={y(value) + 4} fontSize="14" textAnchor="end" fill="currentColor">{value.toFixed(0)}%</text></g> })}<path d={path('price_pct')} fill="none" stroke="#64748b" strokeWidth="1.8" /><path d={path('equity_pct')} fill="none" stroke="#2563eb" strokeWidth="2.4" />{orders.map((order, index) => { if (order.status !== 'filled') return null; const i = curve.findIndex(point => point.date === order.execution_date); if (i < 0) return null; return <g key={index} role="button" tabIndex={0} aria-label={`${order.side === 'buy' ? '买入' : '卖出'} ${order.execution_date}成交点`} onClick={() => onSelectOrder(index)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelectOrder(index) } }} className="cursor-pointer"><title>{order.signal_date} 信号 → {order.execution_date} {order.reason || ''}</title><circle cx={x(i)} cy={y(curve[i].price_pct)} r={selectedOrder === index ? 8 : 5} fill={order.side === 'buy' ? '#be123c' : '#047857'} stroke="white" strokeWidth="1.5" /><circle cx={x(i)} cy={y(curve[i].price_pct)} r="12" fill="transparent" /></g> })}{[0, Math.floor((curve.length - 1) / 2), curve.length - 1].map((index, tick) => <text key={tick} x={x(index)} y={h - 8} fontSize="14" textAnchor={tick === 0 ? 'start' : tick === 2 ? 'end' : 'middle'} fill="currentColor">{curve[index].date}</text>)}</svg></div><div className="flex flex-wrap gap-4 text-xs text-muted-foreground"><span>蓝线：策略收益</span><span>灰线：标的价格涨跌（持有基准）</span><span>红点：买入</span><span>绿点：卖出</span><span>点选成交点与下方记录联动</span></div></div>
 }

@@ -458,6 +458,7 @@ export default function StockInsightModal(props: {
   const market = String(props.market || 'CN').trim().toUpperCase()
   const [loading, setLoading] = useState(false)
   const [tab, setTab] = useState<InsightTab>('overview')
+  const [strategyExpanded, setStrategyExpanded] = useState(false)
   const [newsHours, setNewsHours] = useLocalStorage<string>('stock_insight_news_hours', '168')
   const [announcementHours, setAnnouncementHours] = useLocalStorage<string>('stock_insight_announcement_hours', '168')
   const [includeExpiredSuggestions, setIncludeExpiredSuggestions] = useLocalStorage<boolean>(
@@ -873,6 +874,7 @@ export default function StockInsightModal(props: {
   useEffect(() => {
     if (!props.open || !symbol) return
     setTab('overview')
+    setStrategyExpanded(false)
     setSuggestions([])
     setNews([])
     setAnnouncements([])
@@ -1468,7 +1470,7 @@ export default function StockInsightModal(props: {
   return (
     <>
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-        <DialogContent className="w-[92vw] max-w-6xl p-5 md:p-6 overflow-x-hidden">
+        <DialogContent className={tab === 'strategy' && strategyExpanded ? '!left-0 !top-0 !h-[100dvh] !max-h-[100dvh] !w-screen !max-w-none !translate-x-0 !translate-y-0 !rounded-none p-5 md:p-6 overflow-x-hidden' : 'w-[92vw] max-w-6xl p-5 md:p-6 overflow-x-hidden'}>
           <DialogHeader className="mb-3">
             <div className="flex items-start justify-between gap-3 pr-10 md:pr-8">
               <div className="shrink-0">
@@ -2049,7 +2051,7 @@ export default function StockInsightModal(props: {
             )}
 
             {tab === 'strategy' && (
-              <StrategyBacktest symbol={symbol} market={market} />
+              <StrategyBacktest symbol={symbol} market={market} expanded={strategyExpanded} onExpandedChange={setStrategyExpanded} />
             )}
 
             {tab === 'reports' && (

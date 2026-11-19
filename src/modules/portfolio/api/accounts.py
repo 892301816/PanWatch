@@ -139,6 +139,8 @@ class PositionResponse(BaseModel):
     account_name: str | None = None
     stock_symbol: str | None = None
     stock_name: str | None = None
+    # Set only when position creation also wrote a factual trade record.
+    trade_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -287,7 +289,7 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
             "total_fee": 0.0,
         }
         try:
-            wealth_service.execute_trade(
+            trade_result = wealth_service.execute_trade(
                 db,
                 account=account,
                 stock=stock,
@@ -323,6 +325,7 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
             logger.exception("新建持仓记账失败")
             raise HTTPException(500, "新建持仓失败")
         return {
+            "trade_id": trade_result.get("trade_id"),
             "id": position.id,
             "account_id": position.account_id,
             "stock_id": position.stock_id,

@@ -105,7 +105,7 @@ def _run_qfq_sync() -> None:
     from src.platform.dataset import qfq
 
     try:
-        qfq.sync_all(days=260)
+        qfq.sync_all(days=520, only_missing=False)
     finally:
         _QFQ_SYNC_LOCK.release()
 

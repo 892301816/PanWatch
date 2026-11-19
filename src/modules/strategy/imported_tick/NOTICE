@@ -1,0 +1,1 @@
+Adapted from local tick-stock-panel builtin strategies, MIT, 2026-11-16. Only import paths changed; signals and parameters remain upstream definitions. PanWatch supplies a versioned matrix adapter and enforces data coverage before execution.

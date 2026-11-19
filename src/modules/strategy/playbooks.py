@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date
 
 from sqlalchemy.orm import Session
@@ -117,20 +118,28 @@ PRESETS: list[dict] = [
 ]
 
 
+from src.modules.strategy.template_runtime import presets as tick_presets
+PRESETS += tick_presets()
+
+
 def _clean(conditions: list[dict] | None) -> list[dict]:
     out: list[dict] = []
     for c in conditions or []:
         if not isinstance(c, dict):
             continue
+        if 'children' in c:
+            out.append(c)
+            continue
         field = str(c.get("field") or "").strip()
         if field not in VALID_FIELDS:
             continue
         op = str(c.get("op") or "eq").strip()
-        out.append({"field": field, "op": op, "value": c.get("value")})
+        out.append({**c, "field": field, "op": op, "value": c.get("value")})
     return out
 
 
 def _row(row: StrategyPlaybook, has_global: bool) -> dict:
+    from src.modules.strategy.workflow import policy_payload, rules_hash
     return {
         "id": row.id,
         "scope": row.scope,
@@ -142,10 +151,16 @@ def _row(row: StrategyPlaybook, has_global: bool) -> dict:
         "note": row.note or "",
         "enabled": bool(row.enabled),
         "is_override": row.scope == "stock" and has_global,
+        "market": row.market or "CN",
+        "timing": row.timing or "completed_daily",
+        "config": row.policy_config or {},
+        "revision_id": row.active_revision_id,
+        "rules_hash": rules_hash(policy_payload(row)),
     }
 
 
 def list_playbooks(db: Session | None = None) -> dict:
+    from src.platform.persistence.models import StrategyRevision
     own = db is None
     db = db or SessionLocal()
     try:
@@ -155,8 +170,9 @@ def list_playbooks(db: Session | None = None) -> dict:
             .all()
         )
         has_global = any(r.scope == "global" for r in rows)
+        revisions = dict(db.query(StrategyRevision.id, StrategyRevision.version).filter(StrategyRevision.id.in_([row.active_revision_id for row in rows if row.active_revision_id])).all())
         return {
-            "items": [_row(r, has_global) for r in rows],
+            "items": [{**_row(r, has_global), **({"version": revisions[r.active_revision_id]} if r.active_revision_id in revisions else {})} for r in rows],
             "fields": FEATURES,
             "presets": PRESETS,
             "defaults": {"buy": DEFAULT_BUY, "sell": DEFAULT_SELL, "avoid": DEFAULT_AVOID},
@@ -183,29 +199,39 @@ def _upsert(
         row = StrategyPlaybook(scope=scope, symbol=symbol)
         db.add(row)
     row.name = str(payload.get("name") or row.name or "")
+    if row.id and (row.market or "CN") != (payload.get("market") or "CN"):
+        raise ValueError("同一标的的市场不能直接修改，请使用正确的市场标识")
+    row.market = payload.get("market") or "CN"
+    row.timing = payload.get("timing") or "completed_daily"
+    row.policy_config = payload.get('config') or {}
     row.buy_conditions = _clean(payload.get("buy"))
     row.sell_conditions = _clean(payload.get("sell"))
     row.avoid_conditions = _clean(payload.get("avoid"))
     row.note = str(payload.get("note") or "")
     row.enabled = bool(payload.get("enabled", True))
-    db.commit()
-    db.refresh(row)
+    db.flush()
     return row
 
 
 def save_playbook(payload: dict, db: Session | None = None) -> dict:
+    from src.modules.strategy.workflow import validate_rules, record_revision
     own = db is None
     db = db or SessionLocal()
     try:
-        scope = "stock" if str(payload.get("scope") or "") == "stock" else "global"
-        symbol = str(payload.get("symbol") or "").strip() if scope == "stock" else ""
+        source_draft_id = payload.get("source_draft_id")
+        payload = validate_rules(payload)
+        scope = payload["scope"]
+        symbol = payload["symbol"]
         if scope == "stock" and not symbol:
             raise ValueError("个股策略必须指定 symbol")
         row = _upsert(db, scope=scope, symbol=symbol, payload=payload)
+        revision = record_revision(db, row, source_draft_id)
+        db.commit()
+        db.refresh(row)
         has_global = (
             db.query(StrategyPlaybook).filter(StrategyPlaybook.scope == "global").count() > 0
         )
-        return _row(row, has_global)
+        return {**_row(row, has_global), "version": revision.version}
     finally:
         if own:
             db.close()
@@ -226,19 +252,19 @@ def delete_playbook(playbook_id: int, db: Session | None = None) -> bool:
             db.close()
 
 
-def resolve(symbol: str, db: Session) -> StrategyPlaybook | None:
+def resolve(symbol: str, db: Session, market: str = "CN") -> StrategyPlaybook | None:
     """个股策略优先,其次全局;都关闭时返回 None。"""
     stock_row = (
         db.query(StrategyPlaybook)
         .filter(StrategyPlaybook.scope == "stock", StrategyPlaybook.symbol == symbol)
         .first()
     )
-    if stock_row is not None and stock_row.enabled:
+    if stock_row is not None and stock_row.enabled and (stock_row.market or "CN") == market:
         return stock_row
     global_row = (
         db.query(StrategyPlaybook).filter(StrategyPlaybook.scope == "global").first()
     )
-    if global_row is not None and global_row.enabled:
+    if global_row is not None and global_row.enabled and (global_row.market or "CN") == market:
         return global_row
     return None
 
@@ -248,7 +274,7 @@ def _current_bars(
 ) -> list[Bar]:
     """日K + 今日实时快照(若当日 K 还没入库)。"""
     bars = load_bars(symbol, days=520, allow_network=allow_network, market=market)
-    if not bars:
+    if not bars or not allow_network:
         return bars
     try:
         from src.platform.marketdata.marketdata_client import md_quote_rows
@@ -349,6 +375,7 @@ def check_symbol(
     *,
     allow_network: bool = True,
     market: str = "CN",
+    rules_override: dict | None = None,
 ) -> dict:
     """当前时点的策略检查:返回逐条对照、形态诊断与结论。
 
@@ -357,7 +384,11 @@ def check_symbol(
     own = db is None
     db = db or SessionLocal()
     try:
-        playbook = resolve(symbol, db)
+        playbook = resolve(symbol, db, market=market)
+        timing = (playbook.timing if playbook else None) or "completed_daily"
+        revision_id = playbook.active_revision_id if playbook else None
+        from src.modules.strategy.workflow import policy_payload, rules_hash
+        fingerprint = rules_hash(policy_payload(playbook)) if playbook else ""
         if playbook is None:
             buy, sell, avoid = [], [], []
             name, scope, note = "", "", ""
@@ -373,7 +404,19 @@ def check_symbol(
             db.close()
 
     has_playbook = bool(scope)
+    config = playbook.policy_config or {} if playbook else {}
+    if rules_override is not None:
+        from src.modules.strategy.workflow import validate_rules
+        policy = validate_rules(rules_override)
+        buy, sell, avoid = policy["buy"], policy["sell"], policy["avoid"]
+        name, note, scope = policy["name"], policy["note"], policy["scope"]
+        timing, fingerprint, revision_id = policy["timing"], rules_hash(policy), None
+        has_playbook = True
+        config = policy.get('config',{})
     bars = _current_bars(symbol, allow_network=allow_network, market=market)
+    if timing == "completed_daily":
+        # Today's OHLC/volume is provisional, even if a provider already stored it.
+        bars = [bar for bar in bars if bar.date < date.today().isoformat()]
     if len(bars) < 60:
         return {
             "symbol": symbol,
@@ -396,13 +439,28 @@ def check_symbol(
             "error": "历史数据不足(需至少 60 根日K)",
         }
 
-    features = compute_features(bars, len(bars) - 1)
+    from src.modules.strategy.rule_engine import evaluate
+    from src.modules.strategy.factor_engine import field_rows
+    from src.modules.strategy.template_runtime import attach
+    rows=[compute_features(bars,i,False) for i in range(len(bars))]
+    if config or any('tf_' in str(c) for c in buy+sell+avoid):
+        for row,values in zip(rows,field_rows(bars)):
+            for key,value in values.items():
+                if key.startswith('tf_'):row[key]=value
+        try:rows=attach(rows,bars,config,symbol)
+        except ValueError as exc:
+            return {'symbol':symbol,'has_playbook':True,'verdict':'数据不足','error':str(exc),'buy_checks':[],'sell_checks':[],'avoid_checks':[]}
+    features = rows[-1]
     pattern = diagnose(bars, len(bars) - 1, features)
 
     def build(conds: list[dict]) -> list[dict]:
         out = []
         for c in conds:
-            ok = _match(features, c)
+            ok=evaluate(rows,len(rows)-1,c)
+            at=len(rows)-1-c.get('offset',0)
+            value = rows[at].get(c['field']) if at>=0 else None
+            if c.get('children'):value=int(ok) if ok is not None else None
+            known=ok is not None
             out.append(
                 {
                     "field": c["field"],
@@ -410,7 +468,9 @@ def check_symbol(
                     "group": GROUPS.get(c["field"], ""),
                     "op": c.get("op"),
                     "expect": _expect(c),
-                    "actual": _fmt(features.get(c["field"]), c["field"]),
+                    "actual": _fmt(value, c["field"]),
+                    "actual_value": value,
+                    "known": known,
                     "ok": ok,
                     "text": describe_condition(c),
                 }
@@ -459,6 +519,11 @@ def check_symbol(
         "as_of": bars[-1].date,
         "estimated": bars[-1].date == date.today().isoformat(),
         "has_playbook": has_playbook,
+        "timing": timing,
+        "revision_id": revision_id,
+        "rules_hash": fingerprint,
+        "features": features,
+        "data_stale": (date.today() - date.fromisoformat(bars[-1].date)).days > 7,
     }
 
 

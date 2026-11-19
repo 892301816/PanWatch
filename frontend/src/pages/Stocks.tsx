@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import WealthActionMenu from '@/components/WealthActionMenu'
 import { Search, X, Bot, Play, RefreshCw, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, Smartphone } from 'lucide-react'
-import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel, type StrategyGate } from '@panwatch/api'
+import { fetchAPI, stocksApi, portfolioApi, strategyApi, type WealthOverview, type AIService, type NotifyChannel } from '@panwatch/api'
 import { klinesApi } from '@panwatch/api/klines'
 import { useLocalStorage } from '@/lib/utils'
 import {
@@ -24,7 +24,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectLabel, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
-import TradeGate, { isGateBlocked } from '@panwatch/biz-ui/components/TradeGate'
+import TradeDecisionDialog, { type TradeIntentTarget, type RecordIntent } from '@/components/TradeDecisionDialog'
+import { consumeTradeTransfer } from '@/lib/trade-intent-transfer'
 import SyncSection from '@/components/SyncSection'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import WealthPanel from '@/components/WealthPanel'
@@ -99,12 +100,12 @@ interface AccountSummary {
   id: number
   name: string
   available_funds: number
-  total_market_value: number
+  total_market_value: number | null
   total_cost: number
-  total_pnl: number
-  total_pnl_pct: number
-  total_daily_pnl: number
-  total_assets: number
+  total_pnl: number | null
+  total_pnl_pct: number | null
+  total_daily_pnl: number | null
+  total_assets: number | null
   strategy_type?: string
   risk_policy?: Record<string, number>
   fee_policy?: Record<string, number>
@@ -115,13 +116,13 @@ interface AccountSummary {
 interface PortfolioSummary {
   accounts: AccountSummary[]
   total: {
-    total_market_value: number
+    total_market_value: number | null
     total_cost: number
-    total_pnl: number
-    total_pnl_pct: number
-    total_daily_pnl: number
+    total_pnl: number | null
+    total_pnl_pct: number | null
+    total_daily_pnl: number | null
     available_funds: number
-    total_assets: number
+    total_assets: number | null
   }
   exchange_rates?: {
     HKD_CNY: number
@@ -291,16 +292,23 @@ const mergePortfolioQuotes = (
   let grandCost = 0
   let grandAvailable = 0
   let grandDailyPnl = 0
+  let allPricesKnown = true
+  let allDailyChangesKnown = true
 
   const accounts = portfolio.accounts.map(account => {
     let accMarketValue = 0
     let accCost = 0
     let accDailyPnl = 0
+    let pricesKnown = true
+    let dailyChangesKnown = true
 
     const positions = account.positions.map(pos => {
       const quote = quotes[`${pos.market}:${pos.symbol}`]
-      const current_price = quote?.current_price ?? pos.current_price ?? null
+      const price = quote?.current_price ?? pos.current_price ?? null
+      const current_price = price != null && price > 0 && Number.isFinite(price) ? price : null
       const change_pct = quote?.change_pct ?? pos.change_pct ?? null
+      if (current_price == null) pricesKnown = false
+      if (current_price == null || change_pct == null || !Number.isFinite(change_pct) || change_pct <= -100) dailyChangesKnown = false
       const rate = pos.market === 'HK' ? hkdRate : pos.market === 'US' ? usdRate : 1
 
       const cost = pos.cost_price * pos.quantity * rate
@@ -353,15 +361,17 @@ const mergePortfolioQuotes = (
     grandCost += accCost
     grandAvailable += account.available_funds
     grandDailyPnl += accDailyPnl
+    allPricesKnown = allPricesKnown && pricesKnown
+    allDailyChangesKnown = allDailyChangesKnown && dailyChangesKnown
 
     return {
       ...account,
-      total_market_value: round2(accMarketValue),
+      total_market_value: pricesKnown ? round2(accMarketValue) : null,
       total_cost: round2(accCost),
-      total_pnl: round2(accPnl),
-      total_pnl_pct: round2(accPnlPct),
-      total_daily_pnl: round2(accDailyPnl),
-      total_assets: round2(accTotalAssets),
+      total_pnl: pricesKnown ? round2(accPnl) : null,
+      total_pnl_pct: pricesKnown ? round2(accPnlPct) : null,
+      total_daily_pnl: dailyChangesKnown ? round2(accDailyPnl) : null,
+      total_assets: pricesKnown ? round2(accTotalAssets) : null,
       positions,
     }
   })
@@ -374,13 +384,13 @@ const mergePortfolioQuotes = (
     ...portfolio,
     accounts,
     total: {
-      total_market_value: round2(grandMarketValue),
+      total_market_value: allPricesKnown ? round2(grandMarketValue) : null,
       total_cost: round2(grandCost),
-      total_pnl: round2(grandPnl),
-      total_pnl_pct: round2(grandPnlPct),
-      total_daily_pnl: round2(grandDailyPnl),
+      total_pnl: allPricesKnown ? round2(grandPnl) : null,
+      total_pnl_pct: allPricesKnown ? round2(grandPnlPct) : null,
+      total_daily_pnl: allDailyChangesKnown ? round2(grandDailyPnl) : null,
       available_funds: round2(grandAvailable),
-      total_assets: round2(grandTotalAssets),
+      total_assets: allPricesKnown ? round2(grandTotalAssets) : null,
     },
   }
 }
@@ -392,6 +402,8 @@ export default function StocksPage() {
   const [services, setServices] = useState<AIService[]>([])
   const [channels, setChannels] = useState<NotifyChannel[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [initialRetry, setInitialRetry] = useState(0)
 
   // Portfolio
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null)
@@ -497,6 +509,7 @@ export default function StocksPage() {
 
   // 策略状态:对当前持仓批量检查(失败静默)
   useEffect(() => {
+    if (insightOpen) return
     const symbols = Array.from(
       new Set(
         (portfolio?.accounts || [])
@@ -525,10 +538,11 @@ export default function StocksPage() {
     return () => {
       alive = false
     }
-  }, [portfolio])
+  }, [portfolio, insightOpen])
 
   // Position form
   const [positionDialogOpen, setPositionDialogOpen] = useState(false)
+  const [positionBusy, setPositionBusy] = useState(false)
   const [positionForm, setPositionForm] = useState<PositionForm>({ account_id: 0, stock_id: 0, cost_price: '', quantity: '', invested_amount: '', trading_style: '', stock_symbol: '', stock_name: '', stock_market: 'CN', record_trade: true, deduct_cash: false })
   const [editPositionId, setEditPositionId] = useState<number | null>(null)
   // 持仓行的策略状态（符合买入/卖出/接近买入），批量检查一次
@@ -557,11 +571,8 @@ export default function StocksPage() {
     cost: '',
   })
   const [tradeBusy, setTradeBusy] = useState(false)
-  // 交易前体检：结论为「不建议」时需要勾选确认才能继续记录
-  const [tradeGate, setTradeGate] = useState<StrategyGate | null>(null)
-  const [tradeGateAck, setTradeGateAck] = useState(false)
-  const [positionGate, setPositionGate] = useState<StrategyGate | null>(null)
-  const [positionGateAck, setPositionGateAck] = useState(false)
+  const [intentTarget, setIntentTarget] = useState<TradeIntentTarget | null>(null)
+  const [recordDecisionId, setRecordDecisionId] = useState<number | null>(null)
   const [riskTarget, setRiskTarget] = useState<{
     account: AccountSummary
     pos: Position
@@ -847,11 +858,6 @@ export default function StocksPage() {
     try {
       const portfolioData = await fetchAPI<PortfolioSummary>('/portfolio/summary?include_quotes=false')
       const items = buildQuoteItemsFrom(stocks, portfolioData)
-      const [quoteRows, klineMap] = await Promise.all([
-        requestQuotes(items),
-        requestKlineSummaries(items),
-      ])
-      const quoteMap = toQuoteMap(quoteRows)
       setPortfolioRaw(portfolioData)
       setAccounts(portfolioData.accounts.map(account => ({
         id: account.id,
@@ -860,9 +866,10 @@ export default function StocksPage() {
         enabled: true,
       })))
       setExpandedAccounts(new Set(portfolioData.accounts.map(account => account.id)))
-      setQuotes(prev => ({ ...prev, ...quoteMap }))
-      setKlineSummaries(prev => ({ ...prev, ...klineMap }))
-      setPortfolio(mergePortfolioQuotes(portfolioData, { ...quotes, ...quoteMap }))
+      setPortfolio(mergePortfolioQuotes(portfolioData, quotes))
+      // 成交与账户数据先落到界面；行情和技术摘要不阻塞记账完成。
+      void requestQuotes(items).then(rows => setQuotes(prev => ({ ...prev, ...toQuoteMap(rows) })))
+      void requestKlineSummaries(items).then(map => setKlineSummaries(prev => ({ ...prev, ...map })))
     } catch (e) {
       console.error(e)
     } finally {
@@ -870,10 +877,9 @@ export default function StocksPage() {
     }
   }, [requestKlineSummaries, requestQuotes, quotes, stocks])
 
-  const openTradeDialog = (account: AccountSummary, pos: Position, action: 'buy' | 'sell') => {
+  const openRecordTradeDialog = (account: AccountSummary, pos: Position, action: 'buy' | 'sell') => {
     setTradeTarget({ account, pos, action })
-    setTradeGate(null)
-    setTradeGateAck(false)
+    setRecordDecisionId(null)
     setTradeForm({
       quantity: action === 'sell' ? String(Math.min(pos.quantity, 100)) : '100',
       price: pos.current_price != null ? pos.current_price.toFixed(2) : '',
@@ -882,6 +888,52 @@ export default function StocksPage() {
       fee: '',
       cost: '',
     })
+  }
+
+  const openTradeDialog = (account: AccountSummary, pos: Position, action: 'buy' | 'sell') => {
+    setIntentTarget({ symbol: pos.symbol, name: pos.name, market: pos.market, side: action, accountId: account.id, price: pos.current_price || undefined, quantity: action === 'sell' ? Math.min(pos.quantity, 100) : 100 })
+  }
+
+  const recordIntent = (intent: RecordIntent, sourceTarget: TradeIntentTarget | null = intentTarget) => {
+    if (!sourceTarget) return
+    const target = sourceTarget
+    const account = portfolio?.accounts.find(a => a.id === intent.accountId)
+    if (!account) { toast('账户状态已变化，请刷新后重试', 'error'); return }
+    const position = account.positions.find(p => p.symbol === target.symbol && p.market === target.market)
+    setIntentTarget(null)
+    if (position) {
+      openRecordTradeDialog(account, position, target.side)
+      setTradeForm(f => ({ ...f, price: String(intent.price), quantity: String(intent.quantity), note: intent.note }))
+    } else if (target.side === 'buy') {
+      openPositionDialog(account.id)
+      const stock = stocks.find(item => item.symbol === target.symbol && item.market === target.market)
+      setPositionForm(f => ({ ...f, stock_id: stock?.id || 0, stock_symbol: target.symbol, stock_name: target.name, stock_market: target.market, cost_price: String(intent.price), quantity: String(intent.quantity), record_trade: true, deduct_cash: true }))
+      setPositionSearchQuery(`${target.symbol} ${target.name}`)
+    } else { toast('当前账户没有该持仓，请核对已成交记录', 'error'); return }
+    setRecordDecisionId(intent.decisionId || null)
+  }
+
+  const consumedIntent = useRef('')
+  useEffect(() => {
+    const raw = searchParams.get('record_intent')
+    if (!raw || !portfolio || raw === consumedIntent.current) return
+    consumedIntent.current = raw
+    try {
+      const value = consumeTradeTransfer(raw)
+      if (!value.target?.symbol || !['CN', 'HK', 'US'].includes(value.target.market) || !['buy', 'sell'].includes(value.target.side) || !Number.isInteger(value.quantity) || value.quantity <= 0 || !Number.isFinite(value.price) || value.price <= 0 || !portfolio.accounts.some(account => account.id === value.accountId)) throw new Error('账户或成交参数无效')
+      recordIntent({ ...value, note: value.note || '从策略中心转入的实际成交补录' }, value.target)
+    } catch (error) { toast(error instanceof Error ? error.message : '策略中心传入的成交参数无效', 'error') }
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('record_intent'); next.set('view', 'positions'); return next }, { replace: true })
+  }, [portfolio, searchParams])
+
+  const associateDecision = async (tradeId?: number) => {
+    if (!recordDecisionId || !tradeId) return ''
+    try {
+      await fetchAPI(`/strategy/decisions/${recordDecisionId}/link`, { method: 'POST', body: JSON.stringify({ trade_id: tradeId }) })
+      return ''
+    } catch {
+      return '；成交已保存，但检查关联未成功，请在纪律记录中核对，不要重复记账'
+    }
   }
 
   const tradeFeePreview = useMemo(() => {
@@ -911,15 +963,11 @@ export default function StocksPage() {
   }, [tradeTarget, tradeForm.quantity, tradeForm.price, tradeForm.fee])
 
   const submitTrade = async () => {
-    if (!tradeTarget) return
+    if (!tradeTarget || tradeBusy) return
     const quantity = Number(tradeForm.quantity)
     const price = Number(tradeForm.price)
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
       toast('请填写有效的数量和价格', 'error')
-      return
-    }
-    if (isGateBlocked(tradeGate) && !tradeGateAck) {
-      toast('策略体检不建议这笔交易，勾选「已了解风险」后再记录', 'error')
       return
     }
     setTradeBusy(true)
@@ -935,8 +983,9 @@ export default function StocksPage() {
         fee_override: tradeForm.fee !== '' ? Number(tradeForm.fee) : undefined,
         cost_override: tradeForm.cost !== '' ? Number(tradeForm.cost) : undefined,
       })
+      const associationNote = await associateDecision(res.trade_id)
       toast(
-        `${tradeTarget.action === 'buy' ? '加仓' : '减仓'}已记录，费用 ¥${res.fees.total.toFixed(2)}${res.warning ? '（资金不足）' : ''}`,
+        `${tradeTarget.action === 'buy' ? '加仓' : '减仓'}已记录，费用 ¥${res.fees.total.toFixed(2)}${res.warning ? '（资金不足）' : ''}${associationNote}`,
         'success',
       )
       setTradeTarget(null)
@@ -980,6 +1029,7 @@ export default function StocksPage() {
     if (initialLoadPromiseRef.current) return initialLoadPromiseRef.current
     setLoading(true)
     setPortfolioLoading(true)
+    setLoadError('')
 
     const run = (async () => {
       const coreData = await loadPortfolioPageCoreData({
@@ -989,20 +1039,11 @@ export default function StocksPage() {
 
       if (signal.aborted) return
 
-      const quoteData = await loadPortfolioPageQuoteData({
-        buildQuoteItems: buildQuoteItemsFrom,
-        loadQuotes: requestQuotes,
-      }, coreData.stocks, coreData.portfolio, signal)
-
-      if (signal.aborted) return
-
-      const quoteMap = toQuoteMap(quoteData.quotes)
       setStocks(coreData.stocks)
       setPortfolioRaw(coreData.portfolio)
-      setQuotes(quoteMap)
       setKlineSummaries({})
       setPoolSuggestions({})
-      setPortfolio(mergePortfolioQuotes(coreData.portfolio, quoteMap))
+      setPortfolio(mergePortfolioQuotes(coreData.portfolio, {}))
       const nextAccounts = coreData.portfolio.accounts.map(account => ({
         id: account.id,
         name: account.name,
@@ -1011,9 +1052,22 @@ export default function StocksPage() {
       }))
       setAccounts(nextAccounts)
       setExpandedAccounts(new Set(nextAccounts.map(account => account.id)))
-      if (quoteData.quotes.length > 0) setLastRefreshTime(new Date())
       setLoading(false)
       setPortfolioLoading(false)
+
+      setQuotesLoading(true)
+      void loadPortfolioPageQuoteData({
+        buildQuoteItems: buildQuoteItemsFrom,
+        loadQuotes: requestQuotes,
+      }, coreData.stocks, coreData.portfolio, signal).then(data => {
+        if (signal.aborted) return
+        setQuotes(toQuoteMap(data.quotes))
+        if (data.quotes.length > 0) setLastRefreshTime(new Date())
+      }).catch(error => {
+        if (!signal.aborted) console.warn('加载行情失败:', error)
+      }).finally(() => {
+        if (!signal.aborted) setQuotesLoading(false)
+      })
 
       void loadPortfolioPageBackgroundData({
         loadMarketStatus: async requestSignal => {
@@ -1037,9 +1091,16 @@ export default function StocksPage() {
         if (!signal.aborted) console.warn('加载持仓页后台数据失败:', error)
       })
     })().catch(error => {
-      if (!signal.aborted) console.error('加载持仓页面数据失败:', error)
+      if (!signal.aborted) {
+        console.error('加载持仓页面数据失败:', error)
+        setLoadError(error instanceof Error ? error.message : '加载失败，请重试')
+      }
     }).finally(() => {
-      initialLoadPromiseRef.current = null
+      if (!signal.aborted) {
+        setLoading(false)
+        setPortfolioLoading(false)
+      }
+      if (initialLoadPromiseRef.current === run) initialLoadPromiseRef.current = null
     })
 
     initialLoadPromiseRef.current = run
@@ -1128,7 +1189,7 @@ export default function StocksPage() {
       controller.abort()
       initialLoadPromiseRef.current = null
     }
-  }, [loadInitialData])
+  }, [loadInitialData, initialRetry])
 
   useEffect(() => {
     if (agentDialogStock) void loadConfigAsync()
@@ -1370,8 +1431,7 @@ export default function StocksPage() {
   // ========== Position handlers ==========
   const openPositionDialog = (accountId: number, position?: Position) => {
     setPositionDialogAccountId(accountId)
-    setPositionGate(null)
-    setPositionGateAck(false)
+    setRecordDecisionId(null)
     setPositionSearchQuery('')
     setPositionSearchResults([])
     setShowPositionDropdown(false)
@@ -1449,10 +1509,8 @@ export default function StocksPage() {
   }
 
   const handlePositionSubmit = async () => {
-    if (!editPositionId && positionForm.record_trade && isGateBlocked(positionGate) && !positionGateAck) {
-      toast('策略体检不建议现在建仓，勾选「已了解风险」后再添加', 'error')
-      return
-    }
+    if (positionBusy) return
+    setPositionBusy(true)
     try {
       let stockId = positionForm.stock_id
 
@@ -1500,7 +1558,9 @@ export default function StocksPage() {
       if (editPositionId) {
         await fetchAPI(`/positions/${editPositionId}`, { method: 'PUT', body: JSON.stringify(payload) })
       } else {
-        await fetchAPI('/positions', { method: 'POST', body: JSON.stringify(payload) })
+        const result = await fetchAPI<{ trade_id?: number }>('/positions', { method: 'POST', body: JSON.stringify(payload) })
+        const associationNote = await associateDecision(result.trade_id)
+        if (associationNote) toast(associationNote, 'info')
       }
       setPositionDialogOpen(false)
       loadPortfolio()
@@ -1508,6 +1568,8 @@ export default function StocksPage() {
       toast(editPositionId ? '持仓已更新' : '持仓已添加', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : '保存持仓失败', 'error')
+    } finally {
+      setPositionBusy(false)
     }
   }
 
@@ -1621,7 +1683,8 @@ export default function StocksPage() {
   }
 
   // ========== Helpers ==========
-  const formatMoney = (value: number) => {
+  const formatMoney = (value: number | null) => {
+    if (value == null) return '--'
     if (Math.abs(value) >= 10000) {
       return `${(value / 10000).toFixed(2)}万`
     }
@@ -1822,6 +1885,10 @@ export default function StocksPage() {
     )
   }
 
+  if (loadError) {
+    return <div className="card p-6" role="alert"><h1 className="text-xl font-semibold">理财工作台加载失败</h1><p className="my-3 text-sm text-muted-foreground">{loadError}</p><Button onClick={() => setInitialRetry(value => value + 1)}>重新加载</Button></div>
+  }
+
   return (
     <div className="wealth-workspace" ref={workspaceRef}>
       <header className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -1848,7 +1915,7 @@ export default function StocksPage() {
       {viewTab === 'positions' && (scopedDue.length > 0 || riskChecks.length > 0 || dueError || missingQuoteCount > 0) && <section className="mb-4 border-b border-border pb-3" aria-label="待处理事项">
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span>{scopedDue.length ? `${scopedDue.length} 笔定投待确认` : ''}{scopedDue.length && riskChecks.length ? ' · ' : ''}{riskChecks.length ? `${riskChecks.length} 项持有计划需检查` : ''}</span>
-          {missingQuoteCount > 0 && <span className="text-xs text-muted-foreground">{missingQuoteCount} 只持仓行情缺失，暂未检查计划价</span>}
+          {missingQuoteCount > 0 && <span className="text-xs text-muted-foreground">{quotesLoading ? `${missingQuoteCount} 只持仓行情加载中，市值与盈亏暂不完整` : `${missingQuoteCount} 只持仓行情缺失，暂未检查计划价`}</span>}
           {dueError && <button className="text-xs text-primary" onClick={() => setDueRetry(v => v + 1)}>定投待办加载失败，重试</button>}
           {(scopedDue.length > 0 || riskChecks.length > 0) && <Button variant="ghost" size="sm" aria-expanded={tasksExpanded} onClick={() => setTasksExpanded(v => !v)}>{tasksExpanded ? '收起事项' : '查看事项'}</Button>}
         </div>
@@ -1863,7 +1930,7 @@ export default function StocksPage() {
           <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} aria-label="自动刷新行情" />自动刷新</label>
           {autoRefresh && <select className="bg-card border border-border rounded px-2 py-1 text-xs" aria-label="行情刷新间隔" value={refreshInterval} onChange={e => setRefreshInterval(Number(e.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>1 分钟</option><option value={120}>2 分钟</option></select>}
           <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={quotesLoading}><RefreshCw className={`w-3.5 h-3.5 ${quotesLoading ? 'animate-spin' : ''}`} />刷新</Button>
-          <span className="text-xs text-muted-foreground">{lastRefreshTime ? `更新于 ${lastRefreshTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '行情更新中'}</span>
+          <span className="text-xs text-muted-foreground" role="status">{quotesLoading ? '行情更新中，账户与持仓可先操作' : lastRefreshTime ? `更新于 ${lastRefreshTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '行情暂不可用，可点击刷新重试'}</span>
           {poolSuggestionsLoading && <span className="text-xs text-muted-foreground" role="status">更新分析中…</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -2016,15 +2083,15 @@ export default function StocksPage() {
                     </div>
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">盈亏</div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                        {account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
-                        <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_pnl == null ? '' : account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                        {account.total_pnl != null && account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
+                        {account.total_pnl_pct != null && <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>}
                       </div>
                     </div>
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">今日</div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                        {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_daily_pnl == null ? '' : account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                        {account.total_daily_pnl != null && account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
                     </div>
                     <div className="text-left md:text-right hidden sm:block">
@@ -2637,6 +2704,7 @@ export default function StocksPage() {
                       <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                         <Button variant="ghost" size="sm" onClick={() => openStockDetail(stock.symbol, stock.market, stock.name, false)}>详情</Button>
                         <WealthActionMenu label={`${stock.name}更多操作`} actions={[
+                          { label: '操作前检查买入', onSelect: () => setIntentTarget({ symbol: stock.symbol, name: stock.name, market: stock.market, side: 'buy', price: quote?.current_price || undefined, quantity: 100 }) },
                           { label: 'K 线与技术指标', onSelect: () => openKlineDialog(stock.symbol, stock.market, stock.name, false) },
                           { label: '相关新闻', onSelect: () => openNewsDialog(stock.name) },
                           { label: '深度分析', onSelect: () => openDeepAnalysis(stock.id, stock.symbol, stock.name) },
@@ -2674,7 +2742,7 @@ export default function StocksPage() {
           <Button variant="secondary" size="sm" className="mb-3 w-full justify-start" onClick={() => { setRecordPickerOpen(false); setSyncOpen(true) }}>
             <Smartphone className="mr-1.5 h-3.5 w-3.5" /> 从成交短信 / 交割单同步
           </Button>
-          <div className="max-h-[55vh] overflow-y-auto space-y-3">{scopedAccounts.map(a => <div key={a.id}><h3 className="text-sm font-semibold mb-2">{a.name}</h3>{a.positions.map(p => <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-border"><span>{p.name} <span className="text-xs text-muted-foreground">{p.symbol}</span></span><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'buy') }}>加仓</Button><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openTradeDialog(a, p, 'sell') }}>减仓</Button></div></div>)}<Button variant="ghost" onClick={() => { setRecordPickerOpen(false); openPositionDialog(a.id) }}>＋ 新增持仓</Button></div>)}{!portfolio?.accounts.length && <Button onClick={() => { setRecordPickerOpen(false); openAccountDialog() }}>先添加账户</Button>}</div>
+          <div className="max-h-[55vh] overflow-y-auto space-y-3">{scopedAccounts.map(a => <div key={a.id}><h3 className="text-sm font-semibold mb-2">{a.name}</h3>{a.positions.map(p => <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-border"><span>{p.name} <span className="text-xs text-muted-foreground">{p.symbol}</span></span><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openRecordTradeDialog(a, p, 'buy') }}>加仓</Button><Button size="sm" variant="secondary" onClick={() => { setRecordPickerOpen(false); openRecordTradeDialog(a, p, 'sell') }}>减仓</Button></div></div>)}<Button variant="ghost" onClick={() => { setRecordPickerOpen(false); openPositionDialog(a.id) }}>＋ 新增持仓</Button></div>)}{!portfolio?.accounts.length && <Button onClick={() => { setRecordPickerOpen(false); openAccountDialog() }}>先添加账户</Button>}</div>
         </DialogContent>
       </Dialog>
 
@@ -2701,8 +2769,9 @@ export default function StocksPage() {
         initialSummary={klineDialogInitialSummary as any}
       />
 
-      {/* 加仓 / 减仓（记账，不自动下单） */}
-      <Dialog open={!!tradeTarget} onOpenChange={(open) => !open && setTradeTarget(null)}>
+      <TradeDecisionDialog target={intentTarget} accounts={(portfolio?.accounts || []).map(a => ({ id: a.id, name: a.name }))} onClose={() => setIntentTarget(null)} onRecord={recordIntent} />
+      {/* 加仓 / 减仓：只记录已经发生的成交 */}
+      <Dialog open={!!tradeTarget} onOpenChange={(open) => !open && !tradeBusy && setTradeTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -2713,16 +2782,7 @@ export default function StocksPage() {
               确认后更新持仓与可用资金，并写入交易记录；不会自动下单。
             </DialogDescription>
           </DialogHeader>
-          {tradeTarget && (
-            <TradeGate
-              symbol={tradeTarget.pos.symbol}
-              side={tradeTarget.action}
-              market={tradeTarget.pos.market || 'CN'}
-              price={Number(tradeForm.price) || undefined}
-              quantity={Number(tradeForm.quantity) || undefined}
-              onGate={setTradeGate}
-            />
-          )}
+          <p className="mb-4 text-xs text-muted-foreground">这是已成交记账。系统如实保存事实，不使用当前行情阻挡过去的交易；准备操作请先使用行内加仓/减仓检查。</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-[11px]">数量（股/份）</Label>
@@ -2795,25 +2855,14 @@ export default function StocksPage() {
               )}
             </div>
           )}
-          {isGateBlocked(tradeGate) && (
-            <label className="mt-3 flex items-start gap-2 text-[11px] text-amber-600">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={tradeGateAck}
-                onChange={(e) => setTradeGateAck(e.target.checked)}
-              />
-              <span>我知道当前形态/策略不满足，仍要记录这笔交易</span>
-            </label>
-          )}
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setTradeTarget(null)}>取消</Button>
+            <Button variant="secondary" size="sm" disabled={tradeBusy} onClick={() => setTradeTarget(null)}>取消</Button>
             <Button
               size="sm"
               onClick={submitTrade}
-              disabled={tradeBusy || (isGateBlocked(tradeGate) && !tradeGateAck)}
+              disabled={tradeBusy}
             >
-              {tradeBusy ? '记录中…' : isGateBlocked(tradeGate) && !tradeGateAck ? '策略不建议' : '确认记录'}
+              {tradeBusy ? '记录中…' : '确认记录实际成交'}
             </Button>
           </div>
         </DialogContent>
@@ -2960,6 +3009,7 @@ export default function StocksPage() {
       <Dialog
         open={positionDialogOpen}
         onOpenChange={(open) => {
+          if (positionBusy) return
           setPositionDialogOpen(open)
           if (!open) {
             setPositionSearchQuery('')
@@ -2976,7 +3026,7 @@ export default function StocksPage() {
               {accounts.find(a => a.id === positionDialogAccountId)?.name} 账户持仓
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 mt-2">
+          <fieldset disabled={positionBusy} className="space-y-4 mt-2">
             {editPositionId ? (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/30">
                 <span className={`text-[9px] px-1.5 py-0.5 rounded ${marketBadge(positionForm.stock_market).style}`}>
@@ -3135,41 +3185,21 @@ export default function StocksPage() {
                 )}
               </div>
             )}
-            {!editPositionId && positionForm.record_trade && positionForm.stock_symbol && (
-              <TradeGate
-                symbol={positionForm.stock_symbol}
-                side="buy"
-                market={positionForm.stock_market || 'CN'}
-                enabled={positionDialogOpen}
-                onGate={setPositionGate}
-              />
-            )}
-            {!editPositionId && isGateBlocked(positionGate) && (
-              <label className="flex items-start gap-2 text-[11px] text-amber-600">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={positionGateAck}
-                  onChange={(e) => setPositionGateAck(e.target.checked)}
-                />
-                <span>我知道当前形态/策略不满足，仍要建仓</span>
-              </label>
-            )}
+            {!editPositionId && <p className="text-xs text-muted-foreground">录入已有仓位或真实建仓，不代表本次已通过策略。准备买入可先在关注标的的“更多 → 操作前检查”检查规则。</p>}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setPositionDialogOpen(false)}>取消</Button>
               <Button
                 onClick={handlePositionSubmit}
                 disabled={
-                  !positionForm.cost_price ||
+                  positionBusy || !positionForm.cost_price ||
                   !positionForm.quantity ||
-                  (!editPositionId && !positionForm.stock_id && !positionForm.stock_symbol) ||
-                  (!editPositionId && positionForm.record_trade && isGateBlocked(positionGate) && !positionGateAck)
+                  (!editPositionId && !positionForm.stock_id && !positionForm.stock_symbol)
                 }
               >
-                {editPositionId ? '保存' : '添加'}
+                {positionBusy ? '保存中…' : editPositionId ? '保存' : '添加'}
               </Button>
             </div>
-          </div>
+          </fieldset>
         </DialogContent>
       </Dialog>
 

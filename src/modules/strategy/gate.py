@@ -38,7 +38,7 @@ GATE_TTL_SEC = 180
 AI_TIMEOUT_SEC = 25.0
 
 
-def _cache_key(symbol: str, side: str, price: float | None, check: dict) -> str:
+def _cache_key(symbol: str, side: str, price: float | None, check: dict, *, quantity=None, market="CN", model_id=None, account_context=None) -> str:
     fingerprint = hashlib.md5(
         json.dumps(
             {
@@ -46,13 +46,23 @@ def _cache_key(symbol: str, side: str, price: float | None, check: dict) -> str:
                 "sell": check.get("sell_checks"),
                 "avoid": check.get("avoid_checks"),
                 "name": check.get("name"),
+                "note": check.get("note"),
+                "features": check.get("features"),
+                "pattern": check.get("pattern"),
+                "revision_id": check.get("revision_id"),
+                "rules_hash": check.get("rules_hash"),
+                "quantity": quantity,
+                "price": price,
+                "market": market,
+                "model_id": model_id,
+                "account": account_context,
             },
             ensure_ascii=False,
             sort_keys=True,
             default=str,
         ).encode("utf-8")
     ).hexdigest()[:10]
-    bucket = round(float(price or 0) * 10) / 10
+    bucket = str(price)
     return f"{symbol}:{side}:{check.get('as_of')}:{bucket}:{fingerprint}"
 
 
@@ -83,8 +93,7 @@ def _rule_verdict(check: dict, side: str) -> str | None:
         return None
     if buy_hits == buy_total:
         return "可操作"
-    if buy_hits / buy_total >= 2 / 3:
-        return "接近"
+    # Partial satisfaction is descriptive only; it is never permission to trade.
     return "不建议"
 
 
@@ -119,10 +128,25 @@ def _rule_reasons(check: dict, side: str) -> list[str]:
     return reasons[:4]
 
 
+def _rule_evidence(check: dict, side: str) -> list[dict]:
+    groups = [("sell", check.get("sell_checks") or [])] if side == "sell" else [("buy", check.get("buy_checks") or []), ("avoid", check.get("avoid_checks") or [])]
+    evidence = []
+    for group, items in groups:
+        for item in items:
+            unknown = item.get("known") is False or item.get("ok") is None
+            satisfied = not item.get("ok") if group == "avoid" else bool(item.get("ok"))
+            evidence.append({**item, "group": group, "status": "UNKNOWN" if unknown else "PASS" if satisfied else "BLOCK", "reason": item.get("text") or item.get("label") or item.get("field")})
+    return evidence
+
+
 def _ai_prompt(check: dict, side: str, price: float | None, quantity: float | None) -> tuple[str, str]:
     label = SIDE_LABEL.get(side, side)
     lines: list[str] = []
     lines.append(f"标的：{check.get('symbol')} {check.get('name') or ''}".strip())
+    if check.get("note"):
+        lines.append("用户备注（背景解释，不是已执行的规则）：" + str(check["note"]))
+    if check.get("account_context"):
+        lines.append("本次同一账户快照（报价时间是采集模型时间；缺失不得臆造）：" + json.dumps(check["account_context"], ensure_ascii=False, default=str)[:16000])
     if price:
         qty = f" × {quantity:g} 股" if quantity else ""
         lines.append(f"拟操作：{label} @ {price:.2f}{qty}")
@@ -333,6 +357,7 @@ async def evaluate(
     use_ai: bool = True,
     model_id: int | None = None,
     db: Session | None = None,
+    account_context: dict | None = None,
 ) -> dict:
     """买卖前体检:规则 + 形态 + AI,返回给前端直接可渲染的结构。"""
     symbol = str(symbol or "").strip()
@@ -341,11 +366,13 @@ async def evaluate(
     check = await asyncio.to_thread(
         playbooks.check_symbol, symbol, db, allow_network=True, market=market
     )
+    if account_context is not None:
+        check = {**check, "account_context": account_context}
 
     rule = _rule_verdict(check, side)
     reasons = _rule_reasons(check, side)
 
-    cache_key = _cache_key(symbol, side, price, check)
+    cache_key = _cache_key(symbol, side, price, check, quantity=quantity, market=market, model_id=model_id, account_context=account_context)
     ai: dict | None = None
     cached = False
     if use_ai:
@@ -359,16 +386,28 @@ async def evaluate(
 
     ai_rank = _AI_TONE_RANK.get((ai or {}).get("tone") or "")
     if rule is None:
-        verdict = _AI_TONE_VERDICT.get(ai_rank, "无策略") if ai_rank is not None else "无策略"
+        verdict = "无策略"
     elif ai_rank is None:
         verdict = rule
     else:
-        verdict = _RANK_VERDICT[min(_VERDICT_RANK.get(rule, 1), ai_rank)]
+        # An exit already required by the applied sell rules must not wait for an AI opinion.
+        verdict = rule if side == "sell" and rule == "可操作" else _RANK_VERDICT[min(_VERDICT_RANK.get(rule, 1), ai_rank)]
 
     bars_note = ""
     if check.get("verdict") == "数据不足":
         verdict = "无策略"
         bars_note = "日K不足 60 根，无法检查"
+
+    conditions = (check.get("sell_checks") or []) if side == "sell" else (check.get("buy_checks") or []) + (check.get("avoid_checks") or [])
+    missing = any(c.get("known") is False or c.get("ok") is None for c in conditions)
+    if side == "sell" and int(check.get("sell_hits") or 0) > 0:
+        missing = False  # OR exit: one known trigger is sufficient; other exits may be unknown.
+    status = "PASS" if verdict == "可操作" else "BLOCK"
+    if rule is None:
+        status = "NO_POLICY"
+    if check.get("verdict") == "数据不足" or missing or check.get("data_stale") or check.get("timing") == "intraday_preview":
+        status, verdict = "UNKNOWN", "无法判断"
+        bars_note = "数据不足、过时或仍为盘中暂态，不能作为已通过的纪律检查"
 
     return {
         "symbol": symbol,
@@ -376,6 +415,7 @@ async def evaluate(
         "market": market,
         "side": side,
         "verdict": verdict,
+        "status": status,
         "rule_verdict": rule,
         "summary": _summary(check, side, verdict, rule, ai, reasons) if not bars_note else bars_note,
         "reasons": reasons,
@@ -389,6 +429,10 @@ async def evaluate(
         "price": price if price else check.get("price"),
         "as_of": check.get("as_of"),
         "estimated": bool(check.get("estimated")),
+        "timing": check.get("timing", "completed_daily"),
+        "revision_id": check.get("revision_id"),
+        "rules_hash": check.get("rules_hash", ""),
+        "evidence": _rule_evidence(check, side),
         "ai": ai,
         "cached": cached,
         "elapsed_ms": int((time.perf_counter() - started) * 1000),

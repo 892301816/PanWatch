@@ -35,7 +35,7 @@ const {
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页' },
   { to: '/portfolio', icon: List, label: '理财' },
-  { to: '/opportunities', icon: Sparkles, label: '机会' },
+  { to: '/opportunities', icon: Sparkles, label: '策略中心' },
   { to: '/screener', icon: ListFilter, label: '选股' },
   { to: '/messages', icon: Newspaper, label: '消息' },
   { to: '/paper-trading', icon: Activity, label: '模拟盘' },

@@ -1,0 +1,2637 @@
+{
+  "version": "tick-v1",
+  "factors": [
+    {
+      "id": "momentum_5d",
+      "key": "tf_momentum_5d",
+      "label": "5日动量",
+      "group": "动量",
+      "formula": "5个交易日累计收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "momentum_10d",
+      "key": "tf_momentum_10d",
+      "label": "10日动量",
+      "group": "动量",
+      "formula": "10个交易日累计收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "momentum_20d",
+      "key": "tf_momentum_20d",
+      "label": "20日动量",
+      "group": "动量",
+      "formula": "20个交易日累计收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "momentum_30d",
+      "key": "tf_momentum_30d",
+      "label": "30日动量",
+      "group": "动量",
+      "formula": "30个交易日累计收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "momentum_60d",
+      "key": "tf_momentum_60d",
+      "label": "60日动量",
+      "group": "动量",
+      "formula": "60个交易日累计收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "change_pct",
+      "key": "tf_change_pct",
+      "label": "日涨跌幅",
+      "group": "动量",
+      "formula": "当日收盘相对前收盘的收益率",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ma5_bias",
+      "key": "tf_ma5_bias",
+      "label": "MA5乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / MA5 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ma10_bias",
+      "key": "tf_ma10_bias",
+      "label": "MA10乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / MA10 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ma20_bias",
+      "key": "tf_ma20_bias",
+      "label": "MA20乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / MA20 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ma30_bias",
+      "key": "tf_ma30_bias",
+      "label": "MA30乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / MA30 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ma60_bias",
+      "key": "tf_ma60_bias",
+      "label": "MA60乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / MA60 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ema5_bias",
+      "key": "tf_ema5_bias",
+      "label": "EMA5乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / EMA5 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ema10_bias",
+      "key": "tf_ema10_bias",
+      "label": "EMA10乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / EMA10 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ema20_bias",
+      "key": "tf_ema20_bias",
+      "label": "EMA20乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / EMA20 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ema30_bias",
+      "key": "tf_ema30_bias",
+      "label": "EMA30乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / EMA30 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ema60_bias",
+      "key": "tf_ema60_bias",
+      "label": "EMA60乖离",
+      "group": "均线偏离",
+      "formula": "收盘价 / EMA60 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "rsi_6",
+      "key": "tf_rsi_6",
+      "label": "RSI(6)",
+      "group": "超买超卖",
+      "formula": "6日相对强弱指标；Wilder递归平滑，保留Tick口径",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "rsi_14",
+      "key": "tf_rsi_14",
+      "label": "RSI(14)",
+      "group": "超买超卖",
+      "formula": "14日相对强弱指标；Wilder递归平滑，保留Tick口径",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "rsi_24",
+      "key": "tf_rsi_24",
+      "label": "RSI(24)",
+      "group": "超买超卖",
+      "formula": "24日相对强弱指标；Wilder递归平滑，保留Tick口径",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 25,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "macd_hist",
+      "key": "tf_macd_hist",
+      "label": "MACD柱(原值)",
+      "group": "趋势",
+      "formula": "兼容历史研究; 跨股票比较建议优先使用MACD柱强度",
+      "unit": "元",
+      "dependency": "daily",
+      "warmup": 35,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "macd_dif_pct",
+      "key": "tf_macd_dif_pct",
+      "label": "MACD DIF强度",
+      "group": "趋势",
+      "formula": "MACD DIF / 收盘价",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 35,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "macd_dea_pct",
+      "key": "tf_macd_dea_pct",
+      "label": "MACD DEA强度",
+      "group": "趋势",
+      "formula": "MACD DEA / 收盘价",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 35,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "macd_hist_pct",
+      "key": "tf_macd_hist_pct",
+      "label": "MACD柱强度",
+      "group": "趋势",
+      "formula": "MACD柱 / 收盘价, 消除股价尺度影响",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 35,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "kdj_k",
+      "key": "tf_kdj_k",
+      "label": "KDJ-K",
+      "group": "趋势",
+      "formula": "KDJ指标K值",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "kdj_d",
+      "key": "tf_kdj_d",
+      "label": "KDJ-D",
+      "group": "趋势",
+      "formula": "KDJ指标D值",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "kdj_j",
+      "key": "tf_kdj_j",
+      "label": "KDJ-J",
+      "group": "趋势",
+      "formula": "KDJ指标J值",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "boll_position",
+      "key": "tf_boll_position",
+      "label": "布林位置",
+      "group": "趋势",
+      "formula": "收盘价在布林带下轨到上轨之间的位置",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "annual_vol_20d",
+      "key": "tf_annual_vol_20d",
+      "label": "20日波动率",
+      "group": "波动率",
+      "formula": "20日收益率年化标准差",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "atr_14",
+      "key": "tf_atr_14",
+      "label": "ATR(14)原值",
+      "group": "波动率",
+      "formula": "兼容历史研究; 跨股票比较建议优先使用ATR相对波动",
+      "unit": "元",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "atr_pct",
+      "key": "tf_atr_pct",
+      "label": "ATR相对波动",
+      "group": "波动率",
+      "formula": "ATR(14) / 收盘价；ATR使用Wilder递归平滑(alpha=1/14)",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "amplitude",
+      "key": "tf_amplitude",
+      "label": "日振幅",
+      "group": "波动率",
+      "formula": "当日高低价差 / 前收盘价",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "boll_width",
+      "key": "tf_boll_width",
+      "label": "布林带宽",
+      "group": "波动率",
+      "formula": "布林带上下轨宽度 / MA20",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_ratio_5d",
+      "key": "tf_vol_ratio_5d",
+      "label": "5日量比",
+      "group": "量价",
+      "formula": "当日成交量 / 前5日平均成交量",
+      "unit": "倍",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_ratio_10d",
+      "key": "tf_vol_ratio_10d",
+      "label": "10日量比",
+      "group": "量价",
+      "formula": "当日成交量 / 前10日平均成交量",
+      "unit": "倍",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_trend_5_10",
+      "key": "tf_vol_trend_5_10",
+      "label": "成交量趋势",
+      "group": "量价",
+      "formula": "5日平均成交量 / 10日平均成交量 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "turnover_rate",
+      "key": "tf_turnover_rate",
+      "label": "换手率",
+      "group": "量价",
+      "formula": "使用历史时点流通股本计算的当日换手率",
+      "unit": "%",
+      "dependency": "turnover",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "turnover_ratio_5d",
+      "key": "tf_turnover_ratio_5d",
+      "label": "换手率放大",
+      "group": "量价",
+      "formula": "当日换手率 / 前5日平均换手率 - 1",
+      "unit": "ratio",
+      "dependency": "turnover",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "log_amount",
+      "key": "tf_log_amount",
+      "label": "成交额对数",
+      "group": "量价",
+      "formula": "ln(成交额 + 1), 降低极端规模影响",
+      "unit": "对数",
+      "dependency": "amount",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "amount_ratio_5d",
+      "key": "tf_amount_ratio_5d",
+      "label": "成交额放大",
+      "group": "量价",
+      "formula": "当日成交额 / 前5日平均成交额 - 1",
+      "unit": "ratio",
+      "dependency": "amount",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "gap_return",
+      "key": "tf_gap_return",
+      "label": "开盘跳空",
+      "group": "价格位置",
+      "formula": "开盘价 / 前收盘价 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "intraday_return",
+      "key": "tf_intraday_return",
+      "label": "日内收益",
+      "group": "价格位置",
+      "formula": "收盘价 / 开盘价 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "close_position",
+      "key": "tf_close_position",
+      "label": "收盘位置",
+      "group": "价格位置",
+      "formula": "收盘价在当日最低价到最高价之间的位置",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "distance_to_high_60d",
+      "key": "tf_distance_to_high_60d",
+      "label": "距60日高点",
+      "group": "价格位置",
+      "formula": "收盘价 / 60日最高收盘价 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "distance_from_low_60d",
+      "key": "tf_distance_from_low_60d",
+      "label": "距60日低点",
+      "group": "价格位置",
+      "formula": "收盘价 / 60日最低收盘价 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vwap_bias",
+      "key": "tf_vwap_bias",
+      "label": "VWAP乖离",
+      "group": "价格位置",
+      "formula": "收盘价 / 当日成交均价 - 1, 成交均价 = 成交额 / (成交量x100)",
+      "unit": "",
+      "dependency": "amount",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "max_ret_20d",
+      "key": "tf_max_ret_20d",
+      "label": "20日最大单日涨幅",
+      "group": "收益形态",
+      "formula": "近20个交易日单日涨幅最大值(彩票效应, 高值代表博彩型特征强)",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "ret_skew_20d",
+      "key": "tf_ret_skew_20d",
+      "label": "20日收益偏度",
+      "group": "收益形态",
+      "formula": "近20个交易日日收益偏度, 高值代表右偏(偶发大涨)",
+      "unit": "系数",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "up_days_20d",
+      "key": "tf_up_days_20d",
+      "label": "20日上涨天数",
+      "group": "收益形态",
+      "formula": "近20个交易日中上涨天数(0~20)",
+      "unit": "天",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "amihud_20d",
+      "key": "tf_amihud_20d",
+      "label": "20日Amihud非流动性",
+      "group": "流动性",
+      "formula": "近20日平均 |日涨跌幅| / 成交额(亿元), 高值代表流动性差",
+      "unit": "",
+      "dependency": "amount",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "turnover_z_60d",
+      "key": "tf_turnover_z_60d",
+      "label": "换手率60日z分",
+      "group": "流动性",
+      "formula": "(当日换手率 - 前60日均值) / 前60日标准差, 衡量换手异动",
+      "unit": "系数",
+      "dependency": "turnover",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_price_corr_20d",
+      "key": "tf_vol_price_corr_20d",
+      "label": "20日量价相关",
+      "group": "量价",
+      "formula": "近20个交易日日涨跌幅与成交量的相关系数, 高值代表量价同向",
+      "unit": "系数",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_trend_5_60",
+      "key": "tf_vol_trend_5_60",
+      "label": "量能趋势(5/60)",
+      "group": "量价",
+      "formula": "5日平均成交量 / 60日平均成交量 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "limit_up_count_20d",
+      "key": "tf_limit_up_count_20d",
+      "label": "涨停基因(20日)",
+      "group": "涨停基因",
+      "formula": "近20个交易日涨停次数",
+      "unit": "次",
+      "dependency": "limit",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "limit_up_count_60d",
+      "key": "tf_limit_up_count_60d",
+      "label": "涨停基因(60日)",
+      "group": "涨停基因",
+      "formula": "近60个交易日涨停次数",
+      "unit": "次",
+      "dependency": "limit",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "pb_latest",
+      "key": "tf_pb_latest",
+      "label": "市净率(最新公告)",
+      "group": "财务",
+      "formula": "收盘价 / 最新已公告每股净资产; 无财务数据或公告前为空",
+      "unit": "倍",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "roe_latest",
+      "key": "tf_roe_latest",
+      "label": "ROE(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告净资产收益率(%); 无财务数据或公告前为空",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "gross_margin_latest",
+      "key": "tf_gross_margin_latest",
+      "label": "毛利率(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告销售毛利率(%)",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "net_margin_latest",
+      "key": "tf_net_margin_latest",
+      "label": "净利率(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告销售净利率(%)",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "revenue_yoy_latest",
+      "key": "tf_revenue_yoy_latest",
+      "label": "营收增速(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告营业收入同比(%)",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "net_income_yoy_latest",
+      "key": "tf_net_income_yoy_latest",
+      "label": "净利增速(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告归母净利润同比(%)",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "debt_ratio_latest",
+      "key": "tf_debt_ratio_latest",
+      "label": "资产负债率(最新公告)",
+      "group": "财务",
+      "formula": "最新已公告资产负债率(%)",
+      "unit": "%",
+      "dependency": "financial",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "stock"
+      ]
+    },
+    {
+      "id": "log_float_mv",
+      "key": "tf_log_float_mv",
+      "label": "流通市值对数",
+      "group": "规模",
+      "formula": "ln(收盘价 x 当日成交量 / 换手率), 由换手率反推流通股本, 高值代表大盘",
+      "unit": "对数",
+      "dependency": "turnover",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "momentum_120d",
+      "key": "tf_momentum_120d",
+      "label": "120日动量",
+      "group": "动量",
+      "formula": "120个交易日累计收益率 (中期动量, 与短窗口互补)",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 121,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "mom_accel_20_60",
+      "key": "tf_mom_accel_20_60",
+      "label": "动量加速度",
+      "group": "动量",
+      "formula": "20日动量 - 60日动量, 衡量近期动量相对中期是否增强",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "rsi_14_delta_5d",
+      "key": "tf_rsi_14_delta_5d",
+      "label": "RSI五日变化",
+      "group": "超买超卖",
+      "formula": "RSI(14) - 5日前的RSI(14), 衡量强弱指标的边际变化；Wilder递归平滑，保留Tick口径",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "overnight_ret_20d",
+      "key": "tf_overnight_ret_20d",
+      "label": "20日隔夜收益",
+      "group": "收益形态",
+      "formula": "近20日累计隔夜收益(开盘价/前收盘-1求和), A股隔夜与日内收益的定价机制不同",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "intraday_ret_20d",
+      "key": "tf_intraday_ret_20d",
+      "label": "20日日内收益",
+      "group": "收益形态",
+      "formula": "近20日累计日内收益(收盘价/开盘价-1求和), 与隔夜收益构成收益分解",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "downside_vol_20d",
+      "key": "tf_downside_vol_20d",
+      "label": "20日下行波动",
+      "group": "波动率",
+      "formula": "sqrt(近20日 min(日收益,0)^2 均值), 只度量下跌侧风险",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "vol_regime_5_60",
+      "key": "tf_vol_regime_5_60",
+      "label": "波动率状态(5/60)",
+      "group": "波动率",
+      "formula": "5日收益标准差 / 60日收益标准差, 高值代表波动骤然放大",
+      "unit": "倍",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "amplitude_trend_20_60",
+      "key": "tf_amplitude_trend_20_60",
+      "label": "振幅趋势(20/60)",
+      "group": "波动率",
+      "formula": "20日平均振幅 / 60日平均振幅 - 1",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 61,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "obv_trend_20d",
+      "key": "tf_obv_trend_20d",
+      "label": "20日量能潮",
+      "group": "量价",
+      "formula": "近20日 sign(日收益)x成交量 之和 / (20日均量x20), 有界[-1,1], 净买入方向的一致性",
+      "unit": "系数",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "amount_mean_20d",
+      "key": "tf_amount_mean_20d",
+      "label": "20日均成交额(亿)",
+      "group": "量价",
+      "formula": "近20日平均成交额(亿元), 规模/流动性水平量",
+      "unit": "亿元",
+      "dependency": "amount",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "turnover_mean_20d",
+      "key": "tf_turnover_mean_20d",
+      "label": "20日均换手",
+      "group": "流动性",
+      "formula": "近20日平均换手率, A股经典低换手溢价因子",
+      "unit": "%",
+      "dependency": "turnover",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "turnover_std_20d",
+      "key": "tf_turnover_std_20d",
+      "label": "20日换手波动",
+      "group": "流动性",
+      "formula": "近20日换手率标准差 / 均值 (变异系数), 衡量交易活跃的稳定性",
+      "unit": "",
+      "dependency": "turnover",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "position_240d",
+      "key": "tf_position_240d",
+      "label": "一年价格位置",
+      "group": "价格位置",
+      "formula": "收盘价在近240个交易日最低价到最高价之间的位置 (0~1)",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 241,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "distance_to_high_240d",
+      "key": "tf_distance_to_high_240d",
+      "label": "距一年高点",
+      "group": "价格位置",
+      "formula": "收盘价 / 240日最高收盘价 - 1, 接近0代表贴近一年新高",
+      "unit": "ratio",
+      "dependency": "daily",
+      "warmup": 241,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    },
+    {
+      "id": "kdj_kd_diff",
+      "key": "tf_kdj_kd_diff",
+      "label": "KDJ K-D差",
+      "group": "趋势",
+      "formula": "KDJ K值 - D值, 正值代表快线在慢线上方",
+      "unit": "点",
+      "dependency": "daily",
+      "warmup": 21,
+      "version": "tick-v1",
+      "asset_types": [
+        "etf",
+        "stock"
+      ]
+    }
+  ],
+  "strategies": [
+    {
+      "id": "active_limit_gene",
+      "name": "涨停基因活跃股",
+      "description": "近60日涨停次数达标的活跃标的, 且当日未涨停、缩量休整 — 股性筛选池",
+      "tags": [
+        "涨停",
+        "活跃",
+        "股性"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "min_limit_count",
+          "label": "近60日最少涨停次数",
+          "type": "int",
+          "default": 3,
+          "min": 2,
+          "max": 10,
+          "step": 1
+        },
+        {
+          "id": "vol_ratio_max",
+          "label": "当日量比上限 (休整)",
+          "type": "float",
+          "default": 1.2,
+          "min": 0.5,
+          "max": 3.0,
+          "step": 0.1
+        },
+        {
+          "id": "max_change_pct",
+          "label": "当日涨幅上限% (排除涨停)",
+          "type": "float",
+          "default": 7.0,
+          "min": 3.0,
+          "max": 15.0,
+          "step": 0.5
+        }
+      ],
+      "scoring": {
+        "limit_up_count_60d": 0.4,
+        "momentum_20d": 0.3,
+        "turnover_ratio_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.08,
+      "max_hold_days": 25,
+      "module": "active_limit_gene"
+    },
+    {
+      "id": "boll_breakout",
+      "name": "布林突破",
+      "description": "突破布林上轨 + 放量, 强势加速信号",
+      "tags": [
+        "布林",
+        "突破"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_boll_breakout",
+          "label": "要求突破布林上轨",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "vol_ratio_5d": 0.4,
+        "change_pct": 0.3,
+        "momentum_20d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "boll_breakout"
+    },
+    {
+      "id": "breakout_new_high_60d",
+      "name": "放量创60日新高",
+      "description": "收盘突破前60日最高价, 量比配合, 趋势强度确认",
+      "tags": [
+        "突破",
+        "新高"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_volume",
+          "label": "要求量比配合",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.3,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        },
+        {
+          "id": "min_change_pct",
+          "label": "最低当日涨幅%",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.0,
+          "max": 10.0,
+          "step": 0.5
+        }
+      ],
+      "scoring": {
+        "momentum_20d": 0.4,
+        "vol_ratio_5d": 0.3,
+        "change_pct": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.07,
+      "max_hold_days": 20,
+      "module": "breakout_new_high_60d"
+    },
+    {
+      "id": "broken_board_recovery",
+      "name": "断板反包",
+      "description": "连板≥2后断板1-2天, 出现放量反包信号",
+      "tags": [
+        "涨停",
+        "反包"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_limit_up",
+          "label": "要求当日涨停",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        },
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "change_pct_min",
+          "label": "最低涨幅",
+          "type": "float",
+          "default": 0.03,
+          "min": 0.01,
+          "max": 0.1,
+          "step": 0.01
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.4,
+        "vol_ratio_5d": 0.3,
+        "momentum_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 10,
+      "module": "broken_board_recovery"
+    },
+    {
+      "id": "bullish_alignment",
+      "name": "均线多头",
+      "description": "MA5>MA10>MA20>MA60多头排列 + 短期动量为正",
+      "tags": [
+        "均线",
+        "多头"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_ma_alignment",
+          "label": "要求均线多头排列",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "require_positive_momentum",
+          "label": "要求20日动量为正",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "momentum_20d": 0.3,
+        "turnover_rate": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 20,
+      "module": "bullish_alignment"
+    },
+    {
+      "id": "consecutive_limit_ups",
+      "name": "连板股",
+      "description": "当日涨停且连续涨停≥2天, 强势追涨",
+      "tags": [
+        "涨停",
+        "连板"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_limit_up",
+          "label": "要求当日涨停",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_boards_filter",
+          "label": "启用连板数过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_boards",
+          "label": "最少连板数",
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 20,
+          "step": 1
+        }
+      ],
+      "scoring": {
+        "consecutive_limit_ups": 0.5,
+        "change_pct": 0.3,
+        "amount": 0.2
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.05,
+      "max_hold_days": 5,
+      "module": "consecutive_limit_ups"
+    },
+    {
+      "id": "factor_rank_research",
+      "name": "因子排名研究",
+      "description": "受控多因子截面评分、阈值与排名选股策略",
+      "tags": [
+        "因子",
+        "研究",
+        "截面排名"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "research_only": true,
+      "params": [
+        {
+          "id": "entry_score",
+          "label": "入场最低分",
+          "type": "float",
+          "default": 70.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 5.0
+        },
+        {
+          "id": "exit_score",
+          "label": "离场最高分",
+          "type": "float",
+          "default": 40.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 5.0
+        },
+        {
+          "id": "top_rank",
+          "label": "每日最多入选",
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        }
+      ],
+      "scoring": {},
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.08,
+      "max_hold_days": 30,
+      "module": "factor_rank_research"
+    },
+    {
+      "id": "high_turnover_surge",
+      "name": "高换手拉升",
+      "description": "换手率 > 5% 且涨幅 > 3%, 资金活跃",
+      "tags": [
+        "换手率",
+        "放量",
+        "资金"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_turnover_filter",
+          "label": "启用换手率过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_turnover",
+          "label": "最低换手率%",
+          "type": "float",
+          "default": 5.0,
+          "min": 1.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_change",
+          "label": "最低涨幅%",
+          "type": "float",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 10.0,
+          "step": 0.5
+        }
+      ],
+      "scoring": {
+        "turnover_rate": 0.4,
+        "change_pct": 0.3,
+        "momentum_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 10,
+      "module": "high_turnover_surge"
+    },
+    {
+      "id": "limit_up_momentum",
+      "name": "连板接力",
+      "description": "连板股 + 今日涨幅 > 5%, 连板接力追踪",
+      "tags": [
+        "涨停",
+        "连板",
+        "接力"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_change",
+          "label": "最低涨幅%",
+          "type": "float",
+          "default": 5.0,
+          "min": 2.0,
+          "max": 15.0,
+          "step": 0.5
+        },
+        {
+          "id": "use_boards_filter",
+          "label": "启用连板数过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_boards",
+          "label": "最少连板",
+          "type": "int",
+          "default": 1,
+          "min": 1,
+          "max": 10,
+          "step": 1
+        }
+      ],
+      "scoring": {
+        "consecutive_limit_ups": 0.4,
+        "change_pct": 0.3,
+        "amount": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 5,
+      "module": "limit_up_momentum"
+    },
+    {
+      "id": "long_lower_shadow_reversal",
+      "name": "长下影反击",
+      "description": "近5日超跌后收长下影线且收盘收复实体, 下方承接强势的反转信号",
+      "tags": [
+        "K线形态",
+        "超跌",
+        "反转"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "shadow_pct_min",
+          "label": "下影线最低长度% (相对昨收)",
+          "type": "float",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 10.0,
+          "step": 0.5
+        },
+        {
+          "id": "drop_pct_max",
+          "label": "近5日累计跌幅下限% (负值)",
+          "type": "float",
+          "default": -5.0,
+          "min": -30.0,
+          "max": 0.0,
+          "step": 1.0
+        },
+        {
+          "id": "require_recovery",
+          "label": "要求收盘收复上半区",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_20d": 0.3,
+        "vol_ratio_5d": 0.4,
+        "change_pct": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.05,
+      "max_hold_days": 10,
+      "module": "long_lower_shadow_reversal"
+    },
+    {
+      "id": "low_volatility_leader",
+      "name": "低波动龙头",
+      "description": "20日动量为正 + 年化波动 < 30% + MA20上方",
+      "tags": [
+        "低波动",
+        "龙头"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_positive_momentum",
+          "label": "要求20日动量为正",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volatility_filter",
+          "label": "启用波动率过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_max",
+          "label": "最大年化波动",
+          "type": "float",
+          "default": 0.3,
+          "min": 0.05,
+          "max": 1.0,
+          "step": 0.01
+        },
+        {
+          "id": "require_above_ma20",
+          "label": "要求收盘价在MA20上方",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "momentum_20d": 0.3,
+        "turnover_rate": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.05,
+      "max_hold_days": 30,
+      "module": "low_volatility_leader"
+    },
+    {
+      "id": "ma_convergence_breakout",
+      "name": "均线粘合突破",
+      "description": "MA5/10/20 粘合收敛后放量突破, 挤压释放的变盘启动点",
+      "tags": [
+        "均线",
+        "粘合",
+        "突破"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "spread_pct_max",
+          "label": "粘合带宽上限% (三线极差/MA20)",
+          "type": "float",
+          "default": 2.5,
+          "min": 0.5,
+          "max": 8.0,
+          "step": 0.5
+        },
+        {
+          "id": "squeeze_days",
+          "label": "粘合持续天数",
+          "type": "int",
+          "default": 5,
+          "min": 3,
+          "max": 15,
+          "step": 1
+        },
+        {
+          "id": "min_change_pct",
+          "label": "突破日最低涨幅%",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.0,
+          "max": 10.0,
+          "step": 0.5
+        },
+        {
+          "id": "require_volume",
+          "label": "要求量比配合",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "vol_ratio_5d": 0.4,
+        "change_pct": 0.3,
+        "momentum_20d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "ma_convergence_breakout"
+    },
+    {
+      "id": "ma_golden_cross",
+      "name": "MA 金叉",
+      "description": "MA5上穿MA20当日触发, 量能配合",
+      "tags": [
+        "均线",
+        "金叉"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_ma_golden",
+          "label": "要求MA5上穿MA20",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.2,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        },
+        {
+          "id": "require_above_ma60",
+          "label": "要求收盘价在MA60上方",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_20d": 0.5,
+        "vol_ratio_5d": 0.3,
+        "change_pct": 0.2
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "ma_golden_cross"
+    },
+    {
+      "id": "macd_below_zero_revival",
+      "name": "MACD 零下回升",
+      "description": "股价创阶段新低而 MACD DIF 拒绝新低并回升 (底背离简化), 零轴下方动能修复",
+      "tags": [
+        "MACD",
+        "背离",
+        "超跌"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "low_window",
+          "label": "新低回看天数",
+          "type": "int",
+          "default": 20,
+          "min": 10,
+          "max": 60,
+          "step": 5
+        },
+        {
+          "id": "revive_days",
+          "label": "DIF 回升对比天数",
+          "type": "int",
+          "default": 10,
+          "min": 5,
+          "max": 20,
+          "step": 1
+        }
+      ],
+      "scoring": {
+        "momentum_20d": 0.4,
+        "change_pct": 0.3,
+        "vol_ratio_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 20,
+      "module": "macd_below_zero_revival"
+    },
+    {
+      "id": "macd_golden",
+      "name": "MACD 金叉放量",
+      "description": "MACD金叉当日 + 量能放大",
+      "tags": [
+        "MACD",
+        "金叉",
+        "放量"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_macd_golden",
+          "label": "要求MACD金叉",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "vol_ratio_5d": 0.3,
+        "change_pct": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.07,
+      "max_hold_days": 20,
+      "module": "macd_golden"
+    },
+    {
+      "id": "n_day_low_reversal",
+      "name": "新低反转",
+      "description": "触及60日新低后当日收阳放量, 反转信号",
+      "tags": [
+        "反转",
+        "新低"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_n_day_low",
+          "label": "要求60日新低",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "require_bullish_candle",
+          "label": "要求收阳",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.4,
+        "vol_ratio_5d": 0.3,
+        "momentum_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "n_day_low_reversal"
+    },
+    {
+      "id": "near_limit_up",
+      "name": "逼近涨停",
+      "description": "涨幅 > 7% 且距涨停 < 3%, 追涨信号",
+      "tags": [
+        "涨停",
+        "追涨"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_change",
+          "label": "最低涨幅%",
+          "type": "float",
+          "default": 7.0,
+          "min": 3.0,
+          "max": 15.0,
+          "step": 1.0
+        },
+        {
+          "id": "use_limit_gap_filter",
+          "label": "启用距涨停空间过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "limit_gap",
+          "label": "距涨停空间%",
+          "type": "float",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 10.0,
+          "step": 0.5
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.5,
+        "amount": 0.3,
+        "momentum_5d": 0.2
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 5,
+      "module": "near_limit_up"
+    },
+    {
+      "id": "oversold_bounce",
+      "name": "超跌反弹",
+      "description": "RSI14 < 30超卖区 + 当日收阳 + 放量, 抄底信号",
+      "tags": [
+        "超跌",
+        "反弹",
+        "RSI"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_rsi_filter",
+          "label": "启用RSI过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "rsi_max",
+          "label": "RSI上限",
+          "type": "float",
+          "default": 30.0,
+          "min": 10.0,
+          "max": 50.0,
+          "step": 1.0
+        },
+        {
+          "id": "require_bullish_candle",
+          "label": "要求收阳",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 1.2,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.3,
+        "vol_ratio_5d": 0.3,
+        "momentum_5d": 0.2,
+        "rsi_14": 0.2
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.05,
+      "max_hold_days": 15,
+      "module": "oversold_bounce"
+    },
+    {
+      "id": "oversold_reversal",
+      "name": "超跌反转",
+      "description": "RSI14 < 30超卖 + 涨幅 > 1% + 站上MA5, 超卖反转信号",
+      "tags": [
+        "超跌",
+        "反弹",
+        "RSI"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_rsi_filter",
+          "label": "启用RSI过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "rsi_max",
+          "label": "RSI上限",
+          "type": "float",
+          "default": 30.0,
+          "min": 10.0,
+          "max": 50.0,
+          "step": 1.0
+        },
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_change",
+          "label": "最低涨幅%",
+          "type": "float",
+          "default": 1.0,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.5
+        },
+        {
+          "id": "require_above_ma5",
+          "label": "要求收盘价在MA5上方",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.4,
+        "rsi_14": 0.3,
+        "vol_ratio_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 15,
+      "module": "oversold_reversal"
+    },
+    {
+      "id": "platform_consolidation_breakout",
+      "name": "平台整理突破",
+      "description": "近N日窄幅横盘 (振幅收敛) 后放量突破平台上沿, 蓄势变盘",
+      "tags": [
+        "形态",
+        "平台",
+        "突破"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "platform_days",
+          "label": "平台天数",
+          "type": "int",
+          "default": 10,
+          "min": 5,
+          "max": 30,
+          "step": 1
+        },
+        {
+          "id": "range_pct_max",
+          "label": "平台振幅上限%",
+          "type": "float",
+          "default": 8.0,
+          "min": 3.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "突破日最低量比",
+          "type": "float",
+          "default": 1.5,
+          "min": 1.0,
+          "max": 5.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "vol_ratio_5d": 0.4,
+        "momentum_20d": 0.3,
+        "change_pct": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "platform_consolidation_breakout"
+    },
+    {
+      "id": "pullback_ma20_bounce",
+      "name": "均线回踩反弹",
+      "description": "价格在MA20附近(±2%)且MA5>MA20>MA60多头排列, 回踩买入",
+      "tags": [
+        "回踩",
+        "均线",
+        "反弹"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_ma20_proximity",
+          "label": "启用MA20附近过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "ma_proximity",
+          "label": "MA偏离度%",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.5
+        },
+        {
+          "id": "require_ma_alignment",
+          "label": "要求MA5>MA20>MA60",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "require_positive_change",
+          "label": "要求当日上涨",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "change_pct": 0.3,
+        "momentum_20d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 15,
+      "module": "pullback_ma20_bounce"
+    },
+    {
+      "id": "pullback_to_support",
+      "name": "缩量回踩",
+      "description": "回踩MA20附近 + 缩量 + 中期趋势向上",
+      "tags": [
+        "回踩",
+        "支撑"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_ma20_proximity",
+          "label": "启用MA20附近过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "ma_proximity",
+          "label": "均线偏离度",
+          "type": "float",
+          "default": 0.02,
+          "min": 0.01,
+          "max": 0.05,
+          "step": 0.005
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用缩量过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_max",
+          "label": "最大量比",
+          "type": "float",
+          "default": 0.8,
+          "min": 0.2,
+          "max": 1.5,
+          "step": 0.1
+        },
+        {
+          "id": "require_above_ma60",
+          "label": "要求收盘价在MA60上方",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "require_positive_momentum",
+          "label": "要求20日动量为正",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "momentum_20d": 0.3,
+        "turnover_rate": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.05,
+      "max_hold_days": 20,
+      "module": "pullback_to_support"
+    },
+    {
+      "id": "rsi_midline_pullback",
+      "name": "RSI 中轴回踩",
+      "description": "多头趋势 (MA60 上方) 中 RSI 回落至 50 中轴区间企稳, 强势股低吸",
+      "tags": [
+        "RSI",
+        "趋势",
+        "低吸"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "rsi_period",
+          "label": "RSI 周期",
+          "type": "int",
+          "default": 14,
+          "min": 6,
+          "max": 24,
+          "step": 2
+        },
+        {
+          "id": "mid_low",
+          "label": "中轴区间下沿",
+          "type": "float",
+          "default": 45.0,
+          "min": 30.0,
+          "max": 55.0,
+          "step": 1.0
+        },
+        {
+          "id": "mid_high",
+          "label": "中轴区间上沿",
+          "type": "float",
+          "default": 60.0,
+          "min": 45.0,
+          "max": 70.0,
+          "step": 1.0
+        }
+      ],
+      "scoring": {
+        "momentum_20d": 0.4,
+        "up_days_20d": 0.3,
+        "vol_ratio_5d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "rsi_midline_pullback"
+    },
+    {
+      "id": "strong_open",
+      "name": "强势高开",
+      "description": "高开 > 3% 且收盘高于开盘价, 集合竞价强势",
+      "tags": [
+        "高开",
+        "强势"
+      ],
+      "asset_types": [
+        "stock"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "use_open_gap_filter",
+          "label": "启用高开过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_open_gap",
+          "label": "最低高开%",
+          "type": "float",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 10.0,
+          "step": 0.5
+        },
+        {
+          "id": "require_close_above_open",
+          "label": "要求收盘高于开盘",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_change_filter",
+          "label": "启用涨幅过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "min_change",
+          "label": "最低涨幅%",
+          "type": "float",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 10.0,
+          "step": 0.5
+        }
+      ],
+      "scoring": {
+        "change_pct": 0.4,
+        "amplitude": 0.2,
+        "amount": 0.4
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 50,
+      "stop_loss": -0.05,
+      "max_hold_days": 10,
+      "module": "strong_open"
+    },
+    {
+      "id": "trend_breakout",
+      "name": "趋势突破",
+      "description": "MA60上方 + 60日新高 + 量能 ≥ 2倍均量",
+      "tags": [
+        "趋势",
+        "突破",
+        "放量"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "basic_filter": {
+        "price_min": 5,
+        "price_max": 200,
+        "market_cap_min": 2000000000.0,
+        "amount_min": 100000000.0,
+        "exclude_st": true,
+        "exclude_new_days": 60
+      },
+      "params": [
+        {
+          "id": "require_above_ma60",
+          "label": "要求收盘价在MA60上方",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "require_n_day_high",
+          "label": "要求60日新高",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.5,
+          "max": 10.0,
+          "step": 0.1
+        }
+      ],
+      "scoring": {
+        "momentum_60d": 0.4,
+        "vol_ratio_5d": 0.3,
+        "change_pct": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.08,
+      "max_hold_days": 20,
+      "module": "trend_breakout"
+    },
+    {
+      "id": "volume_price_surge",
+      "name": "量价齐升",
+      "description": "突破MA20 + 放量 + 收阳",
+      "tags": [
+        "量价",
+        "突破"
+      ],
+      "asset_types": [
+        "stock",
+        "etf"
+      ],
+      "timeframes": [
+        "1d"
+      ],
+      "params": [
+        {
+          "id": "require_ma20_breakout",
+          "label": "要求突破MA20",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "use_volume_filter",
+          "label": "启用量比过滤",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "vol_ratio_min",
+          "label": "最低量比",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.5,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "id": "require_bullish_candle",
+          "label": "要求收阳",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "scoring": {
+        "vol_ratio_5d": 0.4,
+        "change_pct": 0.3,
+        "momentum_20d": 0.3
+      },
+      "order_by": "score",
+      "descending": true,
+      "limit": 100,
+      "stop_loss": -0.06,
+      "max_hold_days": 15,
+      "module": "volume_price_surge"
+    }
+  ]
+}

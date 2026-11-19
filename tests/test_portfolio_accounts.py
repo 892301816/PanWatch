@@ -88,3 +88,38 @@ def test_delete_position_does_not_read_detached_relationships_after_delete():
     position = FakePosition()
 
     assert delete_position(position.id, FakeSession(position)) == {"success": True}
+
+
+def test_new_position_response_exposes_actual_trade_id_for_decision_linking():
+    """The HTTP response model must preserve the saved ledger ID, not filter it out."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from src.modules.portfolio.api.accounts import router
+    from src.platform.persistence.database import get_db
+    from src.platform.persistence.models import TradeRecord
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        account = Account(name="事实记账", available_funds=10000)
+        stock = Stock(symbol="600900", name="测试标的", market="CN")
+        session.add_all([account, stock])
+        session.commit()
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = lambda: session
+        with TestClient(app) as client:
+            response = client.post("/positions", json={"account_id": account.id, "stock_id": stock.id, "cost_price": 10, "quantity": 100, "record_trade": True, "deduct_cash": True})
+        assert response.status_code == 200
+        saved = response.json()
+        trade = session.get(TradeRecord, saved["trade_id"])
+        assert trade is not None
+        assert trade.account_id == account.id
+        assert trade.stock_symbol == stock.symbol
+        assert trade.quantity == 100
+        assert session.query(TradeRecord).count() == 1
+        assert session.get(Account, account.id).available_funds == 9000
+    finally:
+        session.close()
+        engine.dispose()

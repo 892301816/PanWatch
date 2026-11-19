@@ -60,7 +60,7 @@ describe('portfolio page loading', () => {
     })
   })
 
-  it('loads quotes as the priority lane before the page is revealed', async () => {
+  it('loads quotes independently from the core account data', async () => {
     const signal = new AbortController().signal
     const items = [{ symbol: '600519', market: 'CN' }]
     const api = {

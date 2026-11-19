@@ -65,7 +65,11 @@ export default function TradeGate({
   )
 
   useEffect(() => {
-    if (!enabled || !symbol) return
+    setGate(null)
+    onGateRef.current?.(null)
+    setError('')
+    if (!enabled || !symbol) { setLoading(false); return }
+    setLoading(true)
     // 价格/数量在弹窗里会被连续输入,防抖 350ms 再请求;后端还有 180s 同价档缓存
     const timer = window.setTimeout(() => {
       void run(true)
@@ -240,9 +244,9 @@ export default function TradeGate({
   )
 }
 
-/** 结论是否为「不建议」:交易弹窗据此要求二次确认。 */
+/** A missing, incomplete or partial result never counts as completed clearance. */
 export function isGateBlocked(gate: StrategyGate | null | undefined): boolean {
-  return gate?.verdict === '不建议'
+  return !gate || gate.verdict !== '可操作'
 }
 
 function CheckRow({ item, avoid }: { item: StrategyCheckItem; avoid: boolean }) {

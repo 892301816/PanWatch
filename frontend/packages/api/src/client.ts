@@ -46,50 +46,59 @@ export async function fetchAPI<T>(path: string, options?: ApiRequestOptions): Pr
     headers['Content-Type'] = 'application/json'
   }
 
-  const timeoutController = options?.signal ? null : new AbortController()
+  const timeoutController = new AbortController()
+  const callerSignal = options?.signal
+  const abortFromCaller = () => timeoutController.abort(callerSignal?.reason)
+  if (callerSignal?.aborted) abortFromCaller()
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true })
   const timeoutMs = typeof options?.timeoutMs === 'number' && options.timeoutMs > 0
     ? options.timeoutMs
     : DEFAULT_TIMEOUT_MS
-  const timeoutId = timeoutController
-    ? window.setTimeout(() => timeoutController.abort(), timeoutMs)
-    : null
+  const timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs)
 
-  let res: Response
   try {
     const { timeoutMs: _timeoutMs, ...requestOptions } = options || {}
-    res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${API_BASE}${path}`, {
       ...requestOptions,
       headers: {
         ...headers,
         ...(requestOptions.headers as Record<string, string> | undefined),
       },
-      signal: requestOptions.signal || timeoutController?.signal,
+      signal: timeoutController.signal,
     })
+
+    if (res.status === 401) {
+      logout()
+      throw new Error('登录已过期')
+    }
+
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('text/html')) {
+      throw new Error('接口返回了网页，服务可能尚未更新。请刷新页面；若仍失败，请更新并重启本地服务。')
+    }
+    let body: ApiResponse<T>
+    try {
+      body = await res.json()
+    } catch (error) {
+      if (timeoutController.signal.aborted) throw error
+      throw new Error(res.ok ? '接口返回格式异常，请稍后重试' : `请求失败（HTTP ${res.status}）`)
+    }
+    if (!body || typeof body.code !== 'number') {
+      throw new Error('接口返回格式异常，请刷新页面并确认服务已更新')
+    }
+    if (!res.ok || body.code !== 0 || body.success === false) {
+      throw new Error(body.message || `请求失败（HTTP ${res.status}）`)
+    }
+    return body.data
   } catch (error: any) {
-    if (error?.name === 'AbortError') {
+    if (timeoutController.signal.aborted && !callerSignal?.aborted) {
       throw new Error('请求超时，请稍后重试')
     }
     throw error
   } finally {
-    if (timeoutId !== null) {
-      window.clearTimeout(timeoutId)
-    }
+    window.clearTimeout(timeoutId)
+    callerSignal?.removeEventListener('abort', abortFromCaller)
   }
-
-  if (res.status === 401) {
-    logout()
-    throw new Error('登录已过期')
-  }
-
-  const body: ApiResponse<T> = await res.json().catch(() => ({
-    code: res.status,
-    data: null as T,
-    message: `HTTP ${res.status}`,
-  }))
-  if (body.code !== 0 || body.success === false) {
-    throw new Error(body.message || `HTTP ${res.status}`)
-  }
-  return body.data
 }
 
 export const apiClient = {

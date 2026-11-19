@@ -182,8 +182,8 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
             机会发现
           </h2>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate('/opportunities')} className="h-7 text-[12px]">
-              进入机会页
+            <Button variant="outline" size="sm" onClick={() => navigate('/opportunities?view=opportunities&system=1')} className="h-7 text-[12px]">
+              进入策略中心 · 机会
             </Button>
             <Select value={discoverMarket} onValueChange={(v) => setDiscoverMarket(v as 'CN' | 'HK' | 'US')}>
               <SelectTrigger className="h-7 w-[90px] text-[12px]">

@@ -4,16 +4,37 @@ export interface StrategyCondition {
   field: string
   op: string
   value: unknown
+  children?: StrategyCondition[]
+  logic?: 'all' | 'any'
+  offset?: number
+  consecutive?: number
+}
+
+export interface StrategyConfig {
+  template_id?: string
+  params?: Record<string, unknown>
+  execution?: { stop_loss_pct?: number; take_profit_pct?: number; max_hold_days?: number }
+  scoring?: Record<string, number>
+  directions?: Record<string, 'high' | 'low'>
+  factor_version?: string
 }
 
 export interface StrategyField {
+  source_id?: string
   key: string
   label: string
   unit: string
   group?: string
+  description?: string
+  formula?: string
+  dependency?: string
+  warmup?: number
+  version?: string
+  kind?: string
 }
 
 export interface StrategyPlaybook {
+  config?: StrategyConfig
   id: number
   scope: 'global' | 'stock'
   symbol: string
@@ -24,9 +45,103 @@ export interface StrategyPlaybook {
   note: string
   enabled: boolean
   is_override: boolean
+  market?: string
+  timing?: StrategyTiming
+  revision_id?: number
+  version?: number
+  rules_hash?: string
+}
+
+export type StrategyTiming = 'completed_daily' | 'intraday_preview'
+
+export interface StrategyDraftInput {
+  config?: StrategyConfig
+  draft_id?: number
+  scope: 'global' | 'stock'
+  symbol: string
+  market: string
+  name: string
+  buy: StrategyCondition[]
+  sell: StrategyCondition[]
+  avoid: StrategyCondition[]
+  note: string
+  timing?: StrategyTiming
+  questions?: string[]
+  enabled?: boolean
+  source_text?: string
+}
+
+export interface StrategyDraft extends StrategyDraftInput {
+  archived_at?: string | null
+  id: number
+  draft_id: number
+  status: 'draft'
+  rules_hash: string
+  questions: string[]
+  source_text?: string
+}
+
+export interface StrategyLibraryItem extends StrategyDraft {
+  bindings: StrategyPlaybook[]
+  tested: boolean
+  last_backtest?: StrategyReportSummary | null
+}
+
+export interface StrategyReportSummary {
+  id: number
+  draft_id?: number
+  status: string
+  symbol: string
+  market: string
+  start: string
+  end: string
+  rules_hash?: string
+  total_return?: number | null
+  max_drawdown?: number | null
+  error?: string
+}
+
+export interface StrategyScanItem extends Partial<StrategyCheck> {
+  symbol: string
+  name: string
+  market: string
+  status: 'MATCH' | 'BLOCK' | 'WAIT' | 'UNKNOWN'
+  summary: string
+}
+
+export interface StrategyDecisionInput {
+  account_id?: number
+  symbol: string
+  market: string
+  side: 'buy' | 'sell'
+  price: number
+  quantity: number
+  use_ai?: boolean
+  model_id?: number
+}
+
+export interface StrategyDecisionCheck {
+  decision_id: number
+  status: 'PASS' | 'BLOCK' | 'UNKNOWN' | 'NO_POLICY'
+  verdict?: string
+  summary?: string
+  reasons?: string[]
+  expires_at?: string
+  rules_hash?: string
+  revision_id?: number | null
+  input_hash?: string
+  created_at?: string
+  data_as_of?: string
+  expired?: boolean
+  exception_reason?: string
+  linked_trade_id?: number | null
+  input?: Partial<StrategyDecisionInput> & { account?: Record<string, unknown>; policy?: Record<string, unknown> | null }
 }
 
 export interface StrategyPreset {
+  config?: StrategyConfig
+  params?: Array<{id:string;label:string;type:string;default:number|boolean;min?:number;max?:number}>
+  source?: string
   id: string
   name: string
   description: string
@@ -50,7 +165,8 @@ export interface StrategyCheckItem {
   op: string
   expect: string
   actual: string
-  ok: boolean
+  ok: boolean | null
+  known?: boolean
   text?: string
 }
 
@@ -121,6 +237,28 @@ export interface BacktestTrade {
   pnl: number
   pnl_pct: number
   hold_days: number
+  entry_signal_date?: string
+  exit_signal_date?: string
+  quantity?: number
+  buy_fees?: number | Record<string, number>
+  sell_fees?: number | Record<string, number>
+  entry_conditions?: string[]
+  exit_conditions?: string[]
+  trigger_conditions?: { entry?: Record<string, unknown[]>; exit?: Record<string, unknown[]> }
+}
+
+export interface BacktestOrder {
+  signal_date: string
+  execution_date?: string | null
+  side: 'buy' | 'sell'
+  status: 'filled' | 'unfilled'
+  price?: number
+  fill_price?: number
+  reference_price?: number
+  quantity?: number
+  fees?: number | Record<string, number> | null
+  conditions?: unknown[] | Record<string, unknown[]>
+  reason?: string
 }
 
 export interface BacktestCurvePoint {
@@ -163,9 +301,54 @@ export interface BacktestResult {
   pattern?: StrategyPattern
   current_features?: Record<string, number | null>
   error?: string
+  backtest_id?: number
+  draft_id?: number
+  revision_id?: number
+  rules_hash?: string
+  rules_snapshot?: Record<string, unknown>
+  orders?: BacktestOrder[]
+  open_position?: Record<string, unknown> | null
+  initial_capital?: number
+  final_cash?: number
+  final_equity?: number
+  data_info?: {
+    source?: string
+    adjustment?: string
+    actual_start?: string
+    actual_end?: string
+    warmup_bars?: number
+    data_hash?: string
+    cost_config?: Record<string, number>
+    limitations?: string[]
+  }
+}
+
+export interface BacktestRecord {
+  id: number
+  backtest_id: number
+  status: 'running' | 'succeeded' | 'failed'
+  config: Record<string, unknown>
+  input_snapshot: Record<string, unknown>
+  result: BacktestResult | null
+  error: string
 }
 
 export const strategyApi = {
+  library: () => fetchAPI<{ items: StrategyLibraryItem[]; deleted_items?: StrategyLibraryItem[]; bindings: StrategyPlaybook[]; fields: StrategyField[]; presets: StrategyPreset[] }>('/strategy/library?include_deleted=true'),
+  deleteLibrary: (id: number, expected_hash: string, disable_bindings = false, binding_ids: number[] = []) => fetchAPI<{ deleted: number; disabled_bindings: number[] }>(`/strategy/library/${id}`, { method: 'DELETE', body: JSON.stringify({ expected_hash, disable_bindings, binding_ids }) }),
+  restoreLibrary: (id: number) => fetchAPI<StrategyDraft>(`/strategy/library/${id}/restore`, { method: 'POST', body: '{}' }),
+  setBindingEnabled: (id: number, enabled: boolean) => fetchAPI<StrategyPlaybook>(`/strategy/bindings/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  applyLibrary: (id: number, payload: { scope: 'stock' | 'global'; symbol: string; expected_hash: string }) => fetchAPI<StrategyPlaybook>(`/strategy/library/${id}/apply`, { method: 'POST', body: JSON.stringify(payload) }),
+  scanLibrary: (id: number, payload: { symbols: Array<{ symbol: string; market: string; name: string }>; expected_hash: string; allow_network: boolean }) => fetchAPI<{ items: StrategyScanItem[]; draft_id: number; rules_hash: string; as_of: string }>(`/strategy/library/${id}/scan`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 180000 }),
+  backtests: (draft_id?: number) => fetchAPI<{ items: StrategyReportSummary[] }>(`/strategy/backtests${draft_id ? `?draft_id=${draft_id}` : ''}`),
+  drafts: (symbol: string, market = 'CN') => fetchAPI<{ items: StrategyDraft[] }>(`/strategy/drafts?${new URLSearchParams({ symbol, market })}`),
+  saveDraft: (payload: StrategyDraftInput) => fetchAPI<StrategyDraft>('/strategy/drafts', { method: 'POST', body: JSON.stringify(payload) }),
+  aiDraft: (payload: { draft_id?: number; expected_hash?: string; text: string; scope: 'global' | 'stock'; symbol: string; market: string; model_id?: number }) => fetchAPI<StrategyDraft>('/strategy/drafts/ai', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 90000 }),
+  activateDraft: (id: number) => fetchAPI<StrategyPlaybook>(`/strategy/drafts/${id}/activate`, { method: 'POST', body: '{}' }),
+  backtestRecord: (id: number) => fetchAPI<BacktestRecord>(`/strategy/backtests/${id}`),
+  decision: (payload: StrategyDecisionInput) => fetchAPI<StrategyDecisionCheck>('/strategy/decisions', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60000 }),
+  explainDecision: (id: number, model_id?: number) => fetchAPI<StrategyDecisionCheck>(`/strategy/decisions/${id}/explain`, { method: 'POST', body: JSON.stringify({ model_id }), timeoutMs: 45000 }),
+  decisions: (symbol: string, market = 'CN', account_id?: number) => fetchAPI<{ items: StrategyDecisionCheck[] }>(`/strategy/decisions?${new URLSearchParams({ symbol, market, ...(account_id != null ? { account_id: String(account_id) } : {}) })}`),
   playbooks: () =>
     fetchAPI<{
       items: StrategyPlaybook[]
@@ -186,6 +369,8 @@ export const strategyApi = {
     avoid?: StrategyCondition[]
     note?: string
     enabled?: boolean
+    market?: string
+    timing?: StrategyTiming
   }) => fetchAPI<StrategyPlaybook>('/strategy/playbooks', { method: 'POST', body: JSON.stringify(payload) }),
 
   remove: (id: number) =>
@@ -227,6 +412,16 @@ export const strategyApi = {
     sell?: StrategyCondition[]
     avoid?: StrategyCondition[]
     days?: number
+    draft_id?: number
+    revision_id?: number
+    start_date?: string
+    end_date?: string
+    initial_capital?: number
+    commission_rate?: number
+    min_commission?: number
+    stamp_duty_rate?: number
+    transfer_fee_rate?: number
+    slippage_bps?: number
   }) =>
     fetchAPI<BacktestResult>('/strategy/backtest', {
       method: 'POST',
