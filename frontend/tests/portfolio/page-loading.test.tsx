@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MessagesPage from '@/pages/Messages'
 import ScreenerPage from '@/pages/Screener'
+import AgentsPage from '@/pages/Agents'
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), meta: vi.fn(), run: vi.fn() }))
 vi.mock('@panwatch/api', () => ({
@@ -21,6 +22,34 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.clear() })
 afterEach(cleanup)
 
 describe('本地数据优先展示', () => {
+  it('loads older Agent checks and preserves visible records after a failed page', async () => {
+    let failOlder = true
+    mocks.fetch.mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve([{ name: 'intraday_monitor', display_name: '盘中监测',
+        enabled: true, schedule: '*/10 * * * *', execution_mode: 'single', config: {}, notify_channel_ids: [] }])
+      if (url === '/agents/health') return Promise.resolve(null)
+      if (url.includes('/schedule/preview')) return Promise.resolve({ next_runs: [] })
+      if (url.includes('/history')) {
+        if (url.includes('before_id=21')) return failOlder ? Promise.reject(new Error('暂时失败'))
+          : Promise.resolve([{ id: 20, status: 'success', result: '较早检测结果', created_at: '11-19 09:30' }])
+        return Promise.resolve(Array.from({ length: 20 }, (_, i) => ({ id: 40 - i, status: 'success',
+          result: `本轮检测 ${40 - i}`, created_at: '11-19 10:00' })))
+      }
+      return Promise.resolve([])
+    })
+    render(<AgentsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: '运行记录' }))
+    await screen.findByText('本轮检测 40')
+    fireEvent.click(screen.getByRole('button', { name: '加载更早记录' }))
+    await screen.findByRole('alert')
+    expect(screen.getByText('本轮检测 40')).toBeTruthy()
+    failOlder = false
+    fireEvent.click(screen.getByRole('button', { name: '加载更早记录' }))
+    await screen.findByText('较早检测结果')
+    expect(screen.queryByRole('button', { name: '加载更早记录' })).toBeNull()
+    expect(mocks.fetch.mock.calls.some(([url]) => url.includes('before_id=21'))).toBe(true)
+  })
+
   it('shows cached messages during background refresh and requests refresh without hiding them', async () => {
     mocks.fetch.mockResolvedValue(feed('缓存公告'))
     render(<MessagesPage />)

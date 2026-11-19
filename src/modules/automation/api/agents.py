@@ -865,12 +865,14 @@ async def stream_run_progress(trace_id: str):
 
 
 @router.get("/{agent_name}/history", response_model=list[AgentRunResponse])
-def get_agent_history(agent_name: str, limit: int = 20, db: Session = Depends(get_db)):
+def get_agent_history(agent_name: str, limit: int = Query(20, ge=1, le=100),
+                      before_id: int | None = Query(None, gt=0), db: Session = Depends(get_db)):
     tz = Settings().app_timezone or "UTC"
+    query = db.query(AgentRun).filter(AgentRun.agent_name == agent_name)
+    if before_id is not None:
+        query = query.filter(AgentRun.id < before_id)
     runs = (
-        db.query(AgentRun)
-        .filter(AgentRun.agent_name == agent_name)
-        .order_by(AgentRun.created_at.desc())
+        query.order_by(AgentRun.id.desc())
         .limit(limit)
         .all()
     )

@@ -179,6 +179,8 @@ export default function AgentsPage() {
   const [runsOpen, setRunsOpen] = useState<Record<string, boolean>>({})
   const [runsLoading, setRunsLoading] = useState<Record<string, boolean>>({})
   const [runs, setRuns] = useState<Record<string, AgentRun[] | { error: string }>>({})
+  const [runsMore, setRunsMore] = useState<Record<string, boolean>>({})
+  const [runsError, setRunsError] = useState<Record<string, string>>({})
 
   const { toast } = useToast()
 
@@ -404,22 +406,32 @@ export default function AgentsPage() {
     }
   }
 
-  const toggleRuns = async (agentName: string) => {
-    const nextOpen = !runsOpen[agentName]
-    setRunsOpen(prev => ({ ...prev, [agentName]: nextOpen }))
-    if (!nextOpen) return
-
-    if (runs[agentName] || runsLoading[agentName]) return
+  const loadRuns = async (agentName: string, older = false) => {
+    if (runsLoading[agentName]) return
+    const current = runs[agentName]
+    const before = older && Array.isArray(current) ? current[current.length - 1]?.id : undefined
     setRunsLoading(prev => ({ ...prev, [agentName]: true }))
+    setRunsError(prev => ({ ...prev, [agentName]: '' }))
     try {
-      const data = await fetchAPI<AgentRun[]>(`/agents/${agentName}/history?limit=5`)
-      setRuns(prev => ({ ...prev, [agentName]: data }))
+      const data = await fetchAPI<AgentRun[]>(`/agents/${agentName}/history?limit=20${before ? `&before_id=${before}` : ''}`)
+      setRuns(prev => {
+        const existing = older && Array.isArray(prev[agentName]) ? prev[agentName] as AgentRun[] : []
+        const ids = new Set(existing.map(row => row.id))
+        return { ...prev, [agentName]: [...existing, ...data.filter(row => !ids.has(row.id))] }
+      })
+      setRunsMore(prev => ({ ...prev, [agentName]: data.length === 20 }))
     } catch (e) {
       const msg = e instanceof Error ? e.message : '加载失败'
-      setRuns(prev => ({ ...prev, [agentName]: { error: msg } }))
+      setRunsError(prev => ({ ...prev, [agentName]: msg }))
     } finally {
       setRunsLoading(prev => ({ ...prev, [agentName]: false }))
     }
+  }
+
+  const toggleRuns = async (agentName: string) => {
+    const nextOpen = !runsOpen[agentName]
+    setRunsOpen(prev => ({ ...prev, [agentName]: nextOpen }))
+    if (nextOpen) await loadRuns(agentName)
   }
 
   const updateAgentModel = async (agent: AgentConfig, modelId: number | null) => {
@@ -682,7 +694,7 @@ export default function AgentsPage() {
                       className="h-8"
                       onClick={() => toggleRuns(agent.name)}
                     >
-                      <span className="text-[12px]">最近运行</span>
+                      <span className="text-[12px]">运行记录</span>
                     </Button>
                     <Button
                       variant={agent.enabled ? 'destructive' : 'default'}
@@ -699,15 +711,17 @@ export default function AgentsPage() {
                 {runsOpen[agent.name] && (
                   <div className="mt-4 ml-[22px] sm:ml-0 rounded-lg border border-border/40 bg-accent/20 p-3">
                     <div className="flex items-center justify-between">
-                      <div className="text-[12px] font-medium text-foreground">最近 5 次运行</div>
+                      <div className="text-[12px] font-medium text-foreground">运行记录 · 每页 20 条</div>
+                      <Button variant="ghost" size="sm" disabled={runsLoading[agent.name]} onClick={() => loadRuns(agent.name)}>刷新记录</Button>
                       {runsLoading[agent.name] && (
                         <span className="w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                       )}
                     </div>
+                    {runsError[agent.name] && <div role="alert" className="mt-2 text-[11px] text-rose-600">{runsError[agent.name]}</div>}
                     {(() => {
                       const data = runs[agent.name]
                       if (!data) {
-                        return <div className="mt-2 text-[11px] text-muted-foreground">加载中…</div>
+                        return <div className="mt-2 text-[11px] text-muted-foreground">{runsLoading[agent.name] ? '加载中…' : '点击刷新记录重试'}</div>
                       }
                       if ('error' in data) {
                         return <div className="mt-2 text-[11px] text-muted-foreground">{data.error}</div>
@@ -733,6 +747,7 @@ export default function AgentsPage() {
                               <div className="text-[10px] text-muted-foreground/70">{({ success: '检测完成', skipped: '已跳过', failed: '失败', running: '进行中' } as Record<string, string>)[r.status] || r.status}</div>
                             </div>
                           ))}
+                          {runsMore[agent.name] && <Button variant="secondary" size="sm" disabled={runsLoading[agent.name]} onClick={() => loadRuns(agent.name, true)}>加载更早记录</Button>}
                         </div>
                       )
                     })()}

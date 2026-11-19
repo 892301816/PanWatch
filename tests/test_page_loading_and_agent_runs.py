@@ -215,6 +215,21 @@ def test_saving_schedule_api_updates_runtime_after_commit(local_book, monkeypatc
     apply.assert_called_once_with(cfg.name)
 
 
+def test_agent_history_cursor_keeps_older_checks_when_new_runs_arrive(local_book):
+    from src.modules.automation.api import agents
+    from src.platform.persistence.models import AgentRun
+    db, _session = local_book
+    db.add_all([AgentRun(agent_name='intraday_monitor', status='success', result=f'检测 {i}') for i in range(4)])
+    db.add(AgentRun(agent_name='daily_report', status='success', result='其他任务'))
+    db.commit()
+    first = agents.get_agent_history('intraday_monitor', limit=2, before_id=None, db=db)
+    db.add(AgentRun(agent_name='intraday_monitor', status='success', result='刚到的检测'))
+    db.commit()
+    older = agents.get_agent_history('intraday_monitor', limit=2, before_id=first[-1].id, db=db)
+    assert [row.result for row in first + older] == ['检测 3', '检测 2', '检测 1', '检测 0']
+    assert not agents.get_agent_history('intraday_monitor', limit=2, before_id=older[-1].id, db=db)
+
+
 def test_fast_news_source_becomes_visible_before_slow_source_finishes(monkeypatch):
     from src.modules.market import message_service as messages
     async def check():
