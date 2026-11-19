@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 import src.platform.persistence.models  # noqa: F401
 from src.modules.portfolio import screenshot_import as shot
 from src.platform.persistence.database import Base
-from src.platform.persistence.models import Account, Position, Stock, TradeRecord
+from src.platform.persistence.models import Account, Position, Stock, StockAgent, TradeRecord
 
 # 1x1 透明 PNG，仅用于验证 base64 解码链路
 TINY_PNG = base64.b64decode(
@@ -438,3 +438,173 @@ def test_apply_positions_record_trades_and_cash(book):
     assert result["cash_updated"] is True
     db.refresh(account)
     assert account.available_funds == 12345.67
+
+
+def _replacement():
+    return [{"symbol": "001358", "name": "兴欣新材", "quantity": 200, "cost_price": 22.5}]
+
+
+def test_replacement_records_both_sides_and_migrates_agent_config(book):
+    from src.modules.portfolio.screenshot_sync import state_hash
+    db, account, old = book
+    old.symbol, old.name = "002324", "普利特"
+    db.add_all([StockAgent(stock_id=old.id, agent_name=name, schedule="30 9 * * 1-5",
+                           notify_channel_ids=[2, 3]) for name in ("intraday_monitor", "daily_report")])
+    db.commit()
+    fingerprint = state_hash(db, account)
+    result = shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True,
+                                  record_trades=True, sync_agents=True, expected_state_hash=fingerprint,
+                                  missing_rows=[{"symbol": "002324", "trade_price": 29, "price_source": "manual"}],
+                                  trade_date="2026-11-18", available_funds=10000)
+    assert (result["buy_trades"], result["sell_trades"], result["removed"]) == (1, 1, 1)
+    trades = {t.action: t for t in db.query(TradeRecord).all()}
+    assert trades["buy"].stock_symbol == "001358"
+    assert trades["sell"].stock_symbol == "002324" and trades["sell"].price == 29
+    assert all(t.trade_date == "2026-11-18" and "[截图]" in t.note for t in trades.values())
+    agents = db.query(StockAgent).all()
+    new = db.query(Stock).filter_by(symbol="001358").one()
+    assert len(agents) == 2 and all(a.stock_id == new.id for a in agents)
+    assert all(a.schedule == "30 9 * * 1-5" and a.notify_channel_ids == [2, 3] for a in agents)
+    assert result["agents"]["attached"] == result["agents"]["detached"] == 2
+    assert account.available_funds == 10000
+    assert all(item.get("trade_id") for item in result["results"])
+    # 同一持仓快照再次提交不重复生成流水，也不重复绑定。
+    again = shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True,
+                                 record_trades=True, sync_agents=True)
+    assert again["buy_trades"] == again["sell_trades"] == again["agents"]["attached"] == 0
+    assert db.query(TradeRecord).count() == 2
+
+
+def test_agent_sync_preserves_target_overrides_and_other_account_holding(book):
+    db, account, old = book
+    other = Account(name="其他账户")
+    new = Stock(symbol="001358", name="兴欣新材", market="CN")
+    db.add_all([other, new])
+    db.flush()
+    db.add_all([Position(account_id=other.id, stock_id=old.id, quantity=10, cost_price=28),
+                StockAgent(stock_id=old.id, agent_name="daily_report", schedule="old"),
+                StockAgent(stock_id=new.id, agent_name="daily_report", schedule="target")])
+    db.commit()
+    result = shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True, sync_agents=True)
+    assert result["agents"]["attached"] == result["agents"]["detached"] == 0
+    assert result["agents"]["retained"] == 2
+    assert db.query(StockAgent).filter_by(stock_id=new.id).one().schedule == "target"
+    assert db.query(StockAgent).filter_by(stock_id=old.id).count() == 1
+
+
+def test_agent_sync_can_be_disabled(book):
+    db, account, old = book
+    db.add(StockAgent(stock_id=old.id, agent_name="daily_report"))
+    db.commit()
+    shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True, sync_agents=False)
+    assert db.query(StockAgent).one().stock_id == old.id
+
+
+def test_agent_conflicting_profiles_are_retained_for_manual_choice(book):
+    db, account, old = book
+    second = Stock(symbol="002324", name="普利特", market="CN")
+    db.add(second)
+    db.flush()
+    db.add_all([Position(account_id=account.id, stock_id=second.id, quantity=10, cost_price=5),
+                StockAgent(stock_id=old.id, agent_name="daily_report", schedule="first"),
+                StockAgent(stock_id=second.id, agent_name="daily_report", schedule="second")])
+    db.commit()
+    result = shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True, sync_agents=True)
+    assert result["agents"]["warnings"]
+    assert result["agents"]["retained"] == 2
+    assert db.query(StockAgent).count() == 2
+
+
+def test_initial_snapshot_trade_records_do_not_spend_historical_cash(book):
+    db, account, _old = book
+    db.query(Position).delete()
+    db.commit()
+    before_cash = account.available_funds
+    result = shot.apply_positions(db, account=account, rows=_replacement(), record_trades=True)
+    assert result["buy_trades"] == 1
+    record = db.query(TradeRecord).one()
+    assert record.cash_change == 0 and account.available_funds == before_cash
+    assert "初次持仓建账" in record.note
+
+
+def test_invalid_trade_price_leaves_positions_agents_and_cash_untouched(book):
+    db, account, old = book
+    db.add(StockAgent(stock_id=old.id, agent_name="daily_report"))
+    db.commit()
+    with pytest.raises(ValueError, match="记账价格"):
+        shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True,
+                             missing_rows=[{"symbol": old.symbol, "trade_price": None}],
+                             record_trades=True, sync_agents=True, available_funds=123)
+    assert db.query(Position).one().quantity == 100
+    assert db.query(TradeRecord).count() == 0 and db.query(StockAgent).one().stock_id == old.id
+    assert db.query(Stock).count() == 1 and account.available_funds == 50000
+
+
+def test_failure_after_first_trade_rolls_back_entire_snapshot(book, monkeypatch):
+    from src.modules.portfolio import wealth
+    db, account, _old = book
+    original = wealth.execute_trade
+    calls = 0
+    def execute(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("模拟第二笔失败")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(wealth, "execute_trade", execute)
+    with pytest.raises(RuntimeError, match="第二笔失败"):
+        shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True, record_trades=True)
+    assert db.query(TradeRecord).count() == 0
+    assert db.query(Position).one().quantity == 100
+    assert db.query(Stock).count() == 1 and account.available_funds == 50000
+
+
+def test_stale_preview_api_returns_conflict_without_writing(book):
+    from fastapi import HTTPException
+    from src.modules.portfolio.api import ingest as api
+    from src.modules.portfolio.screenshot_sync import state_hash
+    db, account, old = book
+    expected = state_hash(db, account)
+    db.add(StockAgent(stock_id=old.id, agent_name="daily_report"))
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        api.image_commit(api.ImageCommitIn(rows=_replacement(), account_id=account.id,
+                         expected_state_hash=expected, record_trades=True), db=db, _auth=None)
+    assert error.value.status_code == 409
+    assert db.query(TradeRecord).count() == 0 and db.query(Position).one().quantity == 100
+
+
+def test_missing_holdings_preview_includes_estimate_and_agent_plan(book, monkeypatch):
+    db, account, old = book
+    db.add(StockAgent(stock_id=old.id, agent_name="daily_report"))
+    db.commit()
+    _mock_recognize(monkeypatch, {"rows": _replacement()})
+    preview = asyncio.run(shot.extract_from_image(TINY_PNG, mode="positions", db=db, account=account))
+    assert preview["rows"][0]["trade_action"] == "buy"
+    missing = preview["missing_rows"][0]
+    assert missing["symbol"] == old.symbol and missing["trade_action"] == "sell"
+    assert missing["price_source"] == "cost" and missing["trade_price"] == 28
+    assert preview["agent_plan"]["detach"] == []
+    assert preview["agent_plan_full"]["detach"][0]["symbol"] == old.symbol
+    assert len(preview["expected_state_hash"]) == 64
+    assert db.query(TradeRecord).count() == 0
+
+
+def test_remove_missing_never_deletes_other_market_holdings(book):
+    db, account, _old = book
+    hk = Stock(symbol="00700", name="腾讯", market="HK")
+    db.add(hk)
+    db.flush()
+    db.add(Position(account_id=account.id, stock_id=hk.id, quantity=100, cost_price=300))
+    db.commit()
+    shot.apply_positions(db, account=account, rows=_replacement(), remove_missing=True)
+    assert db.query(Position).filter_by(stock_id=hk.id).one().quantity == 100
+
+
+@pytest.mark.parametrize("patch", [{"quantity": -1}, {"quantity": 1.5}, {"cost_price": float("nan")}, {"symbol": ""}])
+def test_invalid_rows_cannot_clear_other_holdings(book, patch):
+    db, account, _old = book
+    rows = [{**_replacement()[0], **patch}]
+    with pytest.raises(ValueError):
+        shot.apply_positions(db, account=account, rows=rows, remove_missing=True, record_trades=True)
+    assert db.query(Position).one().quantity == 100

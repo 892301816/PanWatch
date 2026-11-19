@@ -91,6 +91,15 @@ const POSITION_STATUS_CHIP: Record<string, string> = {
 const moneyText = (value?: number | null) =>
   value == null || !Number.isFinite(value) ? '--' : value.toFixed(2)
 
+const localToday = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+const PRICE_SOURCE: Record<string, string> = {
+  implied_cost: '成本差反推估算', last_price: '现价估算', cost: '成本价估算', manual: '已手动核对',
+}
+
 /** 把截图压到最长边 1600、JPEG 0.85，降低上传与视觉模型 token。 */
 async function imageToBase64(file: File, maxSide = 1600): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -157,7 +166,20 @@ export default function SyncSection({
   const [removeMissing, setRemoveMissing] = useState(false)
   const [syncCash, setSyncCash] = useState(true)
   const [recordTrades, setRecordTrades] = useState(true)
+  const [syncAgents, setSyncAgents] = useState(true)
+  const [shotDate, setShotDate] = useState(localToday)
   const shotRef = useRef<HTMLInputElement>(null)
+  const shotRequest = useRef(0)
+  const shotRows = shot ? [...shot.rows, ...(shot.mode === 'positions' && removeMissing ? shot.missing_rows ?? [] : [])] : []
+  const agentPlan = removeMissing ? shot?.agent_plan_full : shot?.agent_plan
+
+  useEffect(() => {
+    shotRequest.current += 1
+    setShot(null)
+    setShotResult(null)
+    setShotBusy(false)
+    setRemoveMissing(false)
+  }, [accountId, shotMode])
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -276,12 +298,19 @@ export default function SyncSection({
   }
 
   const runImagePreview = async (file: File) => {
+    if (shotBusy) return
+    if (accountId == null) {
+      toast('请先选择记账账户', 'error')
+      return
+    }
+    const request = ++shotRequest.current
     setShot(null)
     setShotResult(null)
     setShotName(file.name || '截图')
     setShotBusy(true)
     try {
       const base64 = await imageToBase64(file)
+      if (request !== shotRequest.current) return
       if (!base64) {
         toast('图片读取失败，请换一张截图', 'error')
         return
@@ -291,14 +320,18 @@ export default function SyncSection({
         mode: shotMode,
         account_id: accountId,
       })
+      if (request !== shotRequest.current) return
       setShot(result)
+      setRemoveMissing(false)
+      setShotDate(localToday())
       if (!result.ok) {
         toast(result.hint || result.warnings?.[0] || '没识别到数据行', 'error')
       }
     } catch (e) {
+      if (request !== shotRequest.current) return
       toast(e instanceof Error ? e.message : '图片识别失败', 'error')
     } finally {
-      setShotBusy(false)
+      if (request === shotRequest.current) setShotBusy(false)
     }
   }
 
@@ -315,11 +348,15 @@ export default function SyncSection({
         remove_missing: shot.mode === 'positions' ? removeMissing : false,
         available_funds: typeof available === 'number' ? available : undefined,
         record_trades: shot.mode === 'positions' ? recordTrades : false,
+        sync_agents: shot.mode === 'positions' ? syncAgents : false,
+        missing_rows: shot.mode === 'positions' && removeMissing ? shot.missing_rows : undefined,
+        expected_state_hash: shot.expected_state_hash,
+        trade_date: shot.mode === 'positions' ? shotDate : undefined,
       })
       setShotResult(result)
       const detail =
         shot.mode === 'positions'
-          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，加仓 ${result.buy_trades ?? 0} 笔，减仓 ${result.sell_trades ?? 0} 笔，清仓 ${result.closed ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，删除 ${result.removed}` : ''}${result.cash_updated ? '，已同步可用资金' : ''}`
+          ? `新建 ${result.created}，更新 ${result.updated ?? 0}，买入 ${result.buy_trades ?? 0} 笔，卖出 ${result.sell_trades ?? 0} 笔，清仓 ${result.closed ?? 0}，失败 ${result.failed ?? 0}${result.removed ? `，清理 ${result.removed}` : ''}${result.cash_updated ? '，已同步可用资金' : ''}`
           : `新增 ${result.created}，重复 ${result.duplicate ?? 0}，失败 ${result.failed ?? 0}`
       toast(`同步完成：${detail}`, 'success')
       setShot(null)
@@ -332,11 +369,11 @@ export default function SyncSection({
   }
 
   const updateShotRow = (index: number, patch: Partial<ImageRow>) => {
-    setShot((prev) =>
-      prev
-        ? { ...prev, rows: prev.rows.map((row, i) => (i === index ? { ...row, ...patch } : row)) }
-        : prev,
-    )
+    setShot((prev) => {
+      if (!prev) return prev
+      if (index < prev.rows.length) return { ...prev, rows: prev.rows.map((row, i) => i === index ? { ...row, ...patch } : row) }
+      return { ...prev, missing_rows: prev.missing_rows?.map((row, i) => i === index - prev.rows.length ? { ...row, ...patch } : row) }
+    })
   }
 
   const onPasteImage = (event: React.ClipboardEvent) => {
@@ -407,6 +444,8 @@ export default function SyncSection({
       <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px]">
         <span className="text-muted-foreground">记账账户</span>
         <select
+          aria-label="截图记账账户"
+          disabled={shotBusy}
           value={accountId ?? ''}
           onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
           className="rounded border bg-background px-2 py-1"
@@ -655,6 +694,7 @@ export default function SyncSection({
             <button
               type="button"
               className={`px-2 py-1 ${shotMode === 'positions' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+              disabled={shotBusy}
               onClick={() => {
                 setShotMode('positions')
                 setShot(null)
@@ -666,6 +706,7 @@ export default function SyncSection({
             <button
               type="button"
               className={`px-2 py-1 ${shotMode === 'trades' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+              disabled={shotBusy}
               onClick={() => {
                 setShotMode('trades')
                 setShot(null)
@@ -716,7 +757,7 @@ export default function SyncSection({
           拖拽截图到这里，或点这里选择；弹窗内任意位置按 Ctrl+V 也能粘贴
         </div>
         <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-          截图会发送给你配置的 AI 视觉模型；持仓截图只同步数量与成本，不写交易流水、不动可用资金。
+          截图会发送给你配置的 AI 视觉模型。持仓截图按差异同步；可生成估算流水、同步可用资金，并让 Agent 跟随持仓。
         </div>
 
         {shot?.warnings?.length ? (
@@ -823,7 +864,7 @@ export default function SyncSection({
               </div>
             </div>
             {shot.mode === 'positions' && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+              <fieldset disabled={shotBusy} className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
                 <label className="flex items-center gap-1">
                   <input type="checkbox" checked={syncCash} onChange={(e) => setSyncCash(e.target.checked)} />
                   同步可用资金
@@ -837,7 +878,7 @@ export default function SyncSection({
                     checked={recordTrades}
                     onChange={(e) => setRecordTrades(e.target.checked)}
                   />
-                  按变动生成交易流水（加仓/减仓/清仓）
+                  按变动生成流水（新建/加仓/减仓/清仓）
                 </label>
                 <label className="flex items-center gap-1">
                   <input
@@ -845,13 +886,33 @@ export default function SyncSection({
                     checked={removeMissing}
                     onChange={(e) => setRemoveMissing(e.target.checked)}
                   />
-                  删除截图里没有的持仓（截图不完整时别勾）
+                  清仓截图中未出现的持仓（仅完整持仓截图勾选）
                 </label>
-              </div>
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={syncAgents} onChange={(e) => setSyncAgents(e.target.checked)} />
+                  Agent 跟随持仓同步
+                </label>
+                {recordTrades && <label className="flex items-center gap-1">
+                  变动记账日期
+                  <input type="date" aria-label="变动记账日期" value={shotDate} max={localToday()} onChange={(e) => setShotDate(e.target.value)} className="rounded border border-border bg-background px-1 py-0.5" />
+                </label>}
+              </fieldset>
             )}
+            {shot.mode === 'positions' && <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+              {recordTrades && <p>持仓差额只生成一笔估算买卖，无法还原期间的逐笔成交。请核对价格与日期；账户首次建账按成本估算，不回溯现金，费用未计。需要真实成交请用“成交截图”。</p>}
+              {!removeMissing && !!shot.missing_rows?.length && <p>另有 {shot.missing_rows.length} 只原持仓未出现在截图中，当前保留。整张换仓截图请勾选上方“清仓截图中未出现的持仓”。</p>}
+              {syncAgents && agentPlan && <div role="region" aria-label="Agent 同步预览" className="rounded border border-border bg-background p-2">
+                <p className="font-medium text-foreground">Agent 同步预览：新绑定 {agentPlan.attach.length}，解除 {agentPlan.detach.length}，保留 {agentPlan.retained.length}</p>
+                {agentPlan.attach.map(item => <p key={`a-${item.symbol}-${item.agent_name}`}>绑定 {item.name}（{item.symbol}）· {item.agent_name}</p>)}
+                {agentPlan.detach.map(item => <p key={`d-${item.symbol}-${item.agent_name}`}>解除 {item.name}（{item.symbol}）· {item.agent_name}</p>)}
+                {agentPlan.retained.map(item => <p key={`r-${item.symbol}-${item.agent_name}`}>{item.name} · {item.agent_name}：{item.reason}</p>)}
+                {agentPlan.warnings.map(message => <p key={message} className="text-amber-600">{message}</p>)}
+                <p>保留调度、模型与通知配置；新股票已有的配置优先保留。其他账户仍持有的旧股票继续绑定。</p>
+              </div>}
+            </div>}
             <div className="mt-1.5 max-h-64 overflow-auto rounded border border-border/50">
               <table className="w-full text-[11px]">
-                <thead className="sticky top-0 bg-muted/60 text-[10px] text-muted-foreground">
+                <thead className="sticky top-0 bg-background text-[10px] text-muted-foreground">
                   {shot.mode === 'positions' ? (
                     <tr>
                       <th className="px-2 py-1 text-left font-normal">代码</th>
@@ -876,12 +937,12 @@ export default function SyncSection({
                   )}
                 </thead>
                 <tbody>
-                  {shot.rows.map((row, index) =>
+                  {shotRows.map((row, index) =>
                     shot.mode === 'positions' ? (
                       <tr key={`p-${row.symbol}-${index}`} className="border-t border-border/40">
                         <td className="px-2 py-0.5 font-mono">{row.symbol}</td>
                         <td className={`px-2 py-0.5 ${row.closing ? 'text-muted-foreground' : ''}`}>
-                          {row.name}
+                          {row.name}{row.missing && <span className="ml-1 text-amber-600">截图未出现</span>}
                         </td>
                         <td className="px-2 py-0.5 text-right text-muted-foreground">
                           {row.current_quantity ?? '--'} → {row.quantity}
@@ -909,11 +970,14 @@ export default function SyncSection({
                           {row.trade_action ? (
                             <input
                               type="number"
+                              aria-label={`${row.name || row.symbol}记账价格`}
+                              disabled={shotBusy}
                               step="0.001"
                               value={row.trade_price ?? ''}
                               onChange={(e) =>
                                 updateShotRow(index, {
                                   trade_price: e.target.value === '' ? null : Number(e.target.value),
+                                  price_source: 'manual',
                                 })
                               }
                               className="w-16 rounded border border-border bg-background px-1 py-0.5 text-right text-[11px]"
@@ -921,6 +985,7 @@ export default function SyncSection({
                           ) : (
                             <span className="text-muted-foreground">--</span>
                           )}
+                          {row.trade_action && <div className="text-[10px] text-muted-foreground">{PRICE_SOURCE[row.price_source || ''] || '估算价'}</div>}
                         </td>
                         <td className="px-2 py-0.5">
                           <span
@@ -963,9 +1028,10 @@ export default function SyncSection({
         {shotResult && (
           <div className="mt-2 rounded border border-border/60 bg-muted/20 p-2 text-[11px]">
             {shotResult.mode === 'positions'
-              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，加仓 ${shotResult.buy_trades ?? 0} 笔，减仓 ${shotResult.sell_trades ?? 0} 笔，清仓 ${shotResult.closed ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，删除 ${shotResult.removed}` : ''}。`
+              ? `持仓同步完成：新建 ${shotResult.created}，更新 ${shotResult.updated ?? 0}，买入流水 ${shotResult.buy_trades ?? 0} 笔，卖出流水 ${shotResult.sell_trades ?? 0} 笔，清仓 ${shotResult.closed ?? 0}，失败 ${shotResult.failed ?? 0}${shotResult.removed ? `，清理 ${shotResult.removed}` : ''}。`
               : `成交同步完成：新增 ${shotResult.created}，重复 ${shotResult.duplicate ?? 0}，失败 ${shotResult.failed ?? 0}。`}
             {shotResult.mode === 'positions' && shotResult.cash_updated ? ' 可用资金已更新。' : ''}
+            {shotResult.agents && <p>Agent：新绑定 {shotResult.agents.attached}，解除 {shotResult.agents.detached}，保留 {shotResult.agents.retained}。{shotResult.agents.warnings.join('；')}</p>}
           </div>
         )}
       </div>

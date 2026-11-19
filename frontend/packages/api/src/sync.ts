@@ -117,6 +117,7 @@ export interface ImageRow {
   current_quantity?: number | null
   current_cost?: number | null
   closing?: boolean
+  missing?: boolean
   /** 持仓变动（截图 - 当前）与推算交易 */
   delta?: number
   trade_action?: 'buy' | 'sell' | ''
@@ -150,6 +151,17 @@ export interface ImageExtract {
   warnings?: string[]
   model?: string
   account?: { id: number; name: string }
+  missing_rows?: ImageRow[]
+  expected_state_hash?: string
+  agent_plan?: ImageAgentPlan
+  agent_plan_full?: ImageAgentPlan
+}
+
+export interface ImageAgentPlan {
+  attach: Array<{ symbol: string; name: string; agent_name: string }>
+  detach: Array<{ symbol: string; name: string; agent_name: string }>
+  retained: Array<{ symbol: string; name: string; agent_name: string; reason: string }>
+  warnings: string[]
 }
 
 export interface ImageCommitResult {
@@ -167,6 +179,7 @@ export interface ImageCommitResult {
   failed?: number
   removed?: number
   cash_updated?: boolean
+  agents?: { attached: number; detached: number; retained: number; warnings: string[] }
   results?: Array<{
     row?: number
     line?: number
@@ -249,6 +262,10 @@ export const syncApi = {
     remove_missing?: boolean
     available_funds?: number | null
     record_trades?: boolean
+    sync_agents?: boolean
+    missing_rows?: ImageRow[]
+    expected_state_hash?: string
+    trade_date?: string
   }) =>
     fetchAPI<ImageCommitResult>('/portfolio/trades/import/image/commit', {
       method: 'POST',

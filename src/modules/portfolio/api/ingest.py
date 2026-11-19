@@ -70,7 +70,7 @@ class ImagePreviewIn(BaseModel):
 
 class ImageCommitIn(BaseModel):
     mode: str = Field("positions", description="positions / trades")
-    rows: list[dict] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list, max_length=500)
     account_id: int | None = None
     account_name: str = ""
     remove_missing: bool = Field(False, description="持仓模式：删除截图里没有的持仓（默认不删）")
@@ -78,8 +78,12 @@ class ImageCommitIn(BaseModel):
         None, description="持仓模式：同时把账户可用资金设为截图里的『可用』"
     )
     record_trades: bool = Field(
-        False, description="持仓模式：按截图变动生成加仓/减仓/清仓交易流水"
+        False, description="持仓模式：按差异生成新建/加仓/减仓/清仓估算流水"
     )
+    sync_agents: bool = Field(False, description="Agent 随新增持仓与清仓迁移")
+    missing_rows: list[dict] = Field(default_factory=list, max_length=500)
+    expected_state_hash: str = Field("", max_length=64)
+    trade_date: str | None = None
 
 
 def _decode_import(payload: ImportIn) -> bytes | str:
@@ -246,14 +250,20 @@ def image_commit(
     if not rows:
         raise HTTPException(400, "没有可提交的行")
     if mode == "positions":
-        return screenshot_import.apply_positions(
-            db,
-            account=account,
-            rows=rows,
-            remove_missing=payload.remove_missing,
-            available_funds=payload.available_funds,
-            record_trades=payload.record_trades,
-        )
+        from src.modules.portfolio.screenshot_sync import StalePreviewError
+        try:
+            return screenshot_import.apply_positions(
+                db, account=account, rows=rows,
+                remove_missing=payload.remove_missing,
+                available_funds=payload.available_funds,
+                record_trades=payload.record_trades,
+                sync_agents=payload.sync_agents, missing_rows=payload.missing_rows,
+                expected_state_hash=payload.expected_state_hash, trade_date=payload.trade_date,
+            )
+        except StalePreviewError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     annotated = trade_ingest.annotate_rows(db, rows, account=account)
     result = trade_ingest.commit_rows(db, annotated, account=account, source="screenshot")
     return {"ok": True, "mode": "trades", "account": {"id": account.id, "name": account.name}, **result}
