@@ -145,11 +145,12 @@ class OwnedMixin:
 | 分析 (8) | analysis_history, agent_runs, agent_context_runs, agent_prediction_outcomes, stock_context_snapshots, news_topic_snapshots, portfolio_risk_snapshots, agent_configs |
 | 配置 (4) | ai_services, ai_models, data_sources, notify_channels |
 
-### 2.3 保持全局的 21 张表
+### 2.3 保持全局的 22 张表
 
-`daily_bars`、`daily_bars_qfq`、`dataset_sync_state`、`dataset_providers`、`dividend_events`、`news_cache`、`hot_themes`、`screener_snapshots`、`screener_concept_members`、`market_scan_snapshots`、`market_regime_snapshots`、`strategy_catalog`、`strategy_weights`、`strategy_weight_history`、`factor_weights`、`factor_weight_history`、`strategy_signal_runs`、`strategy_outcomes`、`strategy_factor_snapshots`、`log_entries`、`app_settings`。
+`daily_bars`、`daily_bars_qfq`、`dataset_sync_state`、`dataset_providers`、`dividend_events`、`news_cache`、`hot_themes`、`screener_snapshots`、`screener_concept_members`、`market_scan_snapshots`、`market_regime_snapshots`、`strategy_catalog`、`strategy_weights`、`strategy_weight_history`、`factor_weights`、`factor_weight_history`、`strategy_signal_runs`、`strategy_outcomes`、`strategy_factor_snapshots`、`strategy_reference_values`、`log_entries`、`app_settings`。
 
-> 其中 `log_entries` 加**可空** `user_id` 仅用于过滤，不纳入隔离基类。
+> - `strategy_reference_values`（新增于策略中心那条线）：按 `symbol + field + effective_date + source` 存历史基本面/参考值，属于**市场公共事实**，全站一份。
+> - `log_entries` 加**可空** `user_id` 仅用于过滤，不纳入隔离基类。
 
 ### 2.4 必须改的唯一约束（7 张表）
 
@@ -205,6 +206,41 @@ class OwnedMixin:
 - **删除现有"空库放行"分支**（`auth.py:166-169`）。无任何用户时，仅放行 `/api/auth/status` 与 `/api/auth/setup`，其余一律 401。
 - 不做 refresh token。过期即重登，前端已有 401 处理逻辑。
 
+### 3.4 密码修改（完整规格）
+
+现状缺陷：`change_password` 只校验新密码长度，**不校验旧密码**，任何持有 token 的人都能直接改掉密码（`auth.py:236-249`）。P0 必修。
+
+**四条路径**
+
+| 场景 | 接口 | 鉴权 | 旧密码 | 副作用 |
+|---|---|---|---|---|
+| 用户自助改密 | `POST /api/auth/change-password` | 已登录 | **必填** | `token_version += 1`；**同时签发新 token 返回**；写 `auth_events` |
+| 首次/被重置后强制改密 | 同上 | 已登录（受限态） | 必填（临时密码） | 同上 + `must_change_password = 0` |
+| 管理员重置他人密码 | `POST /api/admin/users/{id}/reset-password` | admin | 不需要 | 置临时密码 + `must_change_password = 1` + `token_version += 1` |
+| 管理员改自己 | 同上 | admin | 不需要 | 同上；管理员改完需重新登录 |
+
+**后端强制「必须先改密」，不能只靠前端拦截**
+
+- `must_change_password = 1` 时 `get_current_user` 仍然放行（否则改密接口本身无法调用），但新增依赖 `require_password_changed` 挂到**所有业务 router** 上（与现有 `protected` 并列注册）。
+- 白名单只有三个：`/api/auth/me`、`/api/auth/change-password`、`/api/auth/logout`。
+- 白名单外一律返回 `403 {code: "PASSWORD_CHANGE_REQUIRED"}`，前端据此跳改密页。这样即使用 curl 绕过前端也拿不到业务数据。
+
+**改密规则**
+
+| 规则 | 说明 |
+|---|---|
+| 新密码 ≥8 位 | 同时把 `setup` 的最短长度从 6 提到 8 |
+| 不得等于登录名 | 基本防呆 |
+| 不得与旧密码相同 | 避免"改了等于没改" |
+| 旧密码错误要计入限流 | 与登录共用维度（IP + username，5 次/分钟，指数退避）——防"偷到 token 后爆破旧密码" |
+| 成功后其他设备立即失效 | `token_version += 1` |
+| 成功后当前设备不掉线 | 同一次响应里返回新 token（携带新 `ver`），前端替换本地 token，**不跳登录页** |
+| 写审计 | `auth_events(event="password_changed", actor_user_id=自己)` |
+
+**首次 setup**：密码 ≥8 位；成功后签发 token 并写 `auth_events(event="user_created")`。
+
+**本期不做**：密码历史（禁止复用最近 N 个）、密码找回（无 SMTP，由管理员重置兜底，见 §12 R7）、二次验证。
+
 ---
 
 ## 4. 隔离机制规格
@@ -253,10 +289,10 @@ class OwnedMixin:
 | 方法 | 路径 | 变化 |
 |---|---|---|
 | GET | `/status` | 返回 `{initialized, multi_user}` |
-| POST | `/setup` | 建首个管理员，写入 `users`（现为写 app_settings） |
+| POST | `/setup` | 建首个管理员，写入 `users`（现为写 app_settings）；密码 ≥8 位 |
 | POST | `/login` | 返回 `{token, expires_at, must_change_password, user}` |
 | GET | `/me` | **新增实际内容**：`{id, username, display_name, avatar, role, must_change_password}` |
-| POST | `/change-password` | 加 `old_password` 校验；成功后 `token_version += 1` |
+| POST | `/change-password` | 入参 `{old_password, new_password}`；校验旧密码；`token_version += 1` 并**返回新 token**（当前设备不掉线）；`must_change_password` 清零 |
 | POST | `/logout` | 可选，前端清 token 即可（保留给"登出所有设备"） |
 
 **删除**：`/api/auth/me` 里恒返回 `"user"/"guest"` 的旧逻辑。
@@ -333,10 +369,10 @@ class OwnedMixin:
 | token 收口 | 合并 `client.ts:42`、`sse.ts:55-56`、`tradingagents.ts:203-207` 三处注入为单一 `authHeader()` | 为将来 refresh 留单点 |
 | auth store | 新增轻量 store（zustand 或 context）存 `{user, token, expiresAt}` | 替代组件直读 `localStorage` |
 | 登录后拉身份 | 登录成功调 `/api/auth/me` | 现在前端从不调用 |
-| 强制改密 | `must_change_password=1` 时路由拦到 `/change-password`，不可跳过 | |
+| 强制改密 | 后端返回 `403 PASSWORD_CHANGE_REQUIRED` 时全局拦截到 `/change-password`，不可跳过；改密成功后用响应里的新 token 原地续期，**不跳登录页** |
 | 401 软跳转 | 换成 router navigate + 保留 `state.from`（`App.tsx:80` 已塞但 `Login.tsx` 从不读） | |
 | 用户管理页 | 新增 `/admin/users`（仅 admin 可见入口）：列表、建号、禁用/启用、重置密码 | 对应 §5.2 |
-| 我的账号 | `/settings` 新增 `#sec-account`：显示登录名、角色、最近登录、改密 | 不做绑定相关 UI |
+| 我的账号 | `/settings` 新增 `#sec-account`：显示登录名、角色、最近登录、修改密码（需旧密码） | 不做绑定相关 UI |
 | 命名 | `AccountMenu.tsx` → `UserMenu.tsx`；UI 文案区分"账号"（登录）与"券商账户"（`/accounts`） | 避免第三个"账户"概念混淆 |
 | 不做的页面 | 注册页、找回密码页、第三方授权回调页 | D2/D6 之下不存在 |
 
@@ -346,14 +382,16 @@ class OwnedMixin:
 
 ### 9.1 迁移脚本
 
-> **前置条件**：当前工作区有未提交的在建改动（策略中心那条线，含迁移 136 `strategy_workflow`、`models.py` 新增 66 行、`server.py` 改动）。开工前应先提交或合并这批改动；本次迁移从 **137** 起编号。若那批改动之后又引入新迁移，本节的 137~140 相应顺延（版本号只是占位，内容不变）。
+> **前置条件**：策略中心那条线已合入（迁移 136 `strategy_workflow`、137 `strategy_factor_config`、138 `strategy_draft_trash` 均已存在，当前最大版本 **138**）。本次多账户改造的迁移从 **139** 起编号；若开工前又合入新迁移，本节编号相应顺延（版本号只是占位，内容不变）。
+>
+> 表数也已从 72 变为 **73**（新增 `strategy_reference_values`，归入公共表，见 §2.3）。
 
 | 版本 | 内容 |
 |---|---|
-| 137 | 建 `users` / `user_settings` / `auth_events`；从 `app_settings` 的 `auth_username`/`auth_password_hash` 迁出 user 1，`role=admin`；**保留旧 sha256 哈希原样写入** `password_hash`（首次登录自动升级为 argon2） |
-| 138 | 51 张表加 `user_id`（可空）+ 回填 user 1 + 建 `ix_<table>_user_id` 索引 |
-| 139 | 7 张表唯一约束重建（`CREATE TABLE xx__new ... INSERT SELECT ... DROP ... RENAME`，复用 `database.py:560-603` 的写法） |
-| 140 | 配置归户：`ai_services/ai_models/data_sources/notify_channels` 的 `user_id` 回填 user 1；`ui_avatar` → `users.avatar`（旧文件改名为 `1.{ext}`）；用户级 `app_settings` 键搬 `user_settings`；`is_default` → `user_settings` 默认值项 |
+| 139 | 建 `users` / `user_settings` / `auth_events`；从 `app_settings` 的 `auth_username`/`auth_password_hash` 迁出 user 1，`role=admin`；**保留旧 sha256 哈希原样写入** `password_hash`（首次登录自动升级为 argon2） |
+| 140 | 51 张表加 `user_id`（可空）+ 回填 user 1 + 建 `ix_<table>_user_id` 索引 |
+| 141 | 7 张表唯一约束重建（`CREATE TABLE xx__new ... INSERT SELECT ... DROP ... RENAME`，复用 `database.py:560-603` 的写法） |
+| 142 | 配置归户：`ai_services/ai_models/data_sources/notify_channels` 的 `user_id` 回填 user 1；`ui_avatar` → `users.avatar`（旧文件改名为 `1.{ext}`）；用户级 `app_settings` 键搬 `user_settings`；`is_default` → `user_settings` 默认值项 |
 
 ### 9.2 灰度开关
 
@@ -377,8 +415,8 @@ class OwnedMixin:
 
 | 阶段 | 任务 | 交付物 | DoD（完成判据） |
 |---|---|---|---|
-| P0 | 安全加固 | 密码哈希换 argon2 + 旧哈希自动升级；删空库放行；改密校验旧密码；登录限流；`token_version` 吊销 | 新增单测覆盖 5 项；老账号能正常登录且哈希被升级 |
-| P1a | 身份层-数据 | 3 张新表 + `users` 迁移 + `/auth/login|me|setup|change-password` | 单用户模式行为不变；`/auth/me` 返回真实信息 |
+| P0 | 安全加固 | 密码哈希换 argon2 + 旧哈希自动升级；删空库放行；**改密校验旧密码 + 改密限流**；登录限流；`token_version` 吊销 | 新增单测覆盖 5 项；老账号能正常登录且哈希被升级；用错误旧密码改密被拒 |
+| P1a | 身份层-数据 | 3 张新表 + `users` 迁移 + `/auth/login|me|setup|change-password`（返回新 token）+ `require_password_changed` 依赖 | 单用户模式行为不变；`/auth/me` 返回真实信息；受限态下业务接口返回 `PASSWORD_CHANGE_REQUIRED` |
 | P1b | 身份层-管理 | `/api/admin/users` 四个接口 + 建号时种数据源/Agent 配置 | 能建第二个账号并登录；不能禁用自己/降级最后一个 admin |
 | P1c | PAT 归属 | `personal_access_tokens` + `mcp_call_logs` 加 `user_id`；PAT 校验设作用域 | MCP 调用按 PAT 归属到正确用户 |
 | P2 | 配置隔离 | 4 张配置表加 owner；`user_settings`；默认值迁出 `is_default`；Key 加密与脱敏 | A 的 AI 服务/数据源/通知渠道对 B 不可见；列表接口返回掩码 |
@@ -397,6 +435,7 @@ class OwnedMixin:
 5. 调度独立：两账号各挂一只股票，定时分析各自生成各自的记录、推送到各自渠道。
 6. 禁用生效：禁用 User 2 后，其已登录 token 立即 401。
 7. 无泄漏开关：`multi_user_enabled=false` 时行为与升级前一致。
+8. 密码闭环：管理员重置 User 2 密码 → User 2 用临时密码登录 → 被强制引导改密（直接 curl 业务接口返回 403）→ 改密成功后**当前页面不掉线**、旧设备 token 全部失效。
 
 ---
 
