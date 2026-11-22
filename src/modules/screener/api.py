@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.modules.screener import ai_parse, concepts, engine, history, snapshot
+from src.modules.screener import ai_parse, concepts, engine, snapshot
 from src.modules.screener.constants import (
     DISCLAIMER,
     FIELD_CATALOG,
@@ -100,21 +99,8 @@ def get_meta(db: Session = Depends(get_db)):
     }
 
 
-def _source_of(code: str) -> tuple[str, int | None]:
-    """把前端的分组标识翻译成历史来源。"""
-    code = (code or "").strip()
-    if code.startswith("rule:"):
-        try:
-            return "rule", int(code.split(":", 1)[1])
-        except ValueError:
-            return "rule", None
-    if code and code != "custom":
-        return "preset", None
-    return "custom", None
-
-
 @router.post("/run")
-def run_screen(payload: ScreenIn, background: BackgroundTasks):
+def run_screen(payload: ScreenIn):
     """执行选股。同步函数,由 FastAPI 放到线程池,不阻塞事件循环。"""
     logger.info(
         "[选股] 执行 logic=%s conditions=%s limit=%s offset=%s",
@@ -123,29 +109,21 @@ def run_screen(payload: ScreenIn, background: BackgroundTasks):
         payload.limit,
         payload.offset,
     )
-    started = time.time()
     try:
-        result = engine.run_screen(payload.model_dump())
+        return engine.run_screen(payload.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("[选股] 执行失败")
         raise HTTPException(500, f"选股失败: {exc}")
 
-    extra = result.pop("_history", None)
-    if extra:
-        source, rule_id = _source_of(payload.code)
-        # 保存放到响应之后,不拖慢选股请求
-        background.add_task(
-            history.save_run,
-            trade_date=result.get("trade_date") or "",
-            payload=payload.model_dump(),
-            result={**result, "_history": extra},
-            source=source,
-            rule_id=rule_id,
-            rule_name="",
-            created_by="",
-            duration_ms=int((time.time() - started) * 1000),
-        )
-    return result
+
+@router.get("/ladder/down")
+def get_ladder_down(date: str | None = Query(default=None, description="YYYY-MM-DD")):
+    """跌停天梯：按连续跌停天数分组。"""
+    try:
+        return engine.get_ladder_down(date)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[选股] 跌停天梯失败")
+        raise HTTPException(500, f"跌停天梯加载失败: {exc}")
 
 
 @router.get("/ladder")
@@ -196,41 +174,6 @@ def list_concepts():
         "items": items,
         "source": concepts.board_source(),
     }
-
-
-@router.get("/history")
-def list_history(
-    limit: int = Query(default=30, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    date: str | None = Query(default=None, description="YYYY-MM-DD"),
-    q: str = Query(default="", max_length=40),
-):
-    """选股历史列表(按时间倒序)。"""
-    return history.list_runs(limit=limit, offset=offset, date_str=date, q=q)
-
-
-@router.get("/history/{run_id}")
-def get_history(run_id: int):
-    run = history.get_run(run_id)
-    if not run:
-        raise HTTPException(404, "记录不存在")
-    return run
-
-
-@router.get("/history/{run_id}/performance")
-def get_history_performance(run_id: int):
-    """历史名单的 T+1/3/5/10 日表现(按需计算并缓存)。"""
-    data = history.performance(run_id)
-    if not data:
-        raise HTTPException(404, "记录不存在或没有可统计的行情")
-    return data
-
-
-@router.delete("/history/{run_id}")
-def delete_history(run_id: int):
-    if not history.delete_run(run_id):
-        raise HTTPException(404, "记录不存在")
-    return {"deleted": run_id}
 
 
 @router.post("/parse")

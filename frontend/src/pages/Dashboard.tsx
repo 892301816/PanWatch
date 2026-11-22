@@ -8,6 +8,8 @@ import {
   recommendationsApi,
   homeApi,
   strategyApi,
+  sentimentApi,
+  type MarketSentimentResponse,
   type StrategyCheck,
   type StrategyPlaybook,
   type DashboardMarketIndex,
@@ -37,6 +39,8 @@ import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
 import DiagnosticsShareCard from '@/components/DiagnosticsShareCard'
 import DigestShareCard from '@/components/DigestShareCard'
+import MarketSentimentCard from '@/components/MarketSentimentCard'
+import MarketSentimentDialog from '@/components/MarketSentimentDialog'
 
 function pct(v?: number | null, digits = 2): string {
   if (v == null || !isFinite(v)) return '--'
@@ -115,6 +119,12 @@ export default function DashboardPage() {
   const [strategyHits, setStrategyHits] = useState<StrategyCheck[]>([])
   // 首页「交易策略」条：展示全局策略摘要，并提供设置入口
   const [strategyOpen, setStrategyOpen] = useState(false)
+  const [sentiment, setSentiment] = useState<MarketSentimentResponse | null>(null)
+  const [sentimentLoading, setSentimentLoading] = useState(true)
+  const [sentimentError, setSentimentError] = useState('')
+  const [sentimentOpen, setSentimentOpen] = useState(false)
+  const [sentimentHelp, setSentimentHelp] = useState(false)
+  const [sentimentBusy, setSentimentBusy] = useState(false)
   const [globalStrategy, setGlobalStrategy] = useState<StrategyPlaybook | null>(null)
   const [stockOverrideCount, setStockOverrideCount] = useState(0)
   const [scan, setScan] = useState<DashboardMonitorStock[]>([])
@@ -150,6 +160,34 @@ export default function DashboardPage() {
     name: '',
     hasPosition: false,
   })
+
+  const loadSentiment = useCallback(() => {
+    setSentimentLoading(true)
+    sentimentApi
+      .get(60)
+      .then((value) => {
+        setSentiment(value)
+        setSentimentError('')
+      })
+      .catch((error) => setSentimentError(error instanceof Error ? error.message : '加载失败'))
+      .finally(() => setSentimentLoading(false))
+  }, [])
+
+  const refreshSentiment = useCallback(async () => {
+    setSentimentBusy(true)
+    try {
+      await sentimentApi.refresh()
+      loadSentiment()
+    } catch (error) {
+      setSentimentError(error instanceof Error ? error.message : '生成失败')
+    } finally {
+      setSentimentBusy(false)
+    }
+  }, [loadSentiment])
+
+  useEffect(() => {
+    void loadSentiment()
+  }, [loadSentiment])
 
   // 慢车道:基准/归因(拉全持仓 K 线,分钟级);独立可重试,失败/为空各有明确状态
   const loadBench = useCallback(() => {
@@ -449,8 +487,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 交易策略:首页直接设置全局策略,并显示是否已配置 */}
-      <div className="card mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3 text-[11px]">
+      {/* 今日决策:个股策略 + 市场情绪 */}
+      <div className="mb-3 grid gap-3 lg:grid-cols-12">
+        <div className="card flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3 text-[11px] lg:col-span-7">
         <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
         <span className="text-[12px] font-medium text-foreground">交易策略</span>
         {globalStrategy ? (
@@ -483,6 +522,23 @@ export default function DashboardPage() {
             {globalStrategy ? '修改策略' : '设置策略'}
           </button>
         </div>
+        </div>
+        <MarketSentimentCard
+          data={sentiment}
+          loading={sentimentLoading}
+          error={sentimentError}
+          busy={sentimentBusy}
+          onOpen={() => {
+            setSentimentHelp(false)
+            setSentimentOpen(true)
+          }}
+          onOpenHelp={() => {
+            setSentimentHelp(true)
+            setSentimentOpen(true)
+          }}
+          onRefresh={() => void refreshSentiment()}
+          className="lg:col-span-5"
+        />
       </div>
 
       {/* 组合速览条:今日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
@@ -994,6 +1050,16 @@ export default function DashboardPage() {
       />
 
       <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} hasStocks={hasWatchlist} />
+
+      <MarketSentimentDialog
+        open={sentimentOpen}
+        onOpenChange={(open) => {
+          setSentimentOpen(open)
+          if (!open) setSentimentHelp(false)
+        }}
+        data={sentiment}
+        focusHelp={sentimentHelp}
+      />
 
       {/* 全局交易策略设置（首页入口；个股覆盖仍在个股详情里配） */}
       <StrategySettings

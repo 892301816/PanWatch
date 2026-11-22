@@ -153,7 +153,9 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
 
 
 def get_zt_pool(date_str: str | None = None) -> list[dict]:
-    """当日/指定日涨停池。单次请求,失败返回空列表而不是抛错。"""
+    """当日/指定日涨停池：东财为主，本地日K校验/兜底，结果落本地表。"""
+    from src.modules.screener import limit_up_service
+
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
     now = time.monotonic()
     if (
@@ -168,39 +170,14 @@ def get_zt_pool(date_str: str | None = None) -> list[dict]:
             and time.monotonic() - _LADDER_CACHE["ts"] <= _LADDER_TTL_S
         ):
             return _LADDER_CACHE["items"]
-        items: list[dict] = []
-        try:
-            from src.platform.marketdata.marketdata_client import get_market_data
-
-            md = get_market_data()
-            rows = md.zt_pool(date=_compact(trade_date), limit=300)
-            items = [
-                {
-                    "symbol": r.code,
-                    "name": r.name,
-                    "change_pct": r.change_pct,
-                    "amount": r.amount,
-                    "turnover_rate": r.turnover_rate,
-                    "limit_up_days": int(r.limit_up_days or 0),
-                    "first_seal_time": r.first_seal_time,
-                    "seal_fund": r.seal_fund,
-                    "break_count": int(r.break_count or 0),
-                    "industry": r.industry,
-                    "stat_days": int(r.stat_days or 0),
-                    "stat_count": int(r.stat_count or 0),
-                    "float_market_cap": r.float_market_cap,
-                }
-                for r in rows
-            ]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[选股] 涨停池获取失败({trade_date}): {exc}")
-        local = False
-        if not items:
-            # 东财不可用:用本地日K补出「今日涨停 + 连板数」,否则首板/连板梯队会全是 0
-            items = _local_ladder(trade_date)
-            local = bool(items)
+        payload = limit_up_service.get_pool(trade_date)
+        items = payload["items"]
         _LADDER_CACHE.update(
-            date=trade_date, ts=time.monotonic(), items=items, local=local
+            date=trade_date,
+            ts=time.monotonic(),
+            items=items,
+            local=payload["source"] == "local",
+            meta=payload,
         )
         return items
 
@@ -507,6 +484,7 @@ def get_market_stats(date_str: str | None = None) -> dict:
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
     zt = get_zt_pool(trade_date)
     dt_count = 0
+    dt_source = "eastmoney"
     try:
         from src.platform.marketdata.marketdata_client import get_market_data
 
@@ -514,12 +492,19 @@ def get_market_stats(date_str: str | None = None) -> dict:
         dt_count = len(dt_rows)
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[选股] 跌停池获取失败: {exc}")
+    if dt_count == 0:
+        from src.modules.screener import limit_up_service
 
+        local_dt = limit_up_service.local_limit_down_count(trade_date)
+        if local_dt:
+            dt_count = local_dt
+            dt_source = "local"
     max_days = max((x["limit_up_days"] for x in zt), default=0)
     return {
         "trade_date": trade_date,
         "limit_up": len(zt),
         "limit_down": dt_count,
+        "limit_down_source": dt_source,
         "max_days": max_days,
     }
 
@@ -763,10 +748,13 @@ def run_screen(payload: dict) -> dict:
     data_date = snapshot_mod._MEM.get("trade_date") or trade_date
     concept_index.refresh_index_background(trade_date)
     concept_map = concept_index.get_concept_map(trade_date)
-    # 默认选股不等待远程涨停池；封单等无法从日K推算的字段保留缺失。
-    cached_ladder = _LADDER_CACHE if _LADDER_CACHE["date"] == data_date and time.monotonic() - _LADDER_CACHE["ts"] < _LADDER_TTL_S else {}
-    ladder_local = not bool(cached_ladder.get("items"))
-    ladder = {x["symbol"]: x for x in (cached_ladder.get("items") or _local_ladder(data_date))}
+    # 使用共享涨停池：东财为主、本地日K校验/兜底，选股与天梯口径一致。
+    from src.modules.screener import limit_up_service
+
+    pool_data = limit_up_service.get_pool(data_date)
+    ladder_local = pool_data.get("source") == "local"
+    ladder = {x["symbol"]: x for x in (pool_data.get("items") or [])}
+    ladder_warnings = list(pool_data.get("warnings") or [])
     # 首屏不展示的历史派生字段按条件/排序计算，避免浏览全部股票时先
     # 为全市场加载数十万根历史K线。未计算的值保持未知，不伪装成零。
     requested = {c.get("field") for c in (payload.get("conditions") or [])}
@@ -811,13 +799,6 @@ def run_screen(payload: dict) -> dict:
     raw_limit = int(payload.get("limit") or 0)
     limit = 6000 if raw_limit <= 0 else max(1, min(raw_limit, 6000))
 
-    # 历史落库只在首屏请求时准备(全量代码 + 前 300 条明细),翻页不算新运行
-    history_data = None
-    if offset == 0 and payload.get("save", True):
-        history_data = {
-            "symbols": [r["symbol"] for r in matched],
-            "preview": [_history_item(r, i + 1) for i, r in enumerate(matched[:300])],
-        }
     matched = matched[offset: offset + limit]
 
     for row in matched:
@@ -840,6 +821,7 @@ def run_screen(payload: dict) -> dict:
         warnings.append(
             "连板数使用本地日K推算(封板资金、首封时间、炸板次数缺失)"
         )
+    warnings.extend(ladder_warnings)
 
     if data_date != trade_date:
         warnings.append(f"当前展示 {data_date} 的本地行情，最新行情在后台更新")
@@ -858,7 +840,6 @@ def run_screen(payload: dict) -> dict:
         "items": [_serialize_item(r) for r in matched],
         "as_of": snapshot_mod._MEM.get("updated_at") or "",
         "warnings": warnings,
-        "_history": history_data,
         # 回显本次真正生效的条件,前端可直接展示,避免"条件看起来是 A、实际按 B 跑"
         "applied": {
             "logic": str(payload.get("logic") or "all").lower(),
@@ -872,23 +853,6 @@ def run_screen(payload: dict) -> dict:
 
 def _yi(value):
     return round(value / 1e8, 2) if value is not None else None
-
-
-def _history_item(row: dict, rank: int) -> dict:
-    """历史明细的冻结字段(够回看,不追求全量)。"""
-    return {
-        "rank": rank,
-        "symbol": row.get("symbol"),
-        "name": row.get("name") or "",
-        "price": row.get("price"),
-        "change_pct": row.get("change_pct"),
-        "turnover_rate": row.get("turnover_rate"),
-        "amount": _yi(row.get("amount")),
-        "float_mv": _yi(row.get("float_mv")),
-        "limit_up_days": int(row.get("limit_up_days") or 0),
-        "concept_rank": row.get("concept_rank"),
-        "concepts": [c.get("name") for c in (row.get("concepts") or [])[:3]],
-    }
 
 
 def _serialize_item(row: dict) -> dict:
@@ -932,10 +896,25 @@ def _serialize_item(row: dict) -> dict:
 
 
 # ── 连涨天梯 ──────────────────────────────────────────────────────────
-def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
+def get_ladder_down(date_str: str | None = None) -> dict:
+    """跌停天梯：东财跌停池 + 本地日K连续跌停天数。"""
+    from src.modules.screener import limit_up_service
+
     trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
+    return limit_up_service.get_limit_down_ladder(trade_date)
+
+
+def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
+    from src.modules.screener import limit_up_service
+
+    trade_date = date_str or snapshot_mod.latest_trade_date().isoformat()
+    pool_meta = limit_up_service.get_pool(trade_date)
     stats = get_market_stats(trade_date)
-    pool = get_zt_pool(trade_date)
+    pool = pool_meta["items"]
+    # Keep the header count in sync with the reconciled pool even when the
+    # in-process ladder cache predates a refresh.
+    stats["limit_up"] = pool_meta["counts"]["merged"]
+    stats["max_days"] = max((int(x.get("limit_up_days") or 0) for x in pool), default=0)
     # 板块筛选依赖概念索引:当天还没构建时在这里补一次(异步,构建中则先返回空)
     if (concept or "").strip():
         concept_index.ensure_concept_index(trade_date)
@@ -1004,6 +983,10 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
                         ),
                         "seal_fund": _yi(x.get("seal_fund")),
                         "break_count": x.get("break_count") or 0,
+                        "source": x.get("source") or "eastmoney",
+                        "fields_complete": bool(x.get("fields_complete")),
+                        "confirmed_local": bool(x.get("confirmed_local")),
+                        "conflict": bool(x.get("conflict")),
                     }
                     for x in items
                 ],
@@ -1012,6 +995,7 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
 
     return {
         "trade_date": trade_date,
+        "side": "up",
         "stats": stats,
         "groups": groups,
         "filter": {
@@ -1020,6 +1004,10 @@ def get_ladder(date_str: str | None = None, concept: str | None = None) -> dict:
             "max_days": max((g["days"] for g in groups), default=0),
         },
         "concept_index_ready": concept_index.concept_index_status(trade_date)["rows"] > 0,
+        "source": pool_meta["source"],
+        "quality": pool_meta["quality"],
+        "counts": pool_meta["counts"],
+        "warnings": pool_meta["warnings"],
     }
 
 

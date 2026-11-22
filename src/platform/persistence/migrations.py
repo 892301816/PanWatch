@@ -2387,6 +2387,135 @@ def _m138_strategy_draft_trash(conn: Connection) -> None:
         _add_column_if_missing(conn, "strategy_drafts", "archived_at", "ALTER TABLE strategy_drafts ADD COLUMN archived_at DATETIME")
 
 
+def _m139_market_sentiment(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+CREATE TABLE IF NOT EXISTS market_sentiment_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trade_date VARCHAR(10) NOT NULL,
+  l1 FLOAT NOT NULL DEFAULT 0,
+  mood VARCHAR(16) NOT NULL DEFAULT 'neutral',
+  systemic_risk BOOLEAN NOT NULL DEFAULT 0,
+  drop_trigger BOOLEAN NOT NULL DEFAULT 0,
+  limit_up INTEGER NOT NULL DEFAULT 0,
+  limit_down INTEGER NOT NULL DEFAULT 0,
+  high_face INTEGER NOT NULL DEFAULT 0,
+  sky_floor INTEGER NOT NULL DEFAULT 0,
+  main_sector VARCHAR(64),
+  main_sector_hl INTEGER NOT NULL DEFAULT 0,
+  sector_sticky BOOLEAN NOT NULL DEFAULT 0,
+  l2 FLOAT,
+  l2_parts JSON,
+  l3 VARCHAR(16) NOT NULL DEFAULT 'none',
+  leader VARCHAR(16),
+  leader_break_days INTEGER NOT NULL DEFAULT 0,
+  fry_rate FLOAT,
+  promote_rate FLOAT,
+  global_fry_rate FLOAT,
+  global_promote_rate FLOAT,
+  fry_baseline FLOAT,
+  promote_baseline FLOAT,
+  ebb_confirmed BOOLEAN NOT NULL DEFAULT 0,
+  position_tier VARCHAR(8),
+  single_position FLOAT,
+  total_position FLOAT,
+  data_coverage FLOAT NOT NULL DEFAULT 0,
+  source VARCHAR(32) NOT NULL DEFAULT 'local',
+  warnings JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_market_sentiment_trade_date UNIQUE (trade_date)
+)
+"""
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_market_sentiment_date "
+            "ON market_sentiment_snapshots(trade_date)"
+        )
+    )
+    conn.execute(
+        text(
+            """
+CREATE TABLE IF NOT EXISTS market_sentiment_state (
+  id INTEGER PRIMARY KEY,
+  last_date VARCHAR(10) NOT NULL DEFAULT '',
+  state JSON,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+"""
+        )
+    )
+
+
+def _m140_limit_up_pool(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+CREATE TABLE IF NOT EXISTS limit_up_pool_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trade_date VARCHAR(10) NOT NULL,
+  source VARCHAR(32) NOT NULL DEFAULT 'eastmoney',
+  quality VARCHAR(16) NOT NULL DEFAULT 'ok',
+  east_count INTEGER NOT NULL DEFAULT 0,
+  local_count INTEGER NOT NULL DEFAULT 0,
+  merged_count INTEGER NOT NULL DEFAULT 0,
+  conflict_count INTEGER NOT NULL DEFAULT 0,
+  limit_down INTEGER,
+  limit_down_source VARCHAR(32) NOT NULL DEFAULT '',
+  warnings JSON,
+  meta JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_limit_up_pool_run_date UNIQUE (trade_date)
+)
+"""
+        )
+    )
+    conn.execute(
+        text(
+            """
+CREATE TABLE IF NOT EXISTS limit_up_pool (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trade_date VARCHAR(10) NOT NULL,
+  symbol VARCHAR(12) NOT NULL,
+  name VARCHAR(64) DEFAULT '',
+  source VARCHAR(16) NOT NULL DEFAULT 'eastmoney',
+  limit_up_days INTEGER NOT NULL DEFAULT 0,
+  first_seal_time VARCHAR(16) DEFAULT '',
+  seal_fund FLOAT,
+  break_count INTEGER NOT NULL DEFAULT 0,
+  industry VARCHAR(64),
+  change_pct FLOAT,
+  amount FLOAT,
+  turnover_rate FLOAT,
+  float_market_cap FLOAT,
+  board VARCHAR(24) DEFAULT '',
+  limit_pct FLOAT,
+  is_st BOOLEAN NOT NULL DEFAULT 0,
+  fields_complete BOOLEAN NOT NULL DEFAULT 0,
+  confirmed_local BOOLEAN NOT NULL DEFAULT 0,
+  conflict BOOLEAN NOT NULL DEFAULT 0,
+  local_days INTEGER,
+  raw JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_limit_up_pool_day_symbol UNIQUE (trade_date, symbol)
+)
+"""
+        )
+    )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_limit_up_pool_date ON limit_up_pool(trade_date)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_limit_up_pool_source ON limit_up_pool(trade_date, source)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_limit_up_pool_run_date ON limit_up_pool_runs(trade_date)"))
+
+
+def _m141_drop_screener_history(conn: Connection) -> None:
+    conn.execute(text("DROP TABLE IF EXISTS screener_run_items"))
+    conn.execute(text("DROP TABLE IF EXISTS screener_runs"))
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2426,6 +2555,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(136, "strategy_workflow", _m136_strategy_workflow),
     Migration(137, "strategy_factor_config", _m137_strategy_factor_config),
     Migration(138, "strategy_draft_trash", _m138_strategy_draft_trash),
+    Migration(139, "market_sentiment", _m139_market_sentiment),
+    Migration(140, "limit_up_pool", _m140_limit_up_pool),
+    Migration(141, "drop_screener_history", _m141_drop_screener_history),
 )
 
 
