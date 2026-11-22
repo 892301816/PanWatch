@@ -350,6 +350,7 @@ def compute_and_store(db: Session, trade_date: Optional[str] = None) -> dict:
             warnings.append(f"{missing_industry} 只涨停/炸板股缺行业，未参与主线聚合")
 
         state = _load_state(db)
+        previous_last_date = state.last_date
         engine = EmotionEngine(Config(), state)
         snapshot = engine.update(
             target,
@@ -374,7 +375,7 @@ def compute_and_store(db: Session, trade_date: Optional[str] = None) -> dict:
                 snapshot.leader = None
 
         row = _upsert_snapshot(db, snapshot)
-        if not partial and target > (state.last_date or ""):
+        if not partial and target > (previous_last_date or ""):
             _save_state(db, engine.state)
         return {"ok": True, "date": target, "existing": False, "snapshot": _row_dict(row)}
 

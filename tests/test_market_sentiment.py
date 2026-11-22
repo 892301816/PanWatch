@@ -161,3 +161,38 @@ def test_sentiment_routes_mounted():
     paths = set(app.openapi().get("paths", {}).keys())
     assert "/api/market/sentiment" in paths
     assert "/api/market/sentiment/refresh" in paths
+
+
+def test_compute_and_store_persists_state(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from src.modules.market import sentiment_service
+    from src.platform.persistence.database import Base
+    from src.platform.persistence.models import MarketSentimentSnapshot, MarketSentimentState
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sentiment.db'}")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    trade_date = "2026-11-20"
+    bars = {
+        f"600{i:03d}": [Bar(f"600{i:03d}", trade_date, 10.0, 10.1, 9.9, 10.0, 10.0, 5.0)]
+        for i in range(600)
+    }
+    monkeypatch.setattr(sentiment_service, "_latest_bar_dates", lambda _db, limit=120: [trade_date])
+    monkeypatch.setattr(sentiment_service, "_load_bars", lambda _db, _date: bars)
+    monkeypatch.setattr(sentiment_service, "_cn_names", lambda: {})
+    monkeypatch.setattr(
+        sentiment_service, "_zt_pool_map", lambda _db, _date: ({}, True, [], "eastmoney+local")
+    )
+    monkeypatch.setattr(sentiment_service, "_hs300_return", lambda _date=None: 0.0)
+
+    result = sentiment_service.compute_and_store(db, trade_date)
+
+    assert result["ok"] is True
+    snapshot = db.query(MarketSentimentSnapshot).one()
+    assert snapshot.position_tier is not None
+    state = db.query(MarketSentimentState).one()
+    assert state.last_date == trade_date
+    db.close()
