@@ -82,7 +82,7 @@ class TestLLMAdapter(unittest.TestCase):
         config = build_ta_llm_config(ai_client)
 
         self.assertEqual(config["llm_timeout_seconds"], 120)
-        self.assertEqual(config["llm_max_retries"], 0)
+        self.assertEqual(config["llm_max_retries"], 2)
         self.assertEqual(config["max_tokens"], 4096)
 
     def test_build_ta_llm_config_rejects_invalid_analyst(self):
@@ -467,10 +467,10 @@ class TestPhaseBFeatures(unittest.TestCase):
         self.assertEqual(agent.holding_period_days, 10)
 
     def test_agent_init_has_bounded_llm_defaults(self):
-        """TradingAgents 默认不能把供应商请求无限期挂起。"""
+        """TradingAgents 默认不能把供应商请求无限期挂起，也要能扛住偶发断连。"""
         agent = TradingAgentsAgent()
         self.assertEqual(agent.llm_timeout_seconds, 120)
-        self.assertEqual(agent.llm_max_retries, 0)
+        self.assertEqual(agent.llm_max_retries, 2)
         self.assertEqual(agent.llm_max_tokens, 4096)
 
     def test_graph_class_forwards_request_timeout_to_langchain(self):

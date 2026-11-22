@@ -101,7 +101,10 @@ class TradingAgentsAgent(BaseAgent):
         enable_sec_edgar: bool = False,   # 美股财报可显式优先使用 SEC EDGAR
         holding_period_days: int = 5,     # 上游决策质量回测/持仓期限语义
         llm_timeout_seconds: int = 120,   # 单次 LLM 请求硬超时,避免图卡死
-        llm_max_retries: int = 0,         # 深度分析不在图内重复重试供应商请求
+        # 单次请求的连接级重试次数(沿用 OpenAI SDK 默认值)。整条链路有 20+ 次
+        # LLM 调用且分析师/风控分支并发,一次 TLS 断连就会让整轮分析失败,
+        # 因此保留 2 次重试;重试只发生在 SDK 请求层,不会重复执行工具调用。
+        llm_max_retries: int = 2,
         llm_max_tokens: int = 4096,       # 限制推理/报告输出,避免网关空闲超时
     ):
         # 校验分析师配置
