@@ -342,8 +342,8 @@ def run_single_backtest(
     config=config or {}
     rules = {"buy": buy, "sell": sell, "avoid": avoid, **({'config':config} if config else {})}
     from src.modules.strategy.rule_engine import evaluate, combine, execution_check
-    from src.modules.strategy.factor_engine import field_rows, required_warmup, CATALOG
-    from src.modules.strategy.template_runtime import attach
+    from src.modules.strategy.factor_engine import required_warmup, CATALOG
+    from src.modules.strategy.chart_script import chart_bar, strategy_rows
     preferred_warmup=max(_PREFERRED_WARMUP,required_warmup(buy+sell+avoid))
 
     def fail(code: str, message: str, data_info: dict | None = None) -> dict:
@@ -447,13 +447,8 @@ def run_single_backtest(
         "lot_size": lot_size, "limit_pct": limit_pct,
         "cost_config": asdict(cost.cfg), "limitations": limitations,
     }
-    rows = [compute_features(bars, index, extended=False) for index in range(last_index + 1)]
-    if config or any('tf_' in json.dumps(c) for c in buy+sell+avoid):
-        expanded=field_rows(bars)
-        for row,values in zip(rows,expanded):
-            for key,value in values.items():
-                if key.startswith('tf_'):row[key]=value
-        rows=attach(rows,bars,config,symbol)
+    rows = strategy_rows(bars, config, buy + sell + avoid, symbol)
+    if config.get('template_id') or any('tf_' in str(c) for c in buy+sell+avoid):
         data_info['factor_version']=CATALOG['version']
     known_bars=sum(all(evaluate(rows,i,c) is not None for c in buy+avoid) for i in period)
     data_info['condition_coverage']={'known_entry_bars':known_bars,'total_bars':len(period)}
@@ -582,6 +577,7 @@ def run_single_backtest(
     metrics = _metrics(trades=trades, curve=curve, equity=equity, initial_capital=initial_capital, bars=period_bars)
     total_return = round((equity / initial_capital - 1) * 100, 2)
     rule_text, _ = _explain_rules(buy, sell, avoid)
+    chart_bars = [chart_bar(bars[i], rows[i]) for i in period]
     filled_count = sum(order["status"] == "filled" for order in orders)
     unfilled_count = sum(order["status"] == "unfilled" for order in orders)
     if not filled_count:
@@ -600,7 +596,7 @@ def run_single_backtest(
             "fees": entry_order["fees"], "trigger_conditions": entry_order["conditions"],
         }
     return {
-        "symbol": symbol, "market": market,
+        "symbol": symbol, "market": market, "chart_bars": chart_bars,
         "start": period_bars[0].date, "end": last.date, "bars": len(period_bars),
         "initial_capital": initial_capital, "final_cash": round(cash, 4), "final_equity": round(equity, 4),
         "trades": trades, "trade_count": len(trades), "orders": orders,

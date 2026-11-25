@@ -25,7 +25,7 @@ def run_portfolio(histories,policy,*,start,end,initial_capital=100000,max_positi
             for row,extra in zip(rows,field_rows(bars)):
                 for key,value in extra.items():
                     if key.startswith('tf_'):row[key]=value
-        features[s]=rows
+        features[s]=template_runtime.attach(rows,bars,config,s) if 'chart_script' in config else rows
         if progress:progress('计算因子',k+1,len(universe))
     scores={}
     if config.get('template_id'):

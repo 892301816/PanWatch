@@ -75,6 +75,9 @@ class BoardIn(BaseModel):
 
 
 class BacktestIn(BaseModel):
+    chart_script: str | None = Field(default=None, max_length=200000)
+    script_name: str = Field(default="图表脚本", max_length=200)
+    inputs: dict | None = None
     symbol: str
     market: str = "CN"
     buy: list[ConditionIn] | None = None
@@ -313,8 +316,174 @@ async def trade_gate(payload: GateIn, db: Session = Depends(get_db)):
         raise HTTPException(500, f"体检失败: {exc}")
 
 
+class ChartWriterIn(BaseModel):
+    instruction: str = Field(min_length=1, max_length=3000)
+    current: str = Field(default="", max_length=20000)
+
+
+@router.post("/chart-script/ai")
+async def chart_writer(payload: ChartWriterIn, db: Session = Depends(get_db)):
+    from src.modules.strategy.chart_writer import write_script
+    try:
+        return await write_script(db, payload.instruction, payload.current)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(504, "AI 编写超时，请重试") from exc
+    except Exception:
+        logger.warning("[策略] AI 编写请求失败")
+        raise HTTPException(502, "AI 编写暂不可用，请检查 AI 服务与模型配置后重试")
+
+
+class ChartPreviewIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    market: Literal["CN", "HK", "US"] = "CN"
+    instrument: Literal["stock", "index"] = "stock"
+    interval: Literal["1d", "1w", "1m"] = "1d"
+    script: str = Field(max_length=200000)
+    price_only: bool = False
+    draft_id: int | None = None
+    inputs: dict | None = None
+
+
+class ChartCompileIn(BaseModel):
+    script: str = Field(max_length=200000)
+
+
+@router.post("/chart-compile")
+def chart_compile(payload: ChartCompileIn):
+    """只做语法检查：返回诊断 + 标题/类型/参数/绘图概要，不跑行情。"""
+    from src.modules.strategy.chart_script import compile_script
+    from src.modules.strategy.pine import compile_source as pine_compile_source, is_pine_source
+
+    if is_pine_source(payload.script):
+        result = pine_compile_source(payload.script)
+        return {
+            "ok": result["ok"],
+            "engine": "pine",
+            "diagnostics": result["diagnostics"],
+            "title": result.get("title"),
+            "kind": result.get("kind"),
+            "warnings": result.get("warnings") or [],
+            "inputs": [],
+            "plots": [],
+        }
+    try:
+        compile_script(payload.script)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "engine": "v1",
+            "diagnostics": [{"line": 1, "column": 1, "message": str(exc)}],
+            "title": None,
+            "kind": None,
+            "warnings": [],
+            "inputs": [],
+            "plots": [],
+        }
+    return {
+        "ok": True,
+        "engine": "v1",
+        "diagnostics": [],
+        "title": "四语句脚本",
+        "kind": "strategy",
+        "warnings": [],
+        "inputs": [],
+        "plots": [],
+    }
+
+
+@router.post("/chart-preview")
+def chart_preview(payload: ChartPreviewIn, db: Session = Depends(get_db)):
+    from src.modules.strategy.chart_script import (
+        chart_bar,
+        compile_script,
+        series_with_meta,
+        strategy_rows,
+    )
+    from src.modules.strategy.backtest.single import load_bars, network_bars
+    from src.modules.strategy.backtest.data_adapter import PriceBar, from_klines
+    from src.modules.market.api.klines import _aggregate_klines
+    from src.platform.marketdata.collectors.kline_collector import get_index_klines
+    from src.platform.marketdata.models import MarketCode
+    try:
+        compile_script(payload.script)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    days = {"1d": 620, "1w": 1500, "1m": 3000}[payload.interval]
+    if payload.instrument == "index":
+        bars = from_klines(get_index_klines(payload.symbol, MarketCode(payload.market), days=days))
+    elif payload.market == "CN":
+        bars = load_bars(payload.symbol, days, market=payload.market)
+    else:
+        bars = network_bars(payload.symbol, days, market=payload.market)
+    if not bars:
+        raise HTTPException(404, "当前标的暂无历史行情，请稍后重试或切换标的")
+    source = getattr(bars[-1], 'source', '指数行情')
+    adjustment = getattr(bars[-1], 'adjustment', 'unknown')
+    clean = [PriceBar(**{k: getattr(b, k) for k in PriceBar.__dataclass_fields__}) for b in bars]
+    candles = _aggregate_klines(sorted(clean, key=lambda b: b.date), payload.interval)
+    meta: dict = {"engine": "v1", "plots": [], "inputs": [], "warnings": []}
+    if payload.draft_id:
+        draft = db.get(StrategyDraft, payload.draft_id)
+        if draft is None or draft.archived_at:
+            raise HTTPException(404, "策略草稿已移除")
+        rules = draft.payload
+        if draft.questions or rules["market"] != payload.market or (rules["scope"] == "stock" and rules["symbol"] != payload.symbol):
+            raise HTTPException(400, "请检查策略适用范围及待确认的条件")
+        if payload.interval != "1d" or payload.instrument != "stock" or rules.get("timing") == "intraday_preview":
+            raise HTTPException(400, "该规则需要已完成的个股日线")
+        from src.modules.strategy.rule_engine import evaluate, combine
+        ordered = sorted(bars, key=lambda b: b.date)
+        buy, sell, avoid = (rules[key] for key in ("buy", "sell", "avoid"))
+        try:
+            rows = strategy_rows(ordered, rules.get("config", {}), buy + sell + avoid, payload.symbol)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        points = []
+        for i, row in enumerate(rows):
+            entry = combine([evaluate(rows, i, c) for c in buy])
+            blocked = combine([evaluate(rows, i, c) for c in avoid], "any")
+            exit_signal = combine([evaluate(rows, i, c) for c in sell], "any")
+            points.append({**row, "template_entry": entry is True and blocked is False,
+                           "template_exit": exit_signal is True})
+    else:
+        try:
+            if payload.price_only:
+                points, meta = [{} for _ in candles], {"engine": "v1", "plots": [], "inputs": [], "warnings": []}
+            else:
+                points, meta = series_with_meta(
+                    candles,
+                    payload.script,
+                    symbol=payload.symbol,
+                    market=payload.market,
+                    interval=payload.interval,
+                    inputs=payload.inputs,
+                )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return {
+        "source": source,
+        "adjustment": adjustment,
+        "engine": (meta or {}).get("engine", "v1"),
+        "plots": (meta or {}).get("plots", []),
+        "inputs": (meta or {}).get("inputs", []),
+        "warnings": (meta or {}).get("warnings", []),
+        "script_title": (meta or {}).get("title"),
+        "script_kind": (meta or {}).get("kind"),
+        "stats": (meta or {}).get("stats") or {},
+        "trades": (meta or {}).get("trades") or [],
+        "equity_curve": (meta or {}).get("equity_curve") or [],
+        "bars": [chart_bar(bar, row) for bar, row in zip(candles, points)],
+    }
+
+
 @router.post("/backtest")
 def backtest(payload: BacktestIn, db: Session = Depends(get_db)):
+    if payload.chart_script is not None and (payload.draft_id or payload.revision_id or any(
+        value is not None for value in (payload.buy, payload.sell, payload.avoid)
+    )):
+        raise HTTPException(400, "一次回测只能选择一种策略来源")
     if payload.draft_id and payload.revision_id:
         raise HTTPException(400, "一次回测只能选择草稿或生效版本")
     revision = db.get(StrategyRevision, payload.revision_id) if payload.revision_id else None
@@ -329,6 +498,19 @@ def backtest(payload: BacktestIn, db: Session = Depends(get_db)):
             raise HTTPException(400, "回测市场与所选策略版本不一致")
         if rules.get("scope") == "stock" and rules.get("symbol") != payload.symbol.strip().upper():
             raise HTTPException(400, "个股策略不能用于另一个标的")
+    elif payload.chart_script is not None:
+        try:
+            script_config: dict = {"chart_script": payload.chart_script}
+            if payload.inputs:
+                script_config["inputs"] = payload.inputs
+            rules = workflow.validate_rules({
+                "scope": "global", "name": payload.script_name, "market": payload.market,
+                "config": script_config,
+                "buy": [{"field": "template_entry", "op": "eq", "value": 1}],
+                "sell": [{"field": "template_exit", "op": "eq", "value": 1}],
+            })
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     else:
         try:
             rules = workflow.validate_rules({

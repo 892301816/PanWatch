@@ -12,6 +12,32 @@ TEMPLATES={s['id']:s for s in CATALOG['strategies']}
 def normalize_config(config):
     if not isinstance(config or {},dict):raise ValueError('策略配置格式错误')
     config=config or {};out={}
+    if 'chart_script' in config:
+        from src.modules.strategy.chart_script import compile_script
+        allowed = {'chart_script', 'engine', 'inputs'}
+        if set(config) - allowed:
+            raise ValueError('脚本与模板配置不能混用')
+        compile_script(config['chart_script'])
+        out = {'chart_script': config['chart_script'].strip()}
+        if config.get('engine'):
+            out['engine'] = str(config['engine'])
+        inputs = config.get('inputs')
+        if inputs is not None:
+            if not isinstance(inputs, dict) or len(inputs) > 64:
+                raise ValueError('脚本参数格式错误')
+            clean_inputs = {}
+            for key, value in inputs.items():
+                if not isinstance(key, str) or len(key) > 120:
+                    raise ValueError('脚本参数名过长')
+                if isinstance(value, bool) or isinstance(value, (int, float)):
+                    clean_inputs[key] = value
+                elif isinstance(value, str) and len(value) <= 200:
+                    clean_inputs[key] = value
+                else:
+                    raise ValueError('脚本参数只支持数字、布尔与短字符串')
+            if clean_inputs:
+                out['inputs'] = clean_inputs
+        return out
     if set(config)-{'template_id','params','execution','scoring','directions','factor_version'}:raise ValueError('策略配置包含不支持的字段')
     if config.get('factor_version') not in (None,CATALOG['version']):raise ValueError('公式版本不受支持，请保留旧报告并重新核对策略')
     if config.get('factor_version'):out['factor_version']=config['factor_version']
@@ -78,6 +104,12 @@ def execute(histories,config):
     return market,signals,score,known
 
 def attach(rows,bars,config,symbol='single'):
+    if 'chart_script' in config:
+        from src.modules.strategy.chart_script import series
+        points = series(bars, config['chart_script'], symbol=symbol, inputs=config.get('inputs'))
+        for row, point in zip(rows, points):
+            row.update(point)
+        return rows
     if not config.get('template_id'):return rows
     market,signals,score,known=execute({symbol:bars},config)
     for i,row in enumerate(rows):
