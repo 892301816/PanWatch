@@ -1,0 +1,976 @@
+================================================================================
+ TideView Pine Script 引擎 — 函数与变量知识库
+ 用途: 提供给 AI 大模型，生成可在 TideView 引擎中运行的 Pine Script 代码
+================================================================================
+
+【重要说明】
+本引擎实现了 Pine Script v5 的绝大部分语法和常用函数库。
+生成代码时只能使用本文档中列出的函数和变量，禁止臆造或使用本文档之外的函数。
+回测与撮合按观潮本地 TradingView 口径引擎执行；不要在脚本或说明里建议用户切换回测模式。
+主要限制:
+  - 不支持 TradingView 云端 / 社区 CDN 库（import username/Library/版本）
+  - request.dividends / earnings / economic / seed / currency_rate / quandl 为占位（返回 na）
+  - 动态（非常量字面量）的 symbol / timeframe 无法静态预取，跨品种时可能得到 na
+
+【给外部 AI 的硬性约定 — 写出可在观潮完美运行的脚本】
+1. 第一行 //@version=5；指标用 indicator(...)，策略用 strategy(...)。
+2. 只使用本文档与文末「动态函数白名单」中的 API；不要照搬 TradingView 独有社区库。
+3. 周期、symbol 尽量写字面量（如 "D"、"60"、"000001.SZ"），避免 timeframe.period 拼出来的动态串做跨品种。
+4. 策略里 request.security 默认用 barmerge.lookahead_off，禁止无必要的 lookahead_on；lookahead_on 配合 [1] 取前一已完成周期是无偏写法（TV 官方）。
+5. 跨品种用 "代码.市场" 或 "市场:代码"（如 "000001.SZ"、"SZ:000001"）；同品种跨周期优先 syminfo.tickerid。
+6. 需要库时优先 import MathUtils / SignalUtils，或 import 用户已保存在观潮里的脚本标题；不要写 TV CDN 路径。
+7. A 股红涨绿跌；需要 T+1/整手数时在脚本内自行实现，不要假设引擎自动拦截。
+
+================================================================================
+第一部分：基本语法规则
+================================================================================
+
+1. 第一行必须是 //@version=5
+2. 策略脚本必须声明:
+   strategy("策略名", overlay=true, initial_capital=100000,
+     commission_type=strategy.commission.percent, commission_value=0.1,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     pyramiding=1)
+   ⚠ pyramiding 语义：
+     本引擎 pyramiding=N 表示同方向最多 N 次入场（含同 ID 加仓）；
+     pyramiding=1（默认）= 同方向最多 1 笔；pyramiding=2 = 首仓 + 1 次加仓；
+     pyramiding=0 视为 1（仅允许首仓、禁止加仓）。
+3. 指标脚本必须声明:
+   indicator("指标名", overlay=true/false)
+4. 支持的语法结构:
+   - 变量赋值: x = 1, var float x = na (var 声明持久变量), varip float x = na
+   - 条件语句: if/else if/else
+   - switch 语句: switch value / case1 => ..., 也支持 x = switch ...（表达式赋值）
+   - 循环: for i = 0 to n, for i = 0 to n by step, while condition
+   - 三元表达式: condition ? value1 : value2
+   - 历史引用: close[1], high[3]（方括号索引访问前 N 根 K 线的值）
+   - 函数定义: myFunc(param1, param2) => expression（支持多行函数体）
+   - method 方法: method myMethod(MyType self, ...) => expression
+   - 用户自定义类型 (UDT): type MyType / field1 = default_value
+   - enum 枚举: enum MyEnum / value1 / value2
+   - 解构赋值: [a, b] = ta.macd(close, 12, 26, 9)
+   - 具名参数: plot(series=close, title="收盘价", color=color.red)
+   - import: 支持内置库 MathUtils / SignalUtils，以及用户已保存在观潮中的脚本（按标题或 id）
+     示例: import MathUtils as mu
+     不支持: TradingView 云端路径（如 import TradingView/Foo/1 as foo）
+5. 编写约定:
+   - A 股场景遵循红涨绿跌配色：上涨/买入信号用红色，下跌/卖出信号用绿色。
+   - 回测语义与 TradingView 一致；如需 T+1/整手数等市场规则，在脚本内自行实现
+   - 注释使用中文
+   - 所有参数用 input 函数定义，方便用户调整
+
+================================================================================
+第二部分：内置变量（直接使用，无需调用函数）
+================================================================================
+
+--- 价格序列 ---
+open          当前 K 线开盘价
+high          当前 K 线最高价
+low           当前 K 线最低价
+close         当前 K 线收盘价
+volume        当前 K 线成交量
+time          当前 K 线的时间戳（Unix 毫秒）
+
+--- 合成价格 ---
+hl2           (high + low) / 2
+hlc3          (high + low + close) / 3
+ohlc4         (open + high + low + close) / 4
+
+--- Bar 信息 ---
+bar_index         当前 K 线的索引（从 0 开始）
+last_bar_index    最后一根 K 线的索引
+
+--- Bar 状态 ---
+barstate.isfirst              是否为第一根 K 线
+barstate.islast               是否为最后一根 K 线
+barstate.ishistory            是否为历史数据
+barstate.isrealtime           是否为实时数据
+barstate.isconfirmed          当前 K 线是否已确认（收盘）
+barstate.isnew                是否为新 K 线的第一次更新
+barstate.islastconfirmedhistory  是否为最后一根已确认的历史 K 线
+
+--- 标的信息 ---
+syminfo.ticker          股票代码（如 "000001"）
+syminfo.tickerid        完整标的 ID
+syminfo.prefix          交易所前缀
+syminfo.currency        计价货币
+syminfo.type            标的类型
+syminfo.description     标的描述/名称
+syminfo.mintick         最小变动价位
+syminfo.pointvalue      点值
+syminfo.session         交易时段
+syminfo.timezone        时区
+syminfo.root            根标的
+syminfo.basecurrency    基础货币
+syminfo.pricescale      价格精度
+syminfo.minmove         最小价格变动
+syminfo.minmove2        第二最小价格变动（用于小数分股定价）
+syminfo.volumetype      成交量类型
+
+--- 时间周期 ---
+timeframe.period        当前时间周期字符串
+timeframe.multiplier    当前时间周期倍数
+timeframe.isdaily       是否为日线
+timeframe.isweekly      是否为周线
+timeframe.ismonthly     是否为月线
+timeframe.isintraday    是否为日内周期
+timeframe.isdwm         是否为日线/周线/月线
+timeframe.isseconds     是否为秒线
+timeframe.isminutes     是否为分钟线
+
+--- 策略状态变量（常用 Pine 写法，可写带或不带括号两种形式） ---
+strategy.position_size          当前持仓量（>0 多头, <0 空头, =0 空仓）
+strategy.position_avg_price     持仓均价
+strategy.equity                 当前权益
+strategy.netprofit              已平仓总盈亏
+strategy.openprofit             浮动盈亏
+strategy.closedtrades           已平仓交易数
+strategy.initial_capital        初始资金
+strategy.grossprofit            总利润
+strategy.grossloss              总亏损（负值）
+strategy.wintrades              盈利交易数
+strategy.losstrades             亏损交易数
+strategy.max_drawdown           最大回撤金额
+（strategy.* 状态变量与回测面板共用券商模拟器这唯一一份成交账本，逐 bar 同步更新，
+  可放心用于条件判断；观潮只有这一个撮合器，没有第二套回测引擎或回退路径）
+
+--- 布尔/空值 ---
+true, false, na
+
+--- 策略常量 ---
+strategy.long(1), strategy.short(-1)
+strategy.percent_of_equity, strategy.fixed, strategy.cash（default_qty_type 常量：按权益百分比 / 固定数量 / 按金额下单；strategy.cash 不是现金余额）
+strategy.direction.long, strategy.direction.short, strategy.direction.all
+strategy.oca.cancel, strategy.oca.reduce, strategy.oca.none
+strategy.commission.percent, strategy.commission.cash_per_contract, strategy.commission.cash_per_order
+
+================================================================================
+第三部分：技术分析函数（ta.*）
+================================================================================
+
+【均线类】
+ta.sma(source, length)                  简单移动平均线
+ta.ema(source, length)                  指数移动平均线
+ta.wma(source, length)                  加权移动平均线
+ta.vwma(source, length)                 成交量加权移动平均线
+ta.rma(source, length)                  递归移动平均线（Wilder 平滑）
+ta.swma(source)                         对称加权移动平均线（固定4周期）
+ta.hma(source, length)                  Hull 移动平均线
+ta.alma(source, length, offset, sigma)  Arnaud Legoux 移动平均线
+ta.dema(source, length)                 双重指数移动平均线
+ta.tema(source, length)                 三重指数移动平均线
+ta.kama(source, length)                 Kaufman 自适应移动平均线
+ta.vidya(source, length)                变量指数动态平均线
+ta.vwap(source)                         成交量加权平均价
+
+短名别名: sma, ema, wma, vwma, rma, swma, hma, alma, dema, tema, kama, vwap
+
+【布林带/通道】
+ta.bb(source, length, mult)             布林带 → 返回 [middle, upper, lower]
+ta.bbw(source, length, mult)            布林带宽度
+ta.kc(source, length, mult, useTrueRange) Keltner 通道 → 返回 [middle, upper, lower]
+                                        ⚠ 第 4 个参数是布尔/0-1 开关（是否用 TR 计算通道宽度），不是 ATR 周期
+ta.donchian(length)                     唐奇安通道 → 返回 [middle, upper, lower]
+                                        ⚠ 与 TradingView 不同：本引擎额外返回中轨，共 3 元素
+                                        正确解构：[mid, up, dn] = ta.donchian(20)
+
+【动量/振荡器】
+ta.rsi(source, length)                  RSI 相对强弱指数（0-100）
+ta.stoch(close, high, low, length)      随机指标 KD（0-100）
+ta.stochrsi(source, rsiLength, stochLength, kSmooth, dSmooth)
+                                        随机 RSI → 返回 [k, d]
+                                        默认值 rsiLength=14, stochLength=14, kSmooth=3, dSmooth=3
+ta.macd(source, fastLength, slowLength, signalSmoothing)  MACD → 返回 [macdLine, signalLine, histogram]
+ta.cci(source, length)                  CCI 商品通道指数
+ta.mfi(series, length)                  MFI 资金流量指数
+ta.willr(length)                        威廉指标（别名: ta.williamsR, ta.wpr, wpr, willr）
+                                        ⚠ 仅 1 个参数 length；source 固定为 close，不可自定义
+ta.mom(source, length)                  动量指标
+ta.roc(source, length)                  变动率
+ta.cmo(source, length)                  Chande 动量振荡器
+ta.cog(source, length)                  重心指标
+ta.fisher(source, length)              Fisher 变换
+ta.tsi(source, shortLength, longLength) 真实强度指数
+                                        ⚠ 与 TradingView 参数顺序相反（TV 是 source, longLength, shortLength）
+                                        本引擎默认值 shortLength=13, longLength=25
+
+短名别名: rsi, stoch, macd, cci, mfi, mom, roc, cmo, cog, fisher, vidya, willr
+
+【趋势类】
+ta.adx(length)                          ADX 平均趋向指标
+ta.dmi(diLength, adxSmoothing)          DMI 趋向指标 → 返回 [diPlus, diMinus, adx]
+                                        第二参数 adxSmoothing 可省略，默认 14；推荐显式写 ta.dmi(14, 14)
+ta.sar(start, increment, maximum)       抛物线 SAR（别名: ta.psar, psar）
+ta.supertrend(factor, atrPeriod)        超级趋势线 → 返回 [supertrend, direction]
+ta.linreg(source, length, offset)       线性回归
+
+【波动率】
+ta.tr(handleNa)                         真实波幅
+ta.atr(length)                          ATR 平均真实波幅
+ta.stdev(source, length)               标准差
+ta.variance(source, length)            方差
+ta.dev(source, length)                  平均绝对偏差
+
+【成交量】
+ta.obv()                                OBV 能量潮（无参数）
+ta.wvad()                               WVAD 威廉变异离散量（无参数）
+ta.accdist()                            A/D 累积/派发指标（无参数）
+
+【统计类】
+ta.correlation(source1, source2, length)  相关系数
+ta.covariance(source1, source2, length)   协方差
+ta.median(source, length)                 中位数
+ta.mode(source, length)                   众数
+ta.percentrank(source, length)            百分位排名
+ta.percentile_nearest_rank(source, length, percentage)        百分位（最近排名法）
+ta.percentile_linear_interpolation(source, length, percentage) 百分位（线性插值法）
+ta.range(source, length)                  范围（最大 - 最小）
+
+【交叉/比较】
+ta.crossover(source1, source2)            上穿（source1 从下方穿越 source2）
+ta.crossunder(source1, source2)           下穿（source1 从上方穿越 source2）
+ta.cross(source1, source2)                任意方向交叉
+ta.change(source, length)                 变化量（默认 length=1）
+ta.rising(source, length)                 连续上涨 N 根
+ta.falling(source, length)                连续下跌 N 根
+
+【极值/历史】
+ta.highest(source, length)                N 周期内最高值
+ta.lowest(source, length)                 N 周期内最低值
+ta.highestbars(source, length)            最高值距当前 K 线的偏移量（负数）
+ta.lowestbars(source, length)             最低值距当前 K 线的偏移量（负数）
+ta.cum(source)                            累积求和
+ta.barssince(condition)                   条件为真距今的 K 线数
+ta.valuewhen(condition, source, occurrence) 条件为真时的 source 值
+
+【枢轴点】
+ta.pivothigh(source, leftBars, rightBars)  枢轴高点
+ta.pivotlow(source, leftBars, rightBars)   枢轴低点
+
+================================================================================
+第四部分：数学函数（math.*）
+================================================================================
+
+math.abs(x)                   绝对值
+math.max(x, y, ...)           最大值（支持多参数）
+math.min(x, y, ...)           最小值（支持多参数）
+math.avg(x, y, ...)           均值（支持多参数）
+math.sum(source, length)      N 周期求和（series 感知）
+math.round(x, precision)      四舍五入（precision 为小数位数）
+math.floor(x)                 向下取整
+math.ceil(x)                  向上取整
+math.round_to_mintick(x)      按最小变动价位取整
+math.sqrt(x)                  平方根
+math.pow(base, exp)           幂运算
+math.log(x)                   自然对数
+math.log10(x)                 常用对数
+math.exp(x)                   e 的 x 次方
+math.sign(x)                  符号函数（-1/0/1）
+math.random(min, max)         随机数
+math.sin(x), math.cos(x), math.tan(x)         三角函数
+math.asin(x), math.acos(x), math.atan(x)      反三角函数
+math.todegrees(x)             弧度转角度
+math.toradians(x)             角度转弧度
+
+数学常量:
+math.pi (π), math.e (自然常数), math.phi (1.618), math.rphi (0.618)
+
+空值处理:
+nz(x, replacement)            空值替换（x 为 na 时返回 replacement，默认 0）
+na(x)                         判断是否为空值，返回 true/false
+fixnan(source)                用前值填充 na（series 感知）
+
+短名别名: abs, acos, asin, atan, avg, ceil, cos, exp, floor, log, log10,
+          max, min, pow, random, round, round_to_mintick, sign, sin, sqrt,
+          sum, tan, todegrees, toradians
+
+================================================================================
+第五部分：可视化函数
+================================================================================
+
+【基本绘图】
+plot(series, title, color, linewidth, style, trackprice, histbase, offset, editable, display)
+  style: plot.style_line, plot.style_stepline, plot.style_histogram,
+    plot.style_cross, plot.style_area, plot.style_columns, plot.style_circles,
+    plot.style_linebr, plot.style_areabr, plot.style_steplinebr, plot.style_stepline_diamond
+
+plotshape(series, title, style, location, color, size, text, textcolor, offset, editable)
+  style: shape.xcross, shape.cross, shape.triangleup, shape.triangledown,
+    shape.flag, shape.circle, shape.arrowup, shape.arrowdown, shape.labelup,
+    shape.labeldown, shape.square, shape.diamond
+  location: location.abovebar, location.belowbar, location.top, location.bottom, location.absolute
+  size: size.tiny, size.small, size.normal, size.large, size.huge, size.auto
+
+plotchar(series, title, char, location, color, size, text, textcolor, offset, editable)
+plotarrow(series, title, colorup, colordown, offset, maxheight, minheight, editable)
+plotcandle(open, high, low, close, title, color, wickcolor, bordercolor, editable)
+plotbar(open, high, low, close, title, color, editable)
+hline(price, title, color, linestyle, linewidth, editable)
+fill(plot1, plot2, color, title, editable, fillgaps)
+bgcolor(color, offset, editable, title)
+barcolor(color, offset, editable, title)
+
+【颜色函数】
+color.new(color, transp)           创建带透明度的颜色（transp: 0=不透明, 100=全透明）
+color.rgb(r, g, b, transp)        从 RGB 创建颜色
+color.r(color), color.g(color), color.b(color), color.t(color)
+color.from_gradient(value, bottom_value, top_value, bottom_color, top_color)  渐变色
+
+预定义颜色:
+color.red, color.green, color.blue, color.white, color.black, color.orange,
+color.yellow, color.purple, color.lime, color.aqua, color.teal, color.maroon,
+color.olive, color.navy, color.fuchsia, color.silver, color.gray
+
+【表格】
+table.new(position, columns, rows, bgcolor, border_width, border_color, frame_width, frame_color)
+  position: position.top_left, position.top_center, position.top_right,
+    position.middle_left, position.middle_center, position.middle_right,
+    position.bottom_left, position.bottom_center, position.bottom_right
+table.cell(table_id, column, row, text, width, height, text_color, text_halign,
+    text_valign, text_size, bgcolor, tooltip, text_font_family)
+table.merge_cells(table_id, start_column, start_row, end_column, end_row)
+table.set_position(table_id, position)
+table.set_bgcolor(table_id, bgcolor)
+table.set_frame_color(table_id, color)
+table.set_frame_width(table_id, width)
+
+【标签】
+label.new(x, y, text, xloc, yloc, color, style, textcolor, size, textalign, tooltip, text_font_family)
+label.delete(id)
+label.set_text(id, text), label.set_xy(id, x, y)
+label.set_x(id, x), label.set_y(id, y)
+label.set_color(id, color), label.set_textcolor(id, color)
+label.set_style(id, style), label.set_size(id, size)
+label.set_tooltip(id, tooltip), label.set_text_font_family(id, font_family)
+label.set_textalign(id, textalign)
+label.get_x(id), label.get_y(id), label.get_text(id)
+
+【线段】
+line.new(x1, y1, x2, y2, xloc, extend, color, style, width)
+line.delete(id)
+line.set_xy1(id, x, y), line.set_xy2(id, x, y)
+line.get_x1(id), line.get_y1(id), line.get_x2(id), line.get_y2(id)
+line.set_color(id, color), line.set_style(id, style)
+line.set_extend(id, extend), line.set_width(id, width), line.set_xloc(id, xloc)
+
+【矩形框】
+box.new(left, top, right, bottom, border_color, border_width, border_style,
+    extend, xloc, bgcolor, text, text_size, text_color, text_halign,
+    text_valign, text_wrap, text_font_family)
+box.delete(id), box.copy(id)
+box.get_top(id), box.get_bottom(id), box.get_left(id), box.get_right(id)
+box.set_top(id, top), box.set_bottom(id, bottom), box.set_left(id, left), box.set_right(id, right)
+box.set_border_color(id, color), box.set_bgcolor(id, color), box.set_border_width(id, width)
+box.set_text(id, text), box.set_text_color(id, color)
+box.set_extend(id, extend), box.set_text_wrap(id, wrap), box.set_text_font_family(id, font_family)
+
+extend 常量: extend.none, extend.left, extend.right, extend.both
+
+【折线】
+polyline.new(points, curved, closed, xloc, line_color, fill_color, line_style, line_width)
+polyline.delete(id), polyline.get_points(id)
+
+【图表点】
+chart.point.now(price), chart.point.from_index(index, price)
+chart.point.from_time(time, price), chart.point.new(time, index, price)
+chart.point.copy(point)
+
+================================================================================
+第六部分：策略函数（strategy.*）
+================================================================================
+
+【策略交易指令】
+strategy.entry(id, direction, qty, limit, stop, oca_name, oca_type, comment, alert_message, disable_alert)
+  id: 交易标识（字符串）, direction: strategy.long 或 strategy.short
+  qty: 数量（可选）, limit: 限价, stop: 止损价
+
+strategy.close(id, immediately)
+  id: 入场标识；空字符串或省略时平掉全部仓位
+  immediately: 是否在当前 tick 立即成交（默认 false，下一 bar 开盘）
+  ⚠ 本引擎不支持 comment/qty/qty_percent/alert_message/disable_alert，传入会被静默忽略
+strategy.close_all(immediately)
+  immediately: 是否在当前 tick 立即成交（默认 false）
+
+strategy.exit(id, from_entry, qty, qty_percent, profit, loss, limit, stop,
+    profit_pct, loss_pct, trail_points, trail_price, trail_offset)
+  id: 出场标识符
+  from_entry: 绑定的入场 id（默认等于 id）
+  qty / qty_percent: 平仓数量（绝对值或百分比 0-100）
+  profit / loss: 止盈 / 止损 tick 数（价差 = tick 数 × 最小变动价位；要按价位止盈止损请用 limit / stop（绝对价位））
+  limit / stop: 止盈价格 / 止损价格（绝对价位）
+  profit_pct / loss_pct: 相对入场价的百分比止盈/止损
+  trail_points: 跟踪止损激活偏移（tick 单位）
+  trail_price: 跟踪止损激活绝对价格
+  trail_offset: 跟踪止损跟踪偏移（tick 单位）
+  ⚠ 本引擎不支持 oca_name/comment/alert_message，传入会被静默忽略
+
+strategy.order(id, direction, qty, limit, stop, oca_name, oca_type, comment)
+strategy.cancel(id), strategy.cancel_all()
+
+【风控函数】
+strategy.risk.max_drawdown(value, type)           最大回撤限制
+strategy.risk.allow_entry_in(direction)           限制交易方向
+strategy.risk.max_position_size(contracts)        最大持仓量
+strategy.risk.max_intraday_loss(value, type)      单日最大亏损限制
+
+【持仓查询】
+strategy.opentrades                                   未平仓交易笔数（0 表示空仓）
+strategy.opentrades.entry_price(trade_num)            第 trade_num 笔未平仓交易入场价（不传为本轮持仓首次入场价）
+strategy.opentrades.entry_bar_index(trade_num)        第 trade_num 笔入场 K 线索引（不传为本轮持仓首次入场）
+strategy.opentrades.size(trade_num)                   第 trade_num 笔剩余数量（不传为总持仓量）
+strategy.opentrades.profit(trade_num)                 第 trade_num 笔浮动盈亏（不传为总浮盈，等于 strategy.openprofit）
+strategy.opentrades.max_runup(trade_num)              第 trade_num 笔入场以来最大浮盈
+strategy.opentrades.max_drawdown(trade_num)           第 trade_num 笔入场以来最大浮亏
+
+【历史交易查询】
+strategy.closedtrades.entry_price(trade_num)          入场价
+strategy.closedtrades.exit_price(trade_num)           出场价
+strategy.closedtrades.entry_bar_index(trade_num)      入场 K 线索引
+strategy.closedtrades.exit_bar_index(trade_num)       出场 K 线索引
+strategy.closedtrades.profit(trade_num)               盈亏
+strategy.closedtrades.size(trade_num)                 交易量
+strategy.closedtrades.commission(trade_num)           手续费
+strategy.closedtrades.entry_time(trade_num)           入场时间
+strategy.closedtrades.exit_time(trade_num)            出场时间
+strategy.closedtrades.max_drawdown(trade_num)         交易持仓期间最大浮亏
+strategy.closedtrades.max_runup(trade_num)            交易最大浮盈
+
+================================================================================
+第七部分：输入参数（input.*）
+================================================================================
+
+input(defval, title, tooltip, inline, group)          通用输入
+input.int(defval, title, minval, maxval, step, tooltip, inline, group, options)    整数输入
+input.float(defval, title, minval, maxval, step, tooltip, inline, group, options)  浮点数输入
+input.bool(defval, title, tooltip, inline, group)     布尔开关输入
+input.string(defval, title, tooltip, inline, group, options)  字符串输入（可带下拉选项）
+input.color(defval, title, tooltip, inline, group)    颜色选择器输入
+input.source(defval, title, tooltip, inline, group)   数据源选择输入（如 close, open 等）
+input.timeframe(defval, title, tooltip, inline, group) 时间周期选择输入
+input.session(defval, title, tooltip, inline, group)  交易时段输入
+input.symbol(defval, title, tooltip, inline, group)   标的选择输入
+input.time(defval, title, tooltip, inline, group)     时间戳输入
+input.text_area(defval, title, tooltip, inline, group) 多行文本输入
+input.price(defval, title, tooltip, inline, group)    价格输入
+
+================================================================================
+第八部分：字符串函数（str.*）
+================================================================================
+
+str.tostring(value, format)           值转字符串（format: format.mintick, "#.##" 等）
+str.tonumber(text)                    字符串转数字
+str.format(formatString, arg0, ...)   格式化字符串
+str.length(text)                      字符串长度
+str.contains(source, str)             是否包含子串
+str.startswith(source, str)           是否以子串开头
+str.endswith(source, str)             是否以子串结尾
+str.substring(source, beginIndex, endIndex)  子串截取
+str.replace(source, target, replacement)     替换第一个匹配
+str.replace_all(source, target, replacement) 替换所有匹配
+str.split(string, separator)          按分隔符拆分
+str.lower(source)                     转小写
+str.upper(source)                     转大写
+str.trim(source)                      去除首尾空白
+str.repeat(source, count)             重复 N 次
+str.pos(source, str)                  查找子串位置
+str.match(source, regex)              正则匹配（返回第一个匹配或 na）
+str.format_time(time, format, timezone) 时间格式化
+
+日志函数:
+log.info(message), log.warning(message), log.error(message)
+
+================================================================================
+第九部分：数据请求（request.*）与库导入（import）
+================================================================================
+
+--- request.security / request.security_lower_tf ---
+
+request.security(symbol, timeframe, expression, gaps, lookahead)
+  同品种或多品种、跨周期数据请求。观潮会预取外品种 K 线并对齐主图时间窗。
+  周期字面量建议: "1"/"3"/"5"/"15"/"30"/"60"/"120"/"240"/"D"/"W"/"M"（及 1D/1W/1M）
+  symbol 写法:
+    - 同品种: syminfo.tickerid（推荐）或 syminfo.ticker
+    - 跨品种: "000001.SZ"、"600000.SH"、"SZ:000001"（字面量；失败返回 na，不会静默换成当前品种）
+
+request.security_lower_tf(symbol, timeframe, expression, ignore_invalid_symbol)
+  目标周期低于主图时使用（返回数组系列）。同样支持跨品种字面量。
+
+【expression 支持范围（字符串 / 嵌套 ta.* / 元组）】
+价格与合成: close, open, high, low, volume, time, hl2, hlc3, ohlc4, hlcc4, bar_index
+均线与波动: ta.sma/ema/rma/wma/hma, ta.highest/lowest, ta.stdev, ta.atr, ta.linreg
+动量: ta.rsi, ta.cci, ta.mfi, ta.mom, ta.roc, ta.change, ta.vwap
+交叉: ta.crossover, ta.crossunder
+元组: ta.macd → [macd, signal, hist]；ta.bb / ta.bbands → [basis, upper, lower]
+数学: math.abs / floor / ceil / round 及常见二元运算、比较
+可嵌套，例如: ta.sma(ta.rsi(close, 14), 5)
+不在白名单内的复杂函数体 / 用户自定义函数 → 运行时报「暂不支持的表达式」
+
+【推荐写法示例】
+// 同品种高周期
+htfClose = request.security(syminfo.tickerid, "D", close)
+htfRsi = request.security(syminfo.tickerid, "W", ta.rsi(close, 14))
+[macdLine, signalLine, histLine] = request.security(syminfo.tickerid, "D", ta.macd(close, 12, 26, 9))
+
+// 跨品种（字面量）
+refClose = request.security("000001.SZ", "D", close)
+refEma = request.security("SH:600000", "60", ta.ema(close, 20))
+
+// 低周期（主图为日线时取 60 分钟序列）
+ltfCloses = request.security_lower_tf(syminfo.tickerid, "60", close)
+
+【gaps / lookahead】
+barmerge.gaps_off / gaps_on
+barmerge.lookahead_off（策略默认且推荐） / lookahead_on（易产生前瞻偏差，策略慎用）
+
+【边界与降级】
+- 动态 symbol / timeframe（非常量）→ 可能无法预取 → na 或空
+- 外品种无数据 / 超 auxiliary 预算 → 该品种返回 na，脚本应继续可跑
+- 单脚本动态 request.security 调用有上限（约 200 次），避免循环里无界请求
+
+request.financial(symbol, financial_id, period, gaps)
+  财务数据请求（基础支持，部分字段可能返回 na）
+
+占位实现（返回 na，但不报错；不要把它们当成可交易数据源）:
+request.dividends(), request.earnings(), request.quandl()
+request.economic(), request.seed(), request.currency_rate()
+
+--- import / library ---
+
+支持:
+  import MathUtils as mu
+  import SignalUtils as su
+  import 用户已保存脚本的标题或 id as alias   （脚本需事先保存在观潮脚本库）
+
+内置库导出（通过 alias 调用）:
+  MathUtils: roundTo, clamp, normalize, pctChange, lerp
+  SignalUtils: crossCount, consecutiveBars, inRange
+
+示例:
+  import MathUtils as mu
+  import SignalUtils as su
+  indicator("lib demo", overlay=true)
+  v = mu.clamp(close, 0, 100)
+  plot(v)
+
+不支持:
+  TradingView 云端 CDN（import TradingView/... 或 username/Library/version）
+  未保存在观潮本地、也非内置名的任意路径
+
+library("Name") / export 仅用于编写可被上述方式导入的库脚本；普通指标/策略不必声明 library。
+
+================================================================================
+第九点五部分：缠论函数（chanlun.*）
+================================================================================
+
+这些函数读取当前图表同口径的缠论识别结果，用于把缠论信号接入 Pine 策略。
+它们不接受参数，均按当前 bar 返回结果；信号识别本身存在确认延迟，确认时刻晚于
+结构位置，脚本里可叠加价格/均线/量能等条件做二次确认。
+
+【重要】信号触发 bar 与图表标注位置为何不同：
+chanlun.bp*Buy / bp*Sell / divergence* 在「结构首次被确认」的那根 bar 上才返回
+true（因果回放，绝不使用未来 K 线）；而图表上的缠论指标会把转折点标记画在
+结构位置（可能早于确认时刻若干根 K）。这不是 bug：脚本回测必须按确认时刻
+取值才不引入未来函数；图表标注的是结构归属位置，方便人工复盘。若需要与
+图表视觉对齐做研究，可用 signal.explain 里的 confirmTime / 结构 index 自行对拍。
+
+转折点:
+chanlun.bp1Buy(), chanlun.bp1Sell()       第 1 类向上转折 / 向下转折，返回 bool
+chanlun.bp2Buy(), chanlun.bp2Sell()       第 2 类向上转折 / 向下转折，返回 bool
+chanlun.bp3Buy(), chanlun.bp3Sell()       第 3 类向上转折 / 向下转折，返回 bool
+chanlun.bpAnyBuy(), chanlun.bpAnySell()   任一类向上转折 / 任一类向下转折，返回 bool
+
+背驰与中枢:
+chanlun.divergenceBottom(), chanlun.divergenceTop()  底背驰 / 顶背驰，返回 bool
+chanlun.zsUpper(), chanlun.zsLower()      最近中枢上沿 / 下沿；无中枢返回 na
+chanlun.zsBreakUp(), chanlun.zsBreakDown() 当前 bar 突破中枢上沿 / 下沿，返回 bool
+
+笔与信号强度:
+chanlun.biDirection()                     当前所在笔方向：1 上行，-1 下行，0 未知
+chanlun.signalStrength()                  当前 bar 最新缠论信号强度；无信号返回 0
+
+================================================================================
+第十部分：集合函数（array.* / map.*）
+================================================================================
+
+【数组创建】
+array.new_float(size, initial_value), array.new_int(size, initial_value)
+array.new_bool(size, initial_value), array.new_string(size, initial_value)
+array.new_color(size, initial_value)
+array.new_line(size), array.new_label(size), array.new_box(size)
+array.from(val1, val2, ...)                从值列表创建数组
+
+【数组基本操作】
+array.get(id, index)        获取元素
+array.set(id, index, value) 设置元素
+array.push(id, value)       尾部追加
+array.pop(id)               移除并返回尾部元素
+array.shift(id)             移除并返回头部元素
+array.unshift(id, value)    头部插入
+array.insert(id, index, value)   指定位置插入
+array.remove(id, index)     移除指定位置元素
+array.clear(id)             清空数组
+array.size(id)              数组长度
+array.first(id)             第一个元素
+array.last(id)              最后一个元素
+
+【数组搜索/判断】
+array.includes(id, value)   是否包含值
+array.indexof(id, value)    查找值的索引
+array.lastindexof(id, value) 从后查找值的索引
+array.every(id, callback)   所有元素满足条件
+array.some(id, callback)    任一元素满足条件
+
+【数组变换】
+array.sort(id, order)       排序
+array.reverse(id)           反转
+array.slice(id, start, end) 截取子数组
+array.concat(id1, id2)     拼接数组
+array.copy(id)              浅拷贝
+array.fill(id, value, start, end) 填充
+array.join(id, separator)   拼接为字符串
+array.standardize(id)       标准化
+array.abs(id)               取绝对值
+array.sort_indices(id, order) 返回排序后的索引数组
+
+【数组统计】
+array.sum(id), array.avg(id), array.min(id), array.max(id)
+array.median(id), array.stdev(id), array.variance(id)
+array.covariance(id1, id2), array.range(id)
+
+【数组搜索（排序后）】
+array.binary_search(id, value)
+array.binary_search_leftmost(id, value)
+array.binary_search_rightmost(id, value)
+array.percentile_nearest_rank(id, percentage)
+array.percentile_linear_interpolation(id, percentage)
+
+【Map（键值对）】
+map.new()                    创建空 Map
+map.put(id, key, value)     设置键值对
+map.get(id, key)            获取值
+map.remove(id, key)         删除键值对
+map.contains(id, key)       是否包含键
+map.size(id)                Map 大小
+map.clear(id)               清空
+map.keys(id)                获取所有键
+map.values(id)              获取所有值
+map.copy(id)                浅拷贝
+map.to_array(id)            转为数组
+
+================================================================================
+第十一部分：矩阵函数（matrix.*）
+================================================================================
+
+matrix.new(rows, columns, initial_value)   创建矩阵
+matrix.get(id, row, column)                获取元素
+matrix.set(id, row, column, value)         设置元素
+matrix.rows(id), matrix.columns(id), matrix.elements_count(id)
+matrix.add_row(id, row, values)            添加行
+matrix.add_col(id, column, values)         添加列
+matrix.remove_row(id, row)                 移除行
+matrix.remove_col(id, column)              移除列
+matrix.row(id, row)                        获取一整行
+matrix.col(id, column)                     获取一整列
+matrix.transpose(id)                       转置
+matrix.det(id)                             行列式
+matrix.inv(id)                             逆矩阵
+matrix.mult(id1, id2)                      矩阵乘法
+matrix.sum(id1, id2)                       矩阵加法
+matrix.diff(id1, id2)                      矩阵减法
+matrix.copy(id)                            复制矩阵
+matrix.fill(id, value)                     全部填充
+matrix.submatrix(id, from_row, to_row, from_column, to_column)  子矩阵
+
+================================================================================
+第十二部分：运行时/时间/类型转换/预警/AI
+================================================================================
+
+【类型转换】
+int(x), float(x), bool(x), string(x)
+
+【时间函数】
+year(time, timezone), month(time, timezone), dayofmonth(time, timezone), dayofweek(time, timezone)
+hour(time, timezone), minute(time, timezone), second(time, timezone), weekofyear(time, timezone)
+timestamp(year, month, day, hour, minute, second), timestamp(timezone, year, month, day, hour, minute, second)
+（以上及裸变量 year/hour/dayofweek 等、time("D")、timeframe.change 均按 syminfo.timezone
+  交易所时区计算，A 股为 Asia/Shanghai；timezone 参数可写 "UTC+8"、"UTC" 或 IANA 名称）
+timenow, time_close, time(timeframe, session, timezone)
+dayofweek.sunday(1)~dayofweek.saturday(7)
+
+【Ticker 函数】
+ticker.new(prefix, ticker), ticker.modify(tickerid, session), ticker.standard(tickerid)
+ticker.heikinashi(tickerid)（占位）, ticker.renko/kagi/linebreak/pointfigure（占位）
+
+【图表属性】
+chart.bg_color, chart.fg_color, chart.is_standard(true)
+chart.left_visible_bar_time, chart.right_visible_bar_time
+
+【会话信息】
+session.regular("0930-1500"), session.extended
+session.ismarket(true), session.ispremarket(false), session.ispostmarket(false)
+timeframe.change(timeframe)  时间周期切换检测
+
+【其他】
+runtime.error(message), runtime.log(message), max_bars_back(source)
+
+【预警】
+alert(message, freq), alertcondition(condition, title, message)
+alert.freq_all, alert.freq_once_per_bar, alert.freq_once_per_bar_close
+
+================================================================================
+第十三部分：可直接复制的指标 / 策略模板（给外部 AI 与用户）
+================================================================================
+
+以下脚本均可直接粘贴到观潮运行。外部 AI 生成新脚本时应参照这些结构与约定，
+不要额外引入 TradingView CDN import 或白名单外的 request.security 表达式。
+
+--- 模板 A：副图指标 — 多周期 RSI（同品种）---
+
+//@version=5
+indicator("观潮-多周期RSI", overlay=false)
+len = input.int(14, "RSI周期", minval=2)
+rsiVal = ta.rsi(close, len)
+htfRsi = request.security(syminfo.tickerid, "D", ta.rsi(close, len), lookahead=barmerge.lookahead_off)
+plot(rsiVal, "RSI", color.blue)
+plot(htfRsi, "日线RSI", color.orange)
+hline(70, "超买", color.red)
+hline(30, "超卖", color.green)
+
+--- 模板 B：主图指标 — 跨品种对照收盘（字面量）---
+
+//@version=5
+indicator("观潮-跨品种对照", overlay=true)
+// 跨品种必须用字面量；无数据时为 na，不会静默换成当前品种
+refClose = request.security("000001.SZ", "D", close, lookahead=barmerge.lookahead_off)
+refEma = request.security("000001.SZ", "D", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+plot(refClose, "对照收盘", color.purple)
+plot(refEma, "对照EMA20", color.orange)
+
+--- 模板 C：主图指标 — 内置库 MathUtils ---
+
+//@version=5
+indicator("观潮-MathUtils示例", overlay=true)
+import MathUtils as mu
+smooth = ta.ema(close, 20)
+plot(mu.roundTo(smooth, 2), "圆整EMA", color.blue)
+plot(mu.clamp(close, ta.lowest(close, 20), ta.highest(close, 20)), "区间夹逼", color.gray)
+
+--- 模板 D：策略骨架（参数 + 风控）---
+
+//@version=5
+strategy("观潮-策略骨架", overlay=true,
+     initial_capital=100000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10, pyramiding=1, slippage=1)
+
+length = input.int(20, "均线周期", minval=1, maxval=200, group="参数")
+atrLen = input.int(14, "ATR周期", group="风控")
+atrMult = input.float(2.0, "止损ATR倍数", group="风控")
+
+ma = ta.sma(close, length)
+atrVal = ta.atr(atrLen)
+volOk = volume > ta.sma(volume, 20) * 1.5
+longCondition = ta.crossover(close, ma) and volOk
+exitCondition = ta.crossunder(close, ma)
+
+if longCondition
+    strategy.entry("多头", strategy.long)
+    strategy.exit("止损", "多头", stop=close - atrMult * atrVal)
+if exitCondition
+    strategy.close("多头")
+
+plot(ma, "均线", color.blue, linewidth=2)
+// 买卖点不用 plotshape：回测引擎会按实际成交在主图统一标 B/S
+
+--- 模板 E：策略 — 日线趋势过滤 + 分钟均线交叉 ---
+
+//@version=5
+strategy("观潮-日线过滤交叉", overlay=true,
+     initial_capital=100000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10, pyramiding=1)
+
+htfLen = input.int(20, "日线EMA", group="高周期")
+fastLen = input.int(12, "快线", group="本周期")
+slowLen = input.int(26, "慢线", group="本周期")
+
+htfEma = request.security(syminfo.tickerid, "D", ta.ema(close, htfLen), lookahead=barmerge.lookahead_off)
+fast = ta.ema(close, fastLen)
+slow = ta.ema(close, slowLen)
+trendUp = close > htfEma
+longCond = trendUp and ta.crossover(fast, slow)
+exitCond = ta.crossunder(fast, slow) or close < htfEma
+
+if longCond
+    strategy.entry("做多", strategy.long)
+if exitCond
+    strategy.close("做多")
+
+plot(fast, "快线", color.blue)
+plot(slow, "慢线", color.orange)
+plot(htfEma, "日线EMA", color.purple)
+
+--- 模板 F：策略 — 跨品种强度确认（字面量）---
+
+//@version=5
+strategy("观潮-跨品种确认", overlay=true,
+     initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1)
+
+refSymClose = request.security("000001.SZ", "D", close, lookahead=barmerge.lookahead_off)
+refEma = request.security("000001.SZ", "D", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+myEma = ta.ema(close, 20)
+// 对照品种无数据时 ref* 为 na，条件为 false，策略保持空仓（安全降级）
+refOk = not na(refSymClose) and refSymClose > refEma
+longCond = refOk and ta.crossover(close, myEma)
+exitCond = ta.crossunder(close, myEma) or (not na(refSymClose) and refSymClose < refEma)
+
+if longCond
+    strategy.entry("做多", strategy.long)
+if exitCond
+    strategy.close("做多")
+
+plot(myEma, "本品种EMA", color.blue)
+
+--- 模板 G：策略 — MACD 元组 + SignalUtils ---
+
+//@version=5
+strategy("观潮-MACD+SignalUtils", overlay=true,
+     initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10)
+import SignalUtils as su
+
+[macdLine, signalLine, hist] = ta.macd(close, 12, 26, 9)
+rsiVal = ta.rsi(close, 14)
+longCond = ta.crossover(macdLine, signalLine) and hist > 0 and su.inRange(rsiVal, 40, 70)
+exitCond = ta.crossunder(macdLine, signalLine)
+
+if longCond
+    strategy.entry("做多", strategy.long)
+if exitCond
+    strategy.close("做多")
+
+
+================================================================================
+第十四部分：与 TideView 内置指标联动（重要）
+================================================================================
+
+TideView 内置了大量原生技术指标，由引擎 IndicatorEngine 统一计算并以专业级视觉渲染。
+完整列表见本文档末尾「动态内置指标清单」段（运行时自动从注册表生成，永远是当前版本最新值）。
+
+Pine Script 的 ta.* 函数（ta.sma/ta.ema/ta.macd/ta.rsi/ta.bb/ta.atr/ta.cci/
+ta.stoch/ta.dmi/ta.adx/ta.sar/ta.supertrend/ta.hma/ta.willr 等）在**数值上
+已对齐内置 calculators**，可以放心调用，无需担心口径差异。
+
+【联动规则一：Companion 自动加载（基础策略映射）】
+当用户激活内置 strategy 模板时，系统会根据 COMPANION_INDICATOR_MAP 自动把
+配套的内置指标添加到画布（如画布已有则幂等跳过）。完整映射表：
+
+  基础单指标策略：
+    pine-ma-crossover-strategy        → 无（脚本自画快慢双 EMA，周期可调）
+    pine-macd-strategy                → MACD
+    pine-rsi-strategy                 → RSI
+    pine-stochastic-strategy          → 无（STOCH 内置指标已下架，脚本自画 %K/%D）
+    pine-kdj-strategy                 → KDJ
+    pine-cci-strategy                 → CCI
+    pine-wr-strategy                  → WILLR
+    pine-roc-strategy                 → ROC
+    pine-sar-strategy                 → SAR
+    pine-supertrend-strategy          → SUPERTREND
+    pine-bias-strategy                → BIAS
+    pine-trix-strategy                → TRIX
+    pine-obv-strategy                 → OBV
+    pine-emv-strategy                 → EMV
+    pine-psy-strategy                 → PSY
+
+配套内置指标按其自身参数（默认或画布已有）显示，与本策略参数不同时以策略参数为准。
+
+【联动规则二：脚本绘图规范（关键）】
+为避免 companion 与脚本自绘副图重复（双副图），生成策略代码时请遵循：
+
+1. overlay=true 主图策略：
+   - 不要用 plotshape / label 画买卖信号：回测引擎会按实际成交（下一根开盘）
+     在主图统一标 B/S 并跟随主题涨跌色，脚本自画会与之重复且早一根
+   - 不要自己 plot MACD/RSI/KDJ 等常见副图指标（让 companion 自动负责）
+   - 主图可以 plot 趋势线、均线、通道（供人眼参考）
+   - 示例：
+     //@version=5
+     strategy("示例", overlay=true)
+     [macdLine, sigLine, hist] = ta.macd(close, 12, 26, 9)
+     longCond = ta.crossover(macdLine, sigLine)
+     if longCond
+       strategy.entry("做多", strategy.long)
+     // 买卖点由回测 B/S 统一标注，不再 plotshape
+
+2. overlay=false 副图策略：
+   - **默认不要**自己 plot RSI/KDJ/SLOWKD/CCI/MACD/BOLL/WILLR/ROC/BIAS/TRIX/OBV/EOM/
+     STOCHRSI/MFI/DMI/ADX/ATR/AROON/VORTEX/FISHER/TSI/KST/CONNORSRSI/
+     SCHAFF/WAVETREND/CHOPPINESS/PSY/ULTOSC/CMO/MOM/SQUEEZE/CVD/BBW/BBP/ZSCORE/
+     COPPOCK/SMIERGODIC/SMI/PMO/BOP/ELDERFORCE/VOLOSC/PVT/AD/CMF/CHAIKIN/ASI/
+     STDDEV/HISTVOL/MASSINDEX/HURST/ULCER/CORR/BETA/RS 等 300+ **有原生指标**
+     的副图曲线（companion 机制会自动负责），否则画布会出现两个重复的副图面板。
+   - 系统已有 300+ 原生副图指标（均有专业级渲染，以文末动态清单为准），
+     极少需要脚本自画副图。
+   - bgcolor 用来标记信号区域是合理的，不属于重复绘图。
+   - overlay=false 时 bgcolor / plotshape 需加 force_overlay=true 才画到主图（否则落到脚本自己的副图，会生成空副图）。
+   - 买卖点同样由回测 B/S 统一标注，不要再 plotshape。
+
+3. 指标脚本的信号可视化通过 plotshape 完成（location.belowbar / location.abovebar），
+   不要用条件表达式 color + plot 模拟箭头；策略脚本的买卖点交给回测 B/S。
+
+【联动规则三：数值一致性保证】
+以下 ta.* 函数已通过单测验证，与内置 calculators 数值完全一致：
+  ta.sma, ta.ema, ta.rsi, ta.macd, ta.atr, ta.bb, ta.stdev
+
+写代码时可以放心使用这些函数，**无需自己手算**：
+  ❌ 错误示范：自己用 for 循环算 SMA
+  ✅ 正确写法：ma = ta.sma(close, length)
+
+【联动规则四：查看画布指标的手段】
+用户可以在 UI 侧边栏的"指标"面板添加/删除任意内置指标，或通过
+command palette 快速搜索指标名。生成的代码不需要、也不应该
+"手动触发 UI 添加指标"——这由用户交互完成。
+
+================================================================================
+附录：与 TradingView 的差异
+================================================================================
+
+✅ 已支持: switch、UDT(type)、method、enum、解构赋值、var/varip、for/while
+✅ 已支持: 同品种/跨品种 request.security 与 security_lower_tf（字面量 symbol + 常用周期）
+✅ 已支持: import 内置库 MathUtils / SignalUtils，以及观潮本地已保存脚本
+⚠️ 有限制:
+- 跨品种 / 跨周期请用字面量；动态 symbol、冷门周期、无行情品种 → na
+- request.security 的 expression 仅白名单内 ta.*/math.*（见第九部分），复杂函数体仍可能报暂不支持
+- request.dividends/earnings/economic/seed/currency_rate/quandl 为占位（返回 na），不要用于真实交易条件
+- chanlun.* 使用当前图表缠论结果，信号有确认延迟，策略需二次确认
+- 不支持 TradingView 云端 CDN import；缺库时把代码内联，或先把库脚本保存到观潮再 import 标题
+- 不要使用 array.new<float>() 泛型语法，改用 array.new_float()
+
+================================================================================
+动态函数白名单（引擎运行时提取，共 684 个）
+================================================================================
+
+以下是当前引擎版本实际注册的所有函数名，与上文描述完全对应：
+
+abs, acos, adjustment.dividends, adjustment.none, adjustment.splits, adx, alert, alert.freq_all, alert.freq_once_per_bar, alert.freq_once_per_bar_close, alertcondition, alma, array.abs, array.avg, array.binary_search, array.binary_search_leftmost, array.binary_search_rightmost, array.clear, array.concat, array.copy, array.covariance, array.every, array.fill, array.first, array.from, array.get, array.includes, array.indexof, array.insert, array.join, array.last, array.lastindexof, array.max, array.median, array.min, array.new_bool, array.new_box, array.new_color, array.new_float, array.new_int, array.new_label, array.new_line, array.new_linefill, array.new_string, array.percentile_linear_interpolation, array.percentile_nearest_rank, array.pop, array.push, array.range, array.remove, array.reverse, array.set, array.shift, array.size, array.slice, array.some, array.sort, array.sort_indices, array.standardize, array.stdev, array.sum, array.unshift, array.variance, asin, atan, atr, avg, barcolor, barmerge.gaps_off, barmerge.gaps_on, barmerge.lookahead_off, barmerge.lookahead_on, barssince, bb, bbw, bgcolor, boll, bool, box.all, box.copy, box.delete, box.get_bottom, box.get_left, box.get_right, box.get_top, box.new, box.set_bgcolor, box.set_border_color, box.set_border_width, box.set_bottom, box.set_extend, box.set_left, box.set_right, box.set_text, box.set_text_color, box.set_text_font_family, box.set_text_wrap, box.set_top, cci, ceil, change, chanlun.biDirection, chanlun.bp1Buy, chanlun.bp1Sell, chanlun.bp2Buy, chanlun.bp2Sell, chanlun.bp3Buy, chanlun.bp3Sell, chanlun.bpAnyBuy, chanlun.bpAnySell, chanlun.divergenceBottom, chanlun.divergenceTop, chanlun.signalStrength, chanlun.zsBreakDown, chanlun.zsBreakUp, chanlun.zsLower, chanlun.zsUpper, chart.bg_color, chart.fg_color, chart.is_heikinashi, chart.is_kagi, chart.is_linebreak, chart.is_pnf, chart.is_range, chart.is_renko, chart.is_standard, chart.left_visible_bar_time, chart.point.copy, chart.point.from_index, chart.point.from_time, chart.point.new, chart.point.now, chart.right_visible_bar_time, cmo, cog, color.aqua, color.b, color.black, color.blue, color.cyan, color.from_gradient, color.fuchsia, color.g, color.gray, color.green, color.lime, color.maroon, color.navy, color.new, color.olive, color.orange, color.purple, color.r, color.red, color.rgb, color.silver, color.t, color.teal, color.white, color.yellow, contains, correlation, cos, cross, crossover, crossunder, cum, dayofmonth, dayofweek, dayofweek.friday, dayofweek.monday, dayofweek.saturday, dayofweek.sunday, dayofweek.thursday, dayofweek.tuesday, dayofweek.wednesday, dema, dev, display.all, display.data_window, display.none, display.pane, display.price_scale, display.status_line, dmi, ema, endswith, exp, extend.both, extend.left, extend.none, extend.right, falling, fill, fisher, fixnan, float, floor, font.family_default, font.family_monospace, format, format.inherit, format.mintick, format.percent, format.price, format.volume, format_time, highest, highestbars, hline, hline.style_dashed, hline.style_dotted, hline.style_solid, hma, hour, input, input.bool, input.color, input.enum, input.float, input.int, input.price, input.session, input.source, input.string, input.symbol, input.text_area, input.time, input.timeframe, int, kama, kc, kdj, label.all, label.delete, label.get_text, label.get_x, label.get_y, label.new, label.set_color, label.set_size, label.set_style, label.set_text, label.set_text_font_family, label.set_textalign, label.set_textcolor, label.set_tooltip, label.set_x, label.set_xy, label.set_y, label.style_arrowdown, label.style_arrowup, label.style_circle, label.style_cross, label.style_diamond, label.style_flag, label.style_label_center, label.style_label_down, label.style_label_left, label.style_label_right, label.style_label_up, label.style_none, label.style_square, label.style_triangledown, label.style_triangleup, label.style_xcross, length, line.all, line.delete, line.get_x1, line.get_x2, line.get_y1, line.get_y2, line.new, line.set_color, line.set_extend, line.set_style, line.set_width, line.set_xloc, line.set_xy1, line.set_xy2, line.style_arrow_both, line.style_arrow_left, line.style_arrow_right, line.style_dashed, line.style_dotted, line.style_solid, linefill.all, linefill.delete, linefill.get_line1, linefill.get_line2, linefill.new, linefill.set_color, linreg, location.abovebar, location.absolute, location.belowbar, location.bottom, location.top, log, log.error, log.info, log.warning, log10, lower, lowest, lowestbars, macd, map.clear, map.contains, map.copy, map.get, map.keys, map.new, map.put, map.remove, map.size, map.to_array, map.values, match, math.abs, math.acos, math.asin, math.atan, math.avg, math.ceil, math.cos, math.e, math.exp, math.floor, math.log, math.log10, math.max, math.min, math.phi, math.pi, math.pow, math.random, math.round, math.round_to_mintick, math.rphi, math.sign, math.sin, math.sqrt, math.sum, math.tan, math.todegrees, math.toradians, matrix.add_col, matrix.add_row, matrix.col, matrix.columns, matrix.copy, matrix.det, matrix.diff, matrix.elements_count, matrix.fill, matrix.get, matrix.inv, matrix.mult, matrix.new, matrix.remove_col, matrix.remove_row, matrix.row, matrix.rows, matrix.set, matrix.submatrix, matrix.sum, matrix.transpose, max, max_bars_back, median, mfi, min, minute, mom, month, na, nz, obv, order.ascending, order.descending, percentile_nearest_rank, percentrank, pivothigh, pivotlow, plot, plot.style_area, plot.style_areabr, plot.style_circles, plot.style_columns, plot.style_cross, plot.style_histogram, plot.style_line, plot.style_linebr, plot.style_stepline, plot.style_stepline_diamond, plotarrow, plotbar, plotcandle, plotchar, plotshape, polyline.all, polyline.delete, polyline.get_points, polyline.new, pos, position.bottom_center, position.bottom_left, position.bottom_right, position.middle_center, position.middle_left, position.middle_right, position.top_center, position.top_left, position.top_right, pow, psar, random, repeat, replace, replace_all, request.currency_rate, request.dividends, request.earnings, request.economic, request.financial, request.quandl, request.security, request.security_lower_tf, request.seed, request.splits, rising, rma, roc, round, round_to_mintick, rsi, runtime.error, runtime.log, sar, scale.left, scale.none, scale.right, second, session.extended, session.ismarket, session.ispostmarket, session.ispremarket, session.regular, shape.arrowdown, shape.arrowup, shape.circle, shape.cross, shape.diamond, shape.flag, shape.labeldown, shape.labelup, shape.square, shape.triangledown, shape.triangleup, shape.xcross, sign, sin, size.auto, size.huge, size.large, size.normal, size.small, size.tiny, sma, split, sqrt, startswith, stdev, stoch, stochrsi, str.contains, str.endswith, str.format, str.format_time, str.length, str.lower, str.match, str.pos, str.repeat, str.replace, str.replace_all, str.split, str.startswith, str.substring, str.tonumber, str.tostring, str.trim, str.upper, strategy.cancel, strategy.cancel_all, strategy.cash, strategy.close, strategy.close_all, strategy.closedtrades, strategy.closedtrades.commission, strategy.closedtrades.entry_bar_index, strategy.closedtrades.entry_price, strategy.closedtrades.entry_time, strategy.closedtrades.exit_bar_index, strategy.closedtrades.exit_price, strategy.closedtrades.exit_time, strategy.closedtrades.max_drawdown, strategy.closedtrades.max_runup, strategy.closedtrades.profit, strategy.closedtrades.size, strategy.commission.cash_per_contract, strategy.commission.cash_per_order, strategy.commission.percent, strategy.direction.all, strategy.direction.long, strategy.direction.short, strategy.entry, strategy.equity, strategy.exit, strategy.exit_pct, strategy.fixed, strategy.grossloss, strategy.grossprofit, strategy.initial_capital, strategy.long, strategy.losstrades, strategy.max_drawdown, strategy.netprofit, strategy.oca.cancel, strategy.oca.none, strategy.oca.reduce, strategy.openprofit, strategy.opentrades, strategy.opentrades.commission, strategy.opentrades.entry_bar_index, strategy.opentrades.entry_id, strategy.opentrades.entry_price, strategy.opentrades.entry_time, strategy.opentrades.max_drawdown, strategy.opentrades.max_runup, strategy.opentrades.profit, strategy.opentrades.size, strategy.order, strategy.percent_of_equity, strategy.position_avg_price, strategy.position_size, strategy.risk.allow_entry_in, strategy.risk.max_drawdown, strategy.risk.max_intraday_loss, strategy.risk.max_position_size, strategy.short, strategy.wintrades, string, substring, sum, supertrend, swma, ta.accdist, ta.adx, ta.alma, ta.atr, ta.barssince, ta.bb, ta.bbw, ta.boll, ta.cci, ta.change, ta.cmo, ta.cog, ta.correlation, ta.covariance, ta.cross, ta.crossover, ta.crossunder, ta.cum, ta.dema, ta.dev, ta.dmi, ta.donchian, ta.ema, ta.falling, ta.fisher, ta.highest, ta.highestbars, ta.hma, ta.kama, ta.kc, ta.kdj, ta.linreg, ta.lowest, ta.lowestbars, ta.macd, ta.median, ta.mfi, ta.mode, ta.mom, ta.obv, ta.percentile_linear_interpolation, ta.percentile_nearest_rank, ta.percentrank, ta.pivothigh, ta.pivotlow, ta.psar, ta.range, ta.rising, ta.rma, ta.roc, ta.rsi, ta.sar, ta.sma, ta.stdev, ta.stoch, ta.stochrsi, ta.supertrend, ta.swma, ta.tema, ta.tr, ta.tsi, ta.valuewhen, ta.variance, ta.vidya, ta.vwap, ta.vwma, ta.williamsR, ta.willr, ta.wma, ta.wpr, ta.wvad, table.cell, table.clear, table.delete, table.merge_cells, table.new, table.set_bgcolor, table.set_border_color, table.set_border_width, table.set_frame_color, table.set_frame_width, table.set_position, tan, tema, text.format_bold, text.format_italic, text.format_none, text.wrap_auto, text.wrap_none, ticker.heikinashi, ticker.kagi, ticker.linebreak, ticker.modify, ticker.new, ticker.pointfigure, ticker.renko, ticker.standard, time, time_close, timeframe.change, timenow, timestamp, todegrees, tonumber, toradians, tostring, tr, trim, upper, valuewhen, variance, vidya, vwap, vwma, weekofyear, williamsr, willr, wma, wpr, xloc.bar_index, xloc.bar_time, year, yloc.abovebar, yloc.belowbar, yloc.price
+
+================================================================================
+动态内置指标清单（引擎运行时提取，共 131 个）
+================================================================================
+
+以下 IndicatorType 是 TideView 原生支持的、可直接在画布上渲染的内置指标；
+Pine 脚本通过 ta.* 函数调用它们的计算逻辑，数值完全一致。
+
+MA, EMA, SMA, WMA, HMA, VWMA, SAR, SUPERTREND, ICHIMOKU, ALLIGATOR, AROON, DMI, MACD, RSI, KDJ, SLOWKD, STOCHRSI, CCI, WILLR, ROC, MOM, BIAS, ULTOSC, TRIX, VWAP, OBV, MFI, CMF, AD, CHAIKIN, BOLL, KELTNER, ZIGZAG, DONCHIAN, ENVELOPE, ATR, BBW, BBP, ELDERFORCE, VEGAS, ALMA, KAMA, T3, LINEARREG, STARC, COPPOCK, CMO, DPO, MASSINDEX, VORTEX, KST, FISHER, CHOPPINESS, SQUEEZE, CONNORSRSI, TSI, RVI, AO, KLINGER, NORMDIST, BULLBEAR, WADDAH, QQE, QQE_MOD, SCHAFF, WAVETREND, HURST, MAC, GMMA, STDERRBANDS, ACC, SMIERGODIC, BOP, VOLOSC, NETVOL, PVT, HISTVOL, CHAIKINVOL, RELVOLIDX, EOM, EMV, ASI, CHOPZONE, TRENDSTRENGTH, ADX, LINREGSLOPE, STDDEV, RAINBOW, NADARAYA, MESA, AVWAP, OPENRANGE, GATOR, ADR, POCKETVOL, CVD, TPO, RENKO_IND, RS, CORR, BETA, CHIPDIST, AUTOFIB, VPVR, UTBOT, DIVERGENCE, MKTBREADTH, SMI, PMO, WOODIES_CCI, VOLSTOP, TWAP, ULCER, RCI, NVI_PVI, RELVOL_TIME, PSY, ZSCORE, BBI, HEIKIN_ASHI, HALFTREND, RANGEFILTER, DMA, CR, ARBR, VR, AROON_OSC, SROC, NINE_TURN, WEIS_WAVE, EFFORT_RESULT
+
+================================================================================
+文档结束 — TideView Pine Script 引擎函数知识库
+================================================================================

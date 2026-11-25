@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import StrategyCenter from '@/pages/StrategyCenter'
 
 const mocks = vi.hoisted(() => ({ library: vi.fn(), saveDraft: vi.fn(), scanLibrary: vi.fn(), backtests: vi.fn(), deleteLibrary: vi.fn(), restoreLibrary: vi.fn(), fetch: vi.fn(), list: vi.fn() }))
@@ -20,9 +20,15 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.clearAllMocks(); sessionStorage.clear() })
 function Location() { return <p data-testid="location">{useLocation().pathname}{useLocation().search}</p> }
-function open(path = '/opportunities') { return render(<MemoryRouter initialEntries={[path]}><StrategyCenter /><Location /></MemoryRouter>) }
+function open(path = '/opportunities?view=my') { return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/opportunities" element={<StrategyCenter />}/><Route path="*" element={null}/></Routes><Location /></MemoryRouter>) }
 
 describe('strategy center navigation and evidence', () => {
+  it('opens the chart workspace on the primary route', async () => {
+    open('/opportunities')
+    await screen.findByRole('heading', { name:'策略工作台' })
+    expect(screen.getByRole('button', {name:'K线工作台'}).getAttribute('aria-current')).toBe('page')
+    expect(mocks.scanLibrary).not.toHaveBeenCalled()
+  })
   it.each(['draft', 'tested', 'active'])('always offers an edit entry for an existing %s strategy', async status => {
     const item = { ...first, scope: 'stock', symbol: '600271', tested: status === 'tested', bindings: status === 'active' ? [{ id: 7, enabled: true, scope: 'stock', symbol: '600271', version: 2, rules_hash: 'a' }] : [] }
     mocks.library.mockResolvedValue({ items: [item], fields: [], bindings: item.bindings, presets: [] })
@@ -43,10 +49,10 @@ describe('strategy center navigation and evidence', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新读取策略' }))
     await screen.findByRole('article', { name: '策略 缩量回踩' })
   })
-  it('defaults to my strategies without loading old discovery and explains each rule', async () => {
+  it('opens my strategies without loading old discovery and explains each rule', async () => {
     open()
     await screen.findByRole('article', { name: '策略 缩量回踩' })
-    expect(screen.getByRole('button', { name: '我的策略' }).getAttribute('aria-current')).toBe('page')
+    // B 方案后「我的策略」不再是导航项，而是工作台内的弹窗\n    expect(screen.queryByRole('button', { name: '我的策略' })).toBeNull()\n    expect(screen.getByRole('button', { name: 'K线工作台' }).getAttribute('aria-current')).toBe('page')
     expect(screen.queryByText('系统候选检查')).toBeNull()
     expect(mocks.scanLibrary).not.toHaveBeenCalled()
     expect(screen.getAllByText(/应用范围：尚未应用/).length).toBe(2)

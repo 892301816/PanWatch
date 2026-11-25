@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import * as LW from 'lightweight-charts'
 import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -130,10 +131,6 @@ function computeRsi(closes: number[], period = 6): Array<number | null> {
   return out
 }
 
-function getLW() {
-  return (window as any)?.LightweightCharts || null
-}
-
 function addCandles(chart: any, LW: any, options: any) {
   if (typeof chart?.addCandlestickSeries === 'function') return chart.addCandlestickSeries(options)
   if (typeof chart?.addSeries === 'function' && LW?.CandlestickSeries) return chart.addSeries(LW.CandlestickSeries, options)
@@ -158,8 +155,6 @@ export default function InteractiveKline(props: {
   initialInterval?: '1d' | '1w' | '1m'
   initialDays?: '60' | '120' | '250'
 }) {
-  const [lwReady, setLwReady] = useState(!!getLW())
-  const [libError, setLibError] = useState(false)
   const [interval, setIntervalValue] = useState<'1d' | '1w' | '1m'>(props.initialInterval || '1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
@@ -220,28 +215,6 @@ export default function InteractiveKline(props: {
     if (props.initialInterval) setIntervalValue(props.initialInterval)
   }, [props.initialInterval, props.symbol, props.market])
 
-  useEffect(() => {
-    if (lwReady) return
-    let cancelled = false
-    const start = Date.now()
-    const t = window.setInterval(() => {
-      if (cancelled) return
-      if (getLW()) {
-        setLwReady(true)
-        clearInterval(t)
-        return
-      }
-      if (Date.now() - start > 3500) {
-        setLibError(true)
-        clearInterval(t)
-      }
-    }, 200)
-    return () => {
-      cancelled = true
-      clearInterval(t)
-    }
-  }, [lwReady])
-
   const series = useMemo(() => {
     const klines = (data || []).slice().filter(k => !!parseBusinessDay(k.date))
     const candles = klines.map(k => ({
@@ -290,8 +263,6 @@ export default function InteractiveKline(props: {
   const showSkeleton = loading && !series.klines.length
 
   useEffect(() => {
-    const LW = getLW()
-    if (!LW || !lwReady) return
     if (!containerRef.current) return
     if (!series.candles.length) return
 
@@ -301,9 +272,11 @@ export default function InteractiveKline(props: {
     container.innerHTML = ''
     if (macdEl) macdEl.innerHTML = ''
 
-    const rootStyle = getComputedStyle(document.documentElement)
-    const bg = rootStyle.getPropertyValue('--card').trim()
-    const fg = rootStyle.getPropertyValue('--foreground').trim()
+    container.style.backgroundColor = 'hsl(var(--card))'
+    container.style.color = 'hsl(var(--foreground) / 0.85)'
+    const chartStyle = getComputedStyle(container)
+    const bg = chartStyle.backgroundColor
+    const fg = chartStyle.color
 
     const defaultBars = interval === '1d' ? 100 : interval === '1w' ? 78 : 72
     const defaultSpacing = interval === '1d' ? 8.5 : interval === '1w' ? 10 : 10
@@ -311,8 +284,8 @@ export default function InteractiveKline(props: {
       width: container.clientWidth,
       height: 380,
       layout: {
-        background: { color: `hsl(${bg})` },
-        textColor: `hsl(${fg} / 0.85)`,
+        background: { color: bg },
+        textColor: fg,
       },
       rightPriceScale: { borderVisible: false },
       timeScale: {
@@ -377,8 +350,8 @@ export default function InteractiveKline(props: {
         width: macdEl.clientWidth,
         height: 150,
         layout: {
-          background: { color: `hsl(${bg})` },
-          textColor: `hsl(${fg} / 0.75)`,
+          background: { color: bg },
+          textColor: fg,
         },
         rightPriceScale: { borderVisible: false },
         timeScale: { borderVisible: false, visible: false },
@@ -432,8 +405,8 @@ export default function InteractiveKline(props: {
         width: macdEl.clientWidth,
         height: 110,
         layout: {
-          background: { color: `hsl(${bg})` },
-          textColor: `hsl(${fg} / 0.75)`,
+          background: { color: bg },
+          textColor: fg,
         },
         rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.15, bottom: 0.1 } },
         timeScale: { borderVisible: false, visible: false },
@@ -545,12 +518,12 @@ export default function InteractiveKline(props: {
         // ignore
       }
     }
-  }, [series, lwReady, showRsi, indexByDate, interval])
+  }, [series, showRsi, indexByDate, interval])
 
   return (
     <div className="card p-4 md:p-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-3">
-        <div className="text-[13px] font-semibold text-foreground">K线图</div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[13px] font-semibold text-foreground">K线图</span><a className="inline-flex min-h-11 items-center text-sm underline" href={'/opportunities?'+new URLSearchParams({view:'studio',symbol:props.symbol,market:props.market})}>在策略工作台研究</a></div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant={showRsi ? 'default' : 'secondary'} size="sm" className="h-8 px-2.5" onClick={() => setShowRsi(v => !v)}>
             强弱线
@@ -585,12 +558,6 @@ export default function InteractiveKline(props: {
       {error ? (
         <div className="text-[12px] text-rose-600 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
           {error}
-        </div>
-      ) : null}
-
-      {!lwReady && libError ? (
-        <div className="text-[12px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3">
-          图表库加载失败（网络受限时可能发生）。可稍后重试或检查网络/代理。
         </div>
       ) : null}
 

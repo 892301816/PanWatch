@@ -11,6 +11,7 @@ export interface StrategyCondition {
 }
 
 export interface StrategyConfig {
+  chart_script?: string
   template_id?: string
   params?: Record<string, unknown>
   execution?: { stop_loss_pct?: number; take_profit_pct?: number; max_hold_days?: number }
@@ -281,7 +282,142 @@ export interface BacktestMetrics {
   annual_return: number
 }
 
+export interface StudioBar {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  fast?: number | null
+  slow?: number | null
+  template_entry?: boolean | number | null
+  template_exit?: boolean | number | null
+  /** Pine 脚本里每个 plot 的名字都会成为 bar 上的动态字段（值为数值或 null）。 */
+  [key: string]: unknown
+}
+
+/** Pine `plot()` 的绘图声明：名字就是 bar 上的动态字段名。 */
+export interface StudioPlotSpec {
+  name: string
+  overlay: boolean
+  style: string
+  color: string | null
+  linewidth: number
+}
+
+/** Pine `input.*()` 的入参声明，前端按 kind 渲染控件。 */
+export type StudioInputKind =
+  | 'int'
+  | 'float'
+  | 'bool'
+  | 'string'
+  | 'color'
+  | 'source'
+  | 'timeframe'
+  | 'session'
+  | 'symbol'
+  | 'time'
+  | 'price'
+  | 'text'
+  | 'raw'
+
+export interface StudioInputMeta {
+  id: string
+  name: string
+  kind: StudioInputKind
+  default: unknown
+  minval?: number | null
+  maxval?: number | null
+  step?: number | null
+  group?: string | null
+  tooltip?: string | null
+  options?: unknown[] | null
+}
+
+/** Pine 策略统计，口径由后端 statistics.py 统一计算（字段可能缺省）。 */
+export interface StudioStats {
+  [key: string]: number | undefined
+  total_return_pct?: number
+  annualized_return_pct?: number
+  max_drawdown?: number
+  max_drawdown_pct?: number
+  sharpe?: number
+  sortino?: number
+  calmar?: number
+  profit_factor?: number
+  win_rate_pct?: number
+  trades?: number
+  wins?: number
+  losses?: number
+  flats?: number
+  avg_win?: number
+  avg_loss?: number
+  expectancy?: number
+  total_fees?: number
+  initial_capital?: number
+  final_equity?: number
+  avg_holding_bars?: number
+  min_holding_bars?: number
+  max_holding_bars?: number
+  max_consecutive_wins?: number
+  max_consecutive_losses?: number
+  trades_per_month?: number
+  years?: number
+}
+
+/** Pine 策略的一笔成交（逐笔由后端模拟撮合得出）。 */
+export interface StudioTrade {
+  entry_id: string
+  direction: 1 | -1
+  size: number
+  entry_price: number
+  exit_price: number
+  entry_date: string
+  exit_date: string
+  profit: number
+  commission: number
+  bars: number
+  max_runup: number
+  max_drawdown: number
+}
+
+/** `/strategy/chart-preview` 的完整响应（Pine 脚本会带出绘图、参数与统计）。 */
+export interface ChartPreviewResult {
+  source: string
+  adjustment: string
+  engine: 'v1' | 'pine'
+  plots: StudioPlotSpec[]
+  inputs: StudioInputMeta[]
+  warnings: string[]
+  script_title: string | null
+  script_kind: 'indicator' | 'strategy' | null
+  stats: StudioStats
+  trades: StudioTrade[]
+  equity_curve: number[]
+  bars: StudioBar[]
+}
+
+export interface StudioDiagnostic {
+  line: number
+  column: number
+  message: string
+}
+
+/** `/strategy/chart-compile` 的响应：只做语法检查，不取行情。 */
+export interface ChartCompileResult {
+  ok: boolean
+  engine: 'v1' | 'pine'
+  diagnostics: StudioDiagnostic[]
+  title: string | null
+  kind: string | null
+  warnings: string[]
+  inputs: StudioInputMeta[]
+  plots: StudioPlotSpec[]
+}
+
 export interface BacktestResult {
+  chart_bars?: StudioBar[]
   symbol: string
   start: string
   end: string
@@ -427,5 +563,34 @@ export const strategyApi = {
       method: 'POST',
       body: JSON.stringify(payload),
       timeoutMs: 60000,
+    }),
+
+  /** 图表预览：Pine 脚本返回绘图声明、入参、统计与逐笔成交。 */
+  chartPreview: (
+    payload: {
+      symbol: string
+      market?: string
+      instrument?: 'stock' | 'index'
+      interval?: '1d' | '1w' | '1m'
+      script: string
+      price_only?: boolean
+      draft_id?: number
+      inputs?: Record<string, unknown> | null
+    },
+    options?: { signal?: AbortSignal },
+  ) =>
+    fetchAPI<ChartPreviewResult>('/strategy/chart-preview', {
+      method: 'POST',
+      timeoutMs: 90000,
+      signal: options?.signal,
+      body: JSON.stringify(payload),
+    }),
+
+  /** 只检查脚本语法：返回诊断、脚本类型、参数与绘图概要，不取行情。 */
+  chartCompile: (payload: { script: string }) =>
+    fetchAPI<ChartCompileResult>('/strategy/chart-compile', {
+      method: 'POST',
+      timeoutMs: 30000,
+      body: JSON.stringify(payload),
     }),
 }

@@ -1,0 +1,4074 @@
+.st {
+  --ink: hsl(var(--foreground));
+  --hint: hsl(var(--muted-foreground));
+  --edge: hsl(var(--border));
+  --panel: hsl(var(--card));
+  --action: hsl(var(--primary));
+  background: hsl(var(--card));
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+  min-width: 0;
+  color-scheme: light;
+  font-variant-numeric: tabular-nums;
+}
+.st-title,
+.st-bar,
+.st-read,
+.st-legend,
+.st-tools,
+.st-tabs,
+.st-edithead,
+.st-actions,
+.st-row,
+.st footer,
+.st-caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.st-title,
+.st-bar,
+.st-panel,
+.st-caption,
+.st footer {
+  padding: 10px 16px;
+}
+.st-title,
+.st-bar,
+.st-tabs,
+.st-panel {
+  background: var(--panel);
+}
+.st-title h2,
+.st h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+.st-title svg {
+  color: var(--action);
+}
+.st small,
+.st-panel p {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-title small,
+.st footer small {
+  margin-left: auto;
+}
+.st-bar,
+.st-tabs,
+.st footer {
+  border-top: 1px solid var(--edge);
+}
+.st-bar {
+  border-bottom: 1px solid var(--edge);
+}
+.st button,
+.st select,
+.st input,
+.st textarea {
+  border-radius: 5px;
+  font: inherit;
+  color: inherit;
+  max-width: 100%;
+}
+.st button {
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--ink);
+  min-height: 36px;
+}
+.st button:hover,
+.st button[aria-pressed='true'] {
+  background: hsl(var(--accent));
+  color: var(--action);
+}
+.st button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.st select,
+.st input,
+.st textarea {
+  border: 1px solid var(--edge);
+  background: hsl(var(--background));
+  padding: 7px 10px;
+  min-width: 0;
+}
+.st button.st-run {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+  margin-left: auto;
+  font-weight: 600;
+}
+.st-period {
+  display: flex;
+}
+.st-caption {
+  padding-bottom: 2px;
+  font-weight: 600;
+}
+.st-read,
+.st-legend,
+.st-tools,
+.st-detail {
+  padding: 4px 16px;
+  font-size: 12px;
+}
+.st-read {
+  font-family: Consolas, monospace;
+  color: var(--hint);
+  min-height: 28px;
+}
+.st-read b {
+  color: var(--ink);
+}
+.st-legend span:first-child {
+  color: var(--st-fast);
+}
+.st-legend span:nth-child(2) {
+  color: var(--st-slow);
+}
+.st-legend button:first-of-type {
+  margin-left: auto;
+}
+.st-canvas {
+  height: clamp(300px, 44vh, 520px);
+  min-width: 0;
+}
+.st-stage,
+.st-stage * {
+  min-width: 0;
+}
+.st-empty {
+  min-height: 210px;
+  display: grid;
+  place-content: center;
+  color: var(--hint);
+  padding: 16px;
+}
+.st-tabs {
+  padding: 0 10px;
+  gap: 4px;
+}
+.st-tabs button {
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+}
+.st-tabs button[aria-pressed='true'] {
+  border-color: var(--action);
+}
+.st-fold {
+  margin-left: auto;
+}
+.st-panel {
+  border-top: 1px solid var(--edge);
+}
+.st-panel details,
+.st-panel h3 {
+  margin: 8px 0;
+}
+.st summary {
+  cursor: pointer;
+  color: var(--ink);
+}
+.st-edithead input {
+  flex: 1;
+}
+.st textarea {
+  width: 100%;
+  font:
+    14px/1.7 Consolas,
+    monospace;
+  margin: 9px 0;
+  min-height: 126px;
+  color: var(--ink);
+  resize: vertical;
+}
+.st .st-accent {
+  color: var(--action);
+  background: hsl(var(--accent));
+}
+.st-library,
+.st-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 165px), 1fr));
+  gap: 8px;
+}
+.st-library button,
+.st-fields label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.st-library button {
+  border: 1px solid var(--edge);
+  padding: 10px;
+}
+.st-fields label {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-fields input {
+  width: 100%;
+}
+.st footer {
+  background: hsl(var(--muted));
+  font-size: 12px;
+  color: var(--action);
+}
+.st-panel svg[aria-label] {
+  min-width: 0;
+}
+.st .st-tools {
+  background: hsl(var(--muted));
+}
+.st details > summary {
+  min-height: 32px;
+}
+.st p[role='status'] {
+  padding: 3px 16px;
+  color: var(--action);
+}
+@media (max-width: 700px) {
+  .st-bar,
+  .st-panel,
+  .st-title,
+  .st-caption,
+  .st footer {
+    padding: 8px 10px;
+  }
+  .st button,
+  .st select,
+  .st summary {
+    min-height: 44px;
+  }
+  .st input,
+  .st textarea,
+  .st select {
+    font-size: 16px;
+  }
+  .st-bar {
+    gap: 4px;
+  }
+  .st-bar > select {
+    width: 100%;
+  }
+  .st-canvas {
+    height: clamp(255px, 39svh, 370px);
+  }
+  .st-read,
+  .st-legend,
+  .st-tools {
+    padding: 2px 8px;
+    gap: 7px;
+  }
+  .st-tabs {
+    gap: 0;
+    padding: 0;
+    flex-wrap: wrap;
+  }
+  .st-tabs button {
+    padding: 6px 7px;
+    font-size: 13px;
+  }
+  .st-tabs svg {
+    width: 14px;
+  }
+  .st-edithead {
+    gap: 5px;
+  }
+  .st-edithead input {
+    flex-basis: 100%;
+  }
+  .st-library {
+    grid-template-columns: 1fr;
+  }
+  .st-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .st footer small {
+    overflow-wrap: anywhere;
+  }
+  .st-row {
+    gap: 0;
+    border-bottom: 1px solid var(--edge);
+  }
+  .strategy-center .sc-nav {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .st-title small {
+    font-size: 11px;
+  }
+  .st-panel svg[aria-label] {
+    width: 100%;
+  }
+  .st button:focus-visible,
+  .st summary:focus-visible {
+    outline: 2px solid var(--action);
+  }
+}
+
+.st-lookup {
+  padding: 0 12px;
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-lookup summary {
+  display: list-item;
+  width: fit-content;
+}
+.st-lookup form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.st-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.st-plot-wrap {
+  position: relative;
+}
+.st-draw-layer {
+  position: absolute;
+  inset: 0 0 27px;
+  z-index: 2;
+  touch-action: none;
+  cursor: crosshair;
+}
+@media (max-width: 700px) {
+  .sc-studio-page > header {
+    align-items: center;
+    gap: 8px;
+  }
+  .sc-studio-page > header h1 {
+    font-size: 21px;
+  }
+  .sc-studio-page > header p {
+    display: none;
+  }
+  .sc-studio-page > header button {
+    min-height: 44px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+  .sc-studio-page .sc-nav {
+    gap: 15px;
+    margin: 6px 0 10px;
+  }
+  .sc-studio-page .st-title {
+    padding-block: 5px;
+  }
+  .st-canvas {
+    height: clamp(245px, 34svh, 350px);
+  }
+  .st-legend button {
+    min-width: 44px;
+  }
+  .st-detail {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 600px) {
+  .st-legend {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px 44px auto;
+    gap: 2px;
+  }
+  .st-legend button {
+    padding-inline: 4px;
+    margin: 0;
+  }
+  .st-legend span {
+    font-size: 11px;
+  }
+}
+
+.st {
+  --st-fast: #936216;
+  --st-slow: #476cba;
+}
+.dark .st {
+  color-scheme: dark;
+  --st-fast: #e7bd74;
+  --st-slow: #93b8ff;
+}
+.st-read,
+.st-legend,
+.st-overlay-values,
+.st-subplot header {
+  font-variant-numeric: tabular-nums;
+}
+.st-indicators,
+.st-mark-options,
+.st-overlay-values,
+.st-subplot header {
+  padding: 8px 16px;
+}
+.st-indicators,
+.st-subplot {
+  border-top: 1px solid var(--edge);
+}
+.st-indicators form,
+.st-study-list,
+.st-mark-options,
+.st-overlay-values,
+.st-subplot header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.st-indicators form {
+  align-items: end;
+}
+.st-indicators label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--hint);
+}
+.st-indicators input {
+  width: 72px;
+}
+.st-study-list > div {
+  display: inline-flex;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+}
+.st-study-list {
+  margin-bottom: 8px;
+}
+.st-mark-options label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.st-mark-options input {
+  accent-color: var(--action);
+}
+.st-tooltip {
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  min-width: 145px;
+  padding: 9px 12px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
+  font-size: 12px;
+  color: var(--ink);
+}
+.st-tooltip.left {
+  left: 10px;
+}
+.st-tooltip.right {
+  right: 72px;
+}
+.st-tooltip dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+.st-tooltip dt {
+  color: var(--hint);
+}
+.st-tooltip dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.st-up {
+  color: #bc3647 !important;
+}
+.st-down {
+  color: #087b67 !important;
+}
+.dark .st-up {
+  color: #f18e87 !important;
+}
+.dark .st-down {
+  color: #69cdb1 !important;
+}
+.st-subplot > div {
+  height: 110px;
+}
+.st-subplot header {
+  justify-content: space-between;
+  font-size: 12px;
+}
+.st-overlay-values {
+  font-size: 12px;
+  color: var(--hint);
+}
+@media (max-width: 700px) {
+  .st-legend {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .st-legend button:first-of-type {
+    margin-left: auto;
+  }
+  .st-indicators,
+  .st-mark-options,
+  .st-overlay-values,
+  .st-subplot header {
+    padding: 6px 10px;
+  }
+  .st-indicators form {
+    gap: 6px;
+  }
+  .st-indicators button,
+  .st-study-list button,
+  .st-mark-options label {
+    min-height: 44px;
+  }
+  .st-subplot > div {
+    height: 95px;
+  }
+  .st-legend span {
+    font-size: 12px;
+  }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .st-tooltip {
+    display: none;
+  }
+}
+
+.st-signal-key {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 2px 16px 5px;
+  color: var(--hint);
+  font-size: 11px;
+}
+.st-signal-key:empty {
+  display: none;
+}
+.st-signal-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.st-signal-key b {
+  font: 600 10px/14px system-ui;
+  text-align: center;
+  width: 15px;
+  border-radius: 3px;
+  color: white;
+  background: #bb3440;
+}
+.st-signal-key span:nth-child(2) b {
+  background: #117455;
+}
+.dark .st-signal-key b {
+  background: #ff979d;
+  color: #161821;
+}
+.dark .st-signal-key span:nth-child(2) b {
+  background: #75d9ae;
+}
+
+.st-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 7px;
+}
+.st-track i {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+}
+.st-subplot header {
+  padding-block: 5px;
+}
+.st-subplot > div {
+  overflow: hidden;
+}
+
+.studio-modal {
+  width: min(640px, calc(100vw - 24px));
+  max-width: 640px;
+  max-height: 86dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.studio-modal h3 {
+  font-weight: 600;
+}
+.studio-modal small,
+.studio-modal summary {
+  color: hsl(var(--muted-foreground));
+}
+.studio-field {
+  display: grid;
+  gap: 6px;
+}
+.studio-field textarea,
+.studio-search {
+  width: 100%;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  padding: 9px 11px;
+}
+.studio-modal pre {
+  font:
+    13px/1.6 Consolas,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: hsl(var(--muted));
+  padding: 10px;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.studio-modal summary {
+  cursor: pointer;
+  padding-block: 5px;
+}
+.studio-gallery-tabs,
+.studio-gallery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.studio-gallery-rows article {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid hsl(var(--border));
+}
+@media (max-width: 600px) {
+  .studio-modal {
+    padding: 16px;
+    max-height: 84dvh;
+  }
+  .studio-modal button,
+  .studio-modal summary {
+    min-height: 44px;
+  }
+  .studio-modal textarea,
+  .studio-modal input {
+    font-size: 16px;
+  }
+  .studio-gallery-rows article {
+    display: grid;
+  }
+  .studio-gallery-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* —— Pine 脚本编辑器：类型徽标、行号栏、诊断与告警 —— */
+.st-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.st-editor-bar small {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-badge {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--hint);
+  background: hsl(var(--muted));
+  white-space: nowrap;
+}
+.st-badge.pine {
+  color: #0f766e;
+  border-color: rgb(15 118 110 / 0.35);
+  background: rgb(15 118 110 / 0.08);
+}
+.dark .st-badge.pine {
+  color: #5eead4;
+  border-color: rgb(94 234 212 / 0.35);
+  background: rgb(94 234 212 / 0.1);
+}
+.st-code {
+  display: flex;
+  align-items: stretch;
+  height: clamp(180px, 30vh, 340px);
+  margin: 9px 0;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  overflow: hidden;
+  background: hsl(var(--background));
+}
+.st-code textarea {
+  flex: 1;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+}
+.st-code pre.st-gutter {
+  margin: 0;
+  padding: 7px 8px 7px 6px;
+  min-width: 40px;
+  text-align: right;
+  color: var(--hint);
+  background: hsl(var(--muted));
+  border-right: 1px solid var(--edge);
+  font: 14px/1.7 Consolas, monospace;
+  overflow: hidden;
+  white-space: pre;
+  overflow-wrap: normal;
+  user-select: none;
+}
+.st-diagnostics,
+.st-warnings {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.st-diagnostics button {
+  width: 100%;
+  min-height: 0;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: #b91c1c;
+  border: 1px solid rgb(220 38 38 / 0.3);
+  background: rgb(220 38 38 / 0.06);
+}
+.dark .st-diagnostics button {
+  color: #fca5a5;
+  border-color: rgb(252 165 165 / 0.3);
+  background: rgb(252 165 165 / 0.08);
+}
+.st-warnings {
+  color: #a16207;
+  font-size: 11.5px;
+}
+.dark .st-warnings {
+  color: #fbbf24;
+}
+.st-script-error {
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  font-size: 12px;
+  border-radius: 5px;
+  color: #b91c1c;
+  border: 1px solid rgb(220 38 38 / 0.3);
+  background: rgb(220 38 38 / 0.06);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dark .st-script-error {
+  color: #fca5a5;
+  border-color: rgb(252 165 165 / 0.3);
+  background: rgb(252 165 165 / 0.08);
+}
+
+/* —— Pine 参数面板 —— */
+.st-pine-inputs {
+  border-top: 1px solid var(--edge);
+  padding: 10px 16px 12px;
+  margin-top: 4px;
+}
+.st-pine-inputs > header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.st-pine-inputs > header small {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-pine-inputs fieldset {
+  border: 0;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.st-pine-inputs legend {
+  font-size: 12px;
+  color: var(--hint);
+  padding: 0 0 5px;
+}
+.st-pine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 8px;
+}
+.st-pine-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--hint);
+}
+.st-pine-field input,
+.st-pine-field select,
+.st-pine-field textarea {
+  width: 100%;
+}
+.st-pine-field textarea {
+  min-height: 62px;
+  font: 13px/1.6 Consolas, monospace;
+}
+.st-pine-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+.st-pine-label small {
+  font-size: 11px;
+  opacity: 0.85;
+}
+.st-pine-hint {
+  font-style: normal;
+  font-size: 11px;
+  color: #a16207;
+}
+.dark .st-pine-hint {
+  color: #fbbf24;
+}
+.st-pine-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.st-pine-check input {
+  width: auto;
+  accent-color: var(--action);
+}
+
+/* —— Pine 副图：多个 pane 可滚动，高度与指标副图一致 —— */
+.st-pine-panes {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/* —— Pine 统计面板 —— */
+.st-pine-stats {
+  border-top: 1px solid var(--edge);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+.st-pine-stats > header,
+.st-pine-trades > header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.st-pine-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.st-pine-metrics > div {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+}
+.st-pine-metrics span {
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-pine-metrics strong {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.st-pine-metrics small {
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-pine-curve {
+  margin: 6px 0 12px;
+  color: var(--ink);
+}
+.st-pine-curve svg {
+  width: 100%;
+  height: auto;
+}
+.st-pine-legend {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-pine-table {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 6px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+}
+.st-pine-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.st-pine-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+}
+.st-pine-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--edge);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.st-pine-table td small {
+  display: block;
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-pine-empty {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--hint);
+}
+@media (max-width: 700px) {
+  .st-pine-inputs {
+    padding: 8px 10px 10px;
+  }
+  .st-pine-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .st-pine-panes {
+    max-height: 300px;
+  }
+  .st-diagnostics button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 700px) {
+  /* 移动端字号会放大，行号栏必须同步，否则编号与代码行错位 */
+  .st-code textarea,
+  .st-code pre.st-gutter {
+    font-size: 16px;
+    line-height: 1.7;
+  }
+}
+
+/* ==========================================================================
+   TideView「观潮」布局：单行顶栏 / 脚本条 / 回测结果 dock / 状态栏。
+   本段全部为追加规则，上面的现有样式保持原样。
+   ========================================================================== */
+
+.st-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* —— 工作台整体：只有主图吃满剩余高度 —— */
+.st.st-workbench {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 140px);
+  height: calc(100dvh - 140px);
+  min-height: 760px;
+  overflow: hidden;
+}
+.st-workbench .st-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.st-workbench .st-stage > .st-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.st-workbench .st-stage .st-plot-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.st-workbench .st-stage .st-canvas {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 160px;
+}
+.st-workbench .st-stage .st-chart > .st-subplot,
+.st-workbench .st-stage .st-chart > .st-pine-panes {
+  flex: 0 0 auto;
+}
+.st-workbench .st-stage .st-detail {
+  flex: 0 0 auto;
+  margin: 0;
+  border-top: 1px solid var(--edge);
+  background: var(--panel);
+}
+.st-workbench .st-empty {
+  flex: 1 1 auto;
+}
+
+/* —— 顶部工具条 —— */
+.st-topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 40px;
+  height: 40px;
+  min-width: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--edge);
+  background: var(--panel);
+  white-space: nowrap;
+  position: relative;
+  z-index: 20;
+}
+.st-topbar button {
+  min-height: 30px;
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.st-topbar-symbol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.st .st-topbar-instrument {
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  margin: 0;
+  min-height: 30px;
+  max-width: min(300px, 36vw);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-overflow: ellipsis;
+}
+.st .st-topbar-instrument:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+}
+.st-topbar-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-topbar-code {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-topbar-star {
+  width: 28px;
+  padding: 0 !important;
+  color: var(--hint);
+}
+.st-topbar-star[aria-pressed='true'] {
+  color: #c58a1c;
+  background: transparent;
+  border-color: transparent;
+}
+.st-topbar-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  background: var(--edge);
+}
+.st-topbar-icon {
+  width: auto;
+  min-width: 30px;
+  padding: 0 5px !important;
+  color: var(--ink);
+}
+.st-topbar-label {
+  display: inline;
+  font-size: 12px;
+}
+.st-topbar-intervals {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.st-topbar-intervals > button,
+.st-topbar-intervals .st-topbar-pop > button {
+  border-radius: 999px;
+  color: var(--hint);
+}
+.st-topbar-intervals > button[aria-pressed='true'],
+.st-topbar-intervals .st-topbar-pop > button[aria-pressed='true'] {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.st-topbar-intervals > button[aria-pressed='true']:hover,
+.st-topbar-intervals .st-topbar-pop > button[aria-pressed='true']:hover {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+}
+.st-topbar-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+}
+.st-topbar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  color: var(--action);
+  font-size: 11px;
+  font-weight: 600;
+}
+.st-topbar-right {
+  margin-left: auto;
+}
+.st-topbar-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--hint);
+}
+.st-topbar-pop {
+  position: relative;
+}
+.st-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+  max-width: 292px;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+}
+.st-pop button {
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.st-pop small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  color: var(--hint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-pop button small {
+  margin-left: auto;
+  padding: 0;
+}
+.st-pop .st-pop-active {
+  color: var(--action);
+  background: hsl(var(--accent));
+}
+.dark .st-topbar-star[aria-pressed='true'] {
+  color: #e7bd74;
+}
+.dark .st-pop {
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.5);
+}
+
+/* —— 主图左上角浮层：默认半透明，鼠标进图实化 —— */
+.st-stage-overlay {
+  position: absolute;
+  top: 100px;
+  left: 10px;
+  z-index: 6;
+  display: flex;
+  gap: 6px;
+  opacity: 0.55;
+  transition: opacity 0.16s ease;
+}
+.st-stage:has(.st-overlay-values) .st-stage-overlay {
+  top: 130px;
+}
+.st-stage:hover .st-stage-overlay,
+.st-stage-overlay:hover,
+.st-stage-overlay:focus-within {
+  opacity: 1;
+}
+.st-stage-overlay button {
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: hsl(var(--card) / 0.92);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+}
+
+/* —— 脚本条 —— */
+.st-scriptbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 44px;
+  height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+  border-top: 1px solid var(--edge);
+  border-bottom: 1px solid var(--edge);
+  background: var(--panel);
+  overflow: hidden;
+}
+.st-scriptbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.st-scriptbar button {
+  min-height: 30px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.st-scriptbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+.st-scriptbar-title b {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+.st-split-main {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+  border-radius: 5px 0 0 5px !important;
+}
+.st-split-main:hover:not(:disabled) {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+  filter: brightness(1.08);
+}
+.st-split-more {
+  border-radius: 0 5px 5px 0 !important;
+  padding-inline: 6px !important;
+  border-left: 1px solid hsl(var(--primary-foreground) / 0.25) !important;
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+}
+.st-split-more:hover {
+  background: var(--action);
+  color: hsl(var(--primary-foreground));
+  filter: brightness(1.08);
+}
+
+/* —— 回测结果 dock —— */
+.st-dock {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 120px;
+  max-height: 60vh;
+  border-bottom: 1px solid var(--edge);
+  background: var(--panel);
+}
+.st .st-dock-handle {
+  display: flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hint);
+  cursor: ns-resize;
+  touch-action: none;
+}
+.st-dock-handle::before {
+  content: '';
+  display: block;
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--edge);
+  transition: background 0.15s ease;
+}
+.st-dock-handle:hover::before,
+.st-dock-handle:focus-visible::before {
+  background: var(--action);
+}
+.st-dock-handle:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: -2px;
+}
+.st-dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 16px 12px;
+}
+.st-dock[data-state='idle'] .st-dock-body,
+.st-dock[data-state='running'] .st-dock-body,
+.st-dock[data-state='error'] .st-dock-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.st-dock-dragging,
+.st-dock-dragging * {
+  user-select: none;
+}
+.st-dock-tabs {
+  display: flex;
+  flex: 0 0 30px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 12px 2px;
+}
+.st-dock-tabs button {
+  min-height: 26px;
+  padding: 2px 12px;
+  font-size: 12px;
+  border-bottom: 2px solid transparent;
+  border-radius: 5px 5px 0 0;
+  color: var(--hint);
+}
+.st-dock-tabs button[aria-selected='true'] {
+  color: var(--action);
+  border-color: var(--action);
+  background: transparent;
+  font-weight: 600;
+}
+.st-dock-tabs button:hover {
+  background: hsl(var(--accent));
+}
+.st-dock-report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 6px 0;
+}
+.st-dock-report-head h3 {
+  margin: 0;
+}
+.st-dock-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.st-dock-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hint);
+  font-size: 13px;
+}
+.st-spin {
+  animation: st-spin 1s linear infinite;
+}
+@keyframes st-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* —— 空状态 / 错误状态 —— */
+.st-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  text-align: center;
+}
+.st-empty-state h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.st-empty-state p {
+  margin: 0;
+  color: var(--hint);
+  font-size: 12.5px;
+}
+.st-empty-state .st-empty-hint {
+  font-size: 12px;
+  opacity: 0.82;
+}
+.st-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.st-empty-actions button {
+  min-height: 32px;
+  padding: 4px 14px;
+}
+.st-empty-error {
+  max-width: 660px;
+  color: #b91c1c !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dark .st-empty-error {
+  color: #fca5a5 !important;
+}
+
+/* —— 底部状态栏 —— */
+.st-statusbar {
+  display: flex;
+  flex: 0 0 28px;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 12px;
+  border-top: 1px solid var(--edge);
+  background: hsl(var(--muted));
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #589b81;
+}
+.st-statusbar[data-state='running'] .st-status-dot {
+  background: #b5965c;
+  animation: st-status-pulse 1.1s ease-in-out infinite;
+}
+.st-statusbar[data-state='error'] .st-status-dot {
+  background: #dc2626;
+}
+.st-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-status-text small {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-status-cursor {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes st-status-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* —— 脚本编辑抽屉 / 回测参数弹层 —— */
+.st-editor-drawer,
+.st-options-dialog {
+  --ink: hsl(var(--foreground));
+  --hint: hsl(var(--muted-foreground));
+  --edge: hsl(var(--border));
+  --panel: hsl(var(--card));
+  --action: hsl(var(--primary));
+  color: var(--ink);
+}
+.st-editor-drawer button:not(.absolute),
+.st-options-dialog button:not(.absolute) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  color: var(--ink);
+  font: inherit;
+}
+.st-editor-drawer button:not(.absolute):hover,
+.st-options-dialog button:not(.absolute):hover {
+  background: hsl(var(--accent));
+  color: var(--action);
+}
+.st-editor-drawer button:not(.absolute):disabled,
+.st-options-dialog button:not(.absolute):disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.st-editor-drawer .st-accent,
+.st-options-dialog .st-accent {
+  color: var(--action);
+  background: hsl(var(--accent));
+}
+.st-editor-drawer .st-accent:hover,
+.st-options-dialog .st-accent:hover {
+  color: var(--action);
+  background: hsl(var(--accent));
+}
+.st-editor-drawer input:not([type='checkbox']),
+.st-editor-drawer select,
+.st-editor-drawer textarea,
+.st-options-dialog input {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: inherit;
+  font: inherit;
+}
+.st-editor-drawer .st-edithead input {
+  flex: 1;
+}
+.st-editor-drawer .st-code {
+  border: 1px solid var(--edge);
+  background: hsl(var(--background));
+}
+.st-editor-drawer .st-code textarea {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font:
+    14px/1.7 Consolas,
+    monospace;
+}
+.st-editor-drawer .st-code pre.st-gutter {
+  background: hsl(var(--muted));
+  border-right: 1px solid var(--edge);
+}
+.st-editor-drawer .st-diagnostics button:not(.absolute) {
+  min-height: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+.st-editor-drawer .st-pine-inputs {
+  --hint: hsl(var(--muted-foreground));
+}
+.st-editor-drawer .st-fields label,
+.st-options-dialog .st-fields label {
+  color: var(--hint);
+}
+.st-options-dialog .st-fields-locked {
+  margin-top: 10px;
+}
+.st-options-dialog .st-fields-locked input:disabled {
+  opacity: 0.65;
+}
+.st-editor-drawer {
+  width: min(940px, calc(100vw - 24px));
+  max-width: 940px;
+  max-height: 88dvh;
+}
+.st-editor-drawer .st-code {
+  height: clamp(260px, 46vh, 560px);
+}
+.st-editor-drawer .st-edithead {
+  margin-top: 4px;
+}
+.st-structured-note {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+.st-options-dialog {
+  width: min(620px, calc(100vw - 24px));
+}
+.st-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* —— 紧凑布局 —— */
+.st.st-compact .st-topbar {
+  flex-basis: 36px;
+  height: 36px;
+}
+.st.st-compact .st-scriptbar {
+  flex-basis: 40px;
+  height: 40px;
+}
+.st.st-compact .st-dock-handle {
+  flex-basis: 26px;
+  height: 26px;
+  min-height: 26px;
+}
+.st.st-compact .st-read {
+  padding-block: 2px;
+  min-height: 24px;
+}
+
+@media (max-width: 960px) {
+  /* 平板/窄窗口允许顶栏折行，避免按钮被裁掉。 */
+  .st-topbar {
+    flex-wrap: wrap;
+    flex-basis: auto;
+    height: auto;
+    padding-block: 4px;
+  }
+  .st.st-compact .st-topbar {
+    flex-basis: auto;
+    height: auto;
+  }
+  .st-topbar-right {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .st.st-workbench {
+    height: calc(100vh - 120px);
+    height: calc(100dvh - 120px);
+    min-height: 640px;
+  }
+  .st-topbar {
+    flex-wrap: wrap;
+    flex-basis: auto;
+    height: auto;
+    gap: 4px;
+    padding: 4px 8px;
+  }
+  .st.st-compact .st-topbar {
+    flex-basis: auto;
+    height: auto;
+  }
+  .st-topbar-right {
+    margin-left: 0;
+  }
+  .st-scriptbar {
+    gap: 6px;
+    padding: 0 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .st-scriptbar::-webkit-scrollbar {
+    display: none;
+  }
+  .st-scriptbar-actions {
+    flex: 0 0 auto;
+  }
+  .st .st-topbar-instrument {
+    max-width: 44vw;
+    font-size: 13px;
+  }
+  .st-topbar-code,
+  .st-topbar-label,
+  .st-topbar-sep {
+    display: none;
+  }
+  .st-topbar-intervals > button,
+  .st-topbar-intervals .st-topbar-pop > button {
+    padding-inline: 7px;
+  }
+  .st-scriptbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .st-scriptbar button {
+    font-size: 11px;
+    padding-inline: 6px;
+  }
+  .st-scriptbar-title {
+    display: none;
+  }
+  .st-stage-overlay {
+    top: 150px;
+    opacity: 0.85;
+  }
+  .st-stage:has(.st-overlay-values) .st-stage-overlay {
+    top: 182px;
+  }
+  .st-workbench .st-stage .st-canvas {
+    min-height: 140px;
+  }
+  .st-dock-tabs {
+    padding-inline: 8px;
+  }
+  .st-dock-body {
+    padding-inline: 8px;
+  }
+  .st-statusbar {
+    padding-inline: 8px;
+  }
+  .st-editor-drawer {
+    width: calc(100vw - 16px);
+    max-height: 92dvh;
+  }
+}
+
+
+/* ==========================================================================
+   移动端（手机主场景）布局修正
+   目标：整页自然滚动、顶栏单行、图表占主要视觉、dock 贴底不挤爆。
+   ========================================================================== */
+@media (max-width: 700px) {
+  /* 1. 取消整屏锁定高度：手机上让页面自然滚动 */
+  .st.st-workbench {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* 2. 顶栏：单行横向滚动，隐藏低频入口 */
+  .st-topbar {
+    flex-wrap: nowrap;
+    height: 40px;
+    min-height: 40px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 8px;
+    gap: 4px;
+    scrollbar-width: none;
+  }
+  .st-topbar::-webkit-scrollbar {
+    display: none;
+  }
+  .st-topbar > * {
+    flex: 0 0 auto;
+  }
+  .st-topbar-right,
+  .st-topbar-star,
+  .st-topbar-sep {
+    display: none;
+  }
+  .st .st-topbar-instrument {
+    max-width: 38vw;
+    font-size: 13px;
+  }
+  .st-topbar-intervals > button,
+  .st-topbar-intervals .st-topbar-pop > button {
+    min-height: 28px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+
+  /* 3. 图表：给固定视觉高度，画布撑满；浮层与画线工具不再压图 */
+  .st-workbench .st-stage {
+    flex: 0 0 auto;
+    height: 54vh;
+    min-height: 300px;
+  }
+  .st-workbench .st-stage .st-canvas {
+    min-height: 0;
+  }
+  .st-stage-overlay,
+  .st-tools {
+    display: none;
+  }
+
+  /* 4. 脚本条：单行可横滑，避免被 overflow:hidden 裁掉 */
+  .st-scriptbar {
+    flex-wrap: nowrap;
+    height: 44px;
+    min-height: 44px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 8px;
+    gap: 6px;
+    scrollbar-width: none;
+  }
+  .st-scriptbar::-webkit-scrollbar {
+    display: none;
+  }
+  .st-scriptbar > * {
+    flex: 0 0 auto;
+  }
+  .st-scriptbar-title {
+    display: none;
+  }
+
+  /* 5. 回测 dock 贴底，默认矮一些 */
+  .st-dock {
+    border-top: 1px solid var(--edge);
+    max-height: 70dvh;
+  }
+  .st-dock-body {
+    padding: 4px 10px 10px;
+  }
+  .st-dock-tabs {
+    padding-inline: 8px;
+  }
+
+  /* 6. 状态栏在手机上不占用空间 */
+  .st-statusbar {
+    display: none;
+  }
+
+  /* 7. 读数行与图例压缩 */
+  .st-read {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .st-legend {
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    padding-inline: 8px;
+  }
+}
+
+/* ---- 移动端第二轮：可读性、垂直空间、图表占比 ---- */
+@media (max-width: 700px) {
+  /* 主按钮在禁用态也要能看清（此前是深底深字） */
+  .st .st-split-main,
+  .st .st-split-main:disabled {
+    color: hsl(var(--primary-foreground));
+  }
+  .st .st-split-main:disabled {
+    opacity: 0.55;
+  }
+  .st .st-split-more {
+    color: hsl(var(--primary-foreground));
+    border-left-color: hsl(var(--primary-foreground) / 0.25) !important;
+  }
+
+  /* 画线工具条基础规则是 `.st .st-tools`，这里必须同权重才能盖住 */
+  .st .st-tools {
+    display: none;
+  }
+
+  /* 页头压扁，把空间还给图表 */
+  .sc-studio-page > header {
+    min-height: 0;
+    margin-bottom: 2px;
+  }
+  .sc-studio-page > header h1 {
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .sc-studio-page > header button {
+    min-height: 30px;
+    padding-inline: 7px;
+    font-size: 11px;
+  }
+  .sc-studio-page .sc-nav {
+    margin: 2px 0 6px;
+    gap: 12px;
+    font-size: 13px;
+  }
+
+  /* 图表再高一点，副图收窄 */
+  .st-workbench .st-stage {
+    height: 58vh;
+    min-height: 340px;
+  }
+  .st-subplot > div {
+    height: 84px;
+  }
+  .st-subplot header {
+    padding-block: 3px;
+    font-size: 11px;
+  }
+}
+
+/* ---- 移动端第三轮：图例单行、把腾出来的高度还给图表 ---- */
+@media (max-width: 700px) {
+  .st-legend,
+  .st-read,
+  .st-signal-key {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .st-legend::-webkit-scrollbar,
+  .st-read::-webkit-scrollbar,
+  .st-signal-key::-webkit-scrollbar {
+    display: none;
+  }
+  .st-legend > *,
+  .st-signal-key > * {
+    flex: 0 0 auto;
+  }
+  .st-legend button {
+    min-height: 26px;
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+  .st-signal-key {
+    padding-block: 2px;
+    font-size: 11px;
+  }
+  .st-workbench .st-stage {
+    height: 56vh;
+    min-height: 330px;
+  }
+}
+
+/* ---- 移动端第四轮：读数行不被挤断、dock 完整露出 ---- */
+@media (max-width: 700px) {
+  .st-read > * {
+    white-space: nowrap;
+  }
+  .st-read b {
+    font-size: 12px;
+  }
+  .st-workbench .st-stage {
+    height: 52vh;
+    min-height: 320px;
+  }
+}
+
+/* ---- 移动端第五轮：读数行子项不压缩（否则文字互相压叠）、dock 完整可见 ---- */
+@media (max-width: 700px) {
+  .st-read {
+    gap: 10px;
+  }
+  .st-read > * {
+    flex: 0 0 auto;
+  }
+  .st-workbench .st-stage {
+    height: 46vh;
+    min-height: 300px;
+  }
+}
+
+/* ---- 移动端收尾：空状态更紧凑，dock 抬头完整 ---- */
+@media (max-width: 700px) {
+  .st-dock-body {
+    font-size: 12px;
+  }
+  .st-dock[data-state='idle'] .st-dock-body h3,
+  .st-dock[data-state='idle'] .st-dock-body strong {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  /* 手机上「Ctrl+Enter」提示无意义，且会挤出按钮 */
+  .st-dock[data-state='idle'] .st-dock-body p:last-child {
+    display: none;
+  }
+  .st-dock[data-state='idle'] .st-dock-body button {
+    min-height: 34px;
+    font-size: 12px;
+  }
+}
+
+/* ---- 主按钮配色兜底：桌面端此前出现「黑底黑字」 ---- */
+.st .st-split-main,
+.st .st-split-main:hover,
+.st .st-split-main:focus,
+.st .st-split-main:disabled {
+  color: hsl(var(--primary-foreground));
+}
+.st .st-split-main:disabled {
+  opacity: 0.6;
+}
+.st .st-split-more,
+.st .st-split-more:hover,
+.st .st-split-more:disabled {
+  color: hsl(var(--primary-foreground));
+}
+
+/* ---- 移动端收尾：dock 空状态顶部对齐 + 默认高度够放下标题与按钮 ---- */
+@media (max-width: 700px) {
+  .st-dock[data-state='idle'] .st-dock-body,
+  .st-dock[data-state='running'] .st-dock-body,
+  .st-dock[data-state='error'] .st-dock-body {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding-top: 8px;
+    gap: 6px;
+  }
+}
+
+/* ==========================================================================
+   观潮视觉语言：满屏、扁平、紧凑（仅作用于策略中心工作台）
+   之前只对齐了信息层级，这一层才是「像不像观潮」的关键。
+   ========================================================================== */
+
+/* 1) 满屏：去掉页面左右内边距，工作台不再是一张卡片 */
+.sc-studio-page {
+  padding-inline: 0;
+}
+.sc-studio-page > header,
+.sc-studio-page .sc-nav {
+  padding-inline: 16px;
+}
+.sc-studio-page .st.st-workbench {
+  background: hsl(var(--background));
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 2) 顶栏 / 脚本条 / 回测 dock：纯色横条 + 1px 分隔线，零圆角 */
+.sc-studio-page .st-topbar,
+.sc-studio-page .st-scriptbar,
+.sc-studio-page .st-dock {
+  background: hsl(var(--card));
+  border-radius: 0;
+}
+.sc-studio-page .st-topbar {
+  border-bottom: 1px solid var(--edge);
+}
+.sc-studio-page .st-scriptbar {
+  border-top: 1px solid var(--edge);
+  border-bottom: 0;
+}
+.sc-studio-page .st-dock {
+  border-top: 1px solid var(--edge);
+  border-bottom: 0;
+}
+
+/* 3) 工具栏按钮扁平化（观潮的工具条没有描边按钮） */
+.sc-studio-page .st-topbar button,
+.sc-studio-page .st-scriptbar button,
+.sc-studio-page .st-legend button {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 4px;
+  color: var(--hint);
+}
+.sc-studio-page .st-topbar button:hover,
+.sc-studio-page .st-scriptbar button:hover,
+.sc-studio-page .st-legend button:hover {
+  color: var(--ink);
+  background: hsl(var(--muted));
+}
+/* 当前周期用实心胶囊 */
+.sc-studio-page .st-topbar-intervals > button[aria-pressed='true'],
+.sc-studio-page .st-topbar-intervals .st-topbar-pop > button[aria-pressed='true'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: transparent;
+}
+/* 主按钮保持实心 */
+.sc-studio-page .st-split-main,
+.sc-studio-page .st-split-more {
+  color: hsl(var(--primary-foreground));
+}
+
+/* 4) 读数行 / 图例：小一号、密一点 */
+.sc-studio-page .st-read {
+  padding: 3px 10px;
+  font-size: 11px;
+  gap: 12px;
+  border-bottom: 1px solid var(--edge);
+  color: var(--hint);
+}
+.sc-studio-page .st-read b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.sc-studio-page .st-legend {
+  padding: 2px 10px;
+  font-size: 11px;
+  gap: 12px;
+  min-height: 24px;
+}
+.sc-studio-page .st-legend button {
+  font-size: 11px;
+  padding: 1px 6px;
+  min-height: 22px;
+}
+
+/* 5) 副图头：观潮式「指标名 + 彩色当前值」 */
+.sc-studio-page .st-subplot {
+  border-top: 1px solid var(--edge);
+}
+.sc-studio-page .st-subplot header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 10px 1px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.sc-studio-page .st-subplot header b {
+  font-weight: 500;
+  color: var(--hint);
+}
+.sc-studio-page .st-subplot header small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.sc-studio-page .st-subplot header .st-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sc-studio-page .st-subplot header .st-track i {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* 6) 买卖信号图例在观潮里没有独立一行（标记本身已自解释） */
+.sc-studio-page .st-signal-key {
+  display: none;
+}
+
+/* 7) 图表区与画布贴合 */
+.sc-studio-page .st-workbench .st-stage {
+  background: hsl(var(--background));
+}
+.sc-studio-page .st-plot-wrap {
+  border-radius: 0;
+}
+
+/* ==========================================================================
+   手机端独立骨架（StudioMobileWorkbench）
+   与桌面壳共用状态，DOM 完全重画：顶栏 → 图表吃满 → 底部操作条 → 全屏子视图
+   ========================================================================== */
+.stm {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 124px);
+  min-height: 460px;
+  background: hsl(var(--card));
+  border-top: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+/* 顶栏：标的 + 周期胶囊 + 指标/更多 */
+.stm-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 42px;
+  height: 42px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--edge);
+}
+.stm-symbol {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 46vw;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.stm-symbol small {
+  color: var(--hint);
+  font-size: 11px;
+  font-weight: 400;
+}
+.stm-periods {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.stm-periods button {
+  border: 0;
+  background: transparent;
+  color: var(--hint);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.stm-periods button[aria-pressed='true'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.stm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--hint);
+  border-radius: 6px;
+}
+.stm-icon:active {
+  background: hsl(var(--muted));
+}
+
+/* 图表：吃满剩余高度 */
+.stm-chart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.stm-chart > .st-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.stm-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--hint);
+  font-size: 13px;
+}
+.stm-empty button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* 底部操作条 */
+.stm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--edge);
+  background: hsl(var(--card));
+}
+.stm-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.stm-actions button:active {
+  background: hsl(var(--muted));
+}
+.stm-actions .stm-primary {
+  border: 0;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.stm-actions .stm-primary:disabled {
+  opacity: 0.5;
+}
+
+/* 全屏子视图（脚本 / 结果） */
+.stm-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  background: hsl(var(--card));
+}
+.stm-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 44px;
+  height: 44px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--edge);
+}
+.stm-panel-head b {
+  font-size: 14px;
+}
+.stm-panel-head input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.stm-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+}
+.stm-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--hint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 编辑器：行号 + 文本域 */
+.stm-editor {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: hsl(var(--muted));
+}
+.stm-gutter {
+  flex: 0 0 34px;
+  margin: 0;
+  padding: 8px 4px;
+  overflow: hidden;
+  color: var(--hint);
+  background: transparent;
+  font: 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+  user-select: none;
+}
+.stm-editor textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font: 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.stm-diagnostics,
+.stm-warnings {
+  flex: 0 0 auto;
+  max-height: 26vh;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 8px;
+  list-style: none;
+  font-size: 12px;
+}
+.stm-diagnostics {
+  background: rgb(220 38 38 / 0.08);
+  color: #dc2626;
+}
+.stm-diagnostics button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 2px 0;
+  text-align: left;
+  font-size: 12px;
+}
+.stm-warnings {
+  background: rgb(234 179 8 / 0.1);
+  color: #a16207;
+}
+.stm-inputs {
+  flex: 0 0 auto;
+  max-height: 30vh;
+  overflow: auto;
+  border-top: 1px solid var(--edge);
+}
+.stm-panel-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--edge);
+}
+.stm-panel-actions button {
+  height: 38px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+}
+.stm-panel-actions .stm-primary {
+  border: 0;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+
+/* 结果视图 */
+.stm-report {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 16px;
+}
+.stm-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 12px;
+  color: var(--hint);
+  font-size: 13px;
+  text-align: center;
+}
+.stm-hint-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.stm-hint-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.stm-error {
+  margin: 12px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgb(220 38 38 / 0.1);
+  color: #dc2626;
+  font-size: 13px;
+}
+
+/* 底部弹出选择器 */
+.stm-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  background: rgb(0 0 0 / 0.45);
+}
+.stm-sheet-inner {
+  width: 100%;
+  max-height: 70dvh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px 14px 0 0;
+  background: hsl(var(--card));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.stm-sheet-inner header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--edge);
+  font-size: 13px;
+}
+.stm-sheet-inner header button {
+  border: 0;
+  background: transparent;
+  color: var(--hint);
+  font-size: 13px;
+}
+.stm-sheet-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+.stm-sheet-list button {
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+.stm-sheet-list button[aria-pressed='true'] {
+  color: hsl(var(--primary));
+  font-weight: 600;
+}
+
+/* ---- 手机骨架：让 .stm 真正吃掉剩余高度（不再用魔法数字） ---- */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto;
+  }
+  .sc-studio-page .stm {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+  .sc-studio-page .page-container,
+  .sc-studio-page.pb-12 {
+    padding-bottom: 0;
+  }
+}
+
+/* ---- 手机骨架内部：图例单行横滑，不再压成竖排 ---- */
+.stm .st-legend,
+.stm .st-read {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.stm .st-legend::-webkit-scrollbar,
+.stm .st-read::-webkit-scrollbar {
+  display: none;
+}
+.stm .st-legend > *,
+.stm .st-read > * {
+  flex: 0 0 auto;
+}
+.stm .st-legend button {
+  white-space: nowrap;
+  font-size: 11px;
+  min-height: 24px;
+  padding: 1px 7px;
+}
+.stm .st-legend {
+  font-size: 11px;
+  gap: 10px;
+  min-height: 26px;
+  padding: 2px 8px;
+}
+.stm .st-read {
+  font-size: 11px;
+  gap: 10px;
+  padding: 3px 8px;
+}
+.stm .st-subplot header {
+  padding: 2px 8px 0;
+  font-size: 11px;
+}
+
+/* ---- 手机骨架：图表区必须能被压缩，否则底部操作条被挤出可视区 ---- */
+.stm .stm-chart {
+  min-height: 0;
+  overflow: hidden;
+}
+.stm .stm-chart > .st-chart {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.stm .st-chart > .st-plot-wrap {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.stm .st-chart .st-canvas {
+  min-height: 0;
+}
+.stm .st-subplot > div {
+  height: 68px;
+}
+.stm .st-detail {
+  display: none;
+}
+
+/* ---- 手机骨架：整页固定成一屏，图表区用 flex 吃掉剩余高度（不再依赖祖先链） ---- */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: hsl(var(--background));
+    padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto;
+  }
+  .sc-studio-page .stm {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+  }
+}
+
+/* 修正：`.pb-12` 的 padding-bottom 由更高权重覆盖，这里显式给底部导航留位 */
+@media (max-width: 700px) {
+  .sc-studio-page.pb-12 {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* 修正：固定层要避开顶部的 App 头，图表画布撑满剩余空间 */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    top: 68px;
+  }
+}
+.stm .st-chart .st-plot-wrap {
+  flex: 1 1 auto;
+}
+.stm .st-chart .st-canvas {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+/* 最终修正：固定层用 inset 直接让开顶部 App 头与底部导航，不再依赖 padding */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    position: fixed;
+    top: 68px;
+    right: 0;
+    bottom: 64px;
+    left: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: hsl(var(--background));
+  }
+  .sc-studio-page.pb-12 {
+    padding-bottom: 0;
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto;
+  }
+  .sc-studio-page .stm {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+  }
+}
+
+/* ==========================================================================
+   手机骨架 · 最终版容器规则（覆盖此前累积的同类规则，避免互相打架）
+   ========================================================================== */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    position: fixed !important;
+    top: 68px !important;
+    right: 0 !important;
+    bottom: 64px !important;
+    left: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: hsl(var(--background)) !important;
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto !important;
+  }
+  .sc-studio-page .stm {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+  }
+}
+
+/* 关键修正：此前有 height:100dvh 让 bottom 失效，这里显式改成 auto */
+@media (max-width: 700px) {
+  .sc-studio-page {
+    height: auto !important;
+  }
+}
+
+/* ---- 手机壳：照搬桌面的高度链，让主图 canvas 真正拿到高度 ---- */
+.stm .st-chart {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.stm .st-plot-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stm .st-canvas {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 160px;
+}
+
+/* ---- 手机壳最终覆盖（更高权重，压住前面所有同类规则） ---- */
+.sc-studio-page .stm .st-legend,
+.sc-studio-page .stm .st-read {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none;
+}
+.sc-studio-page .stm .st-legend > *,
+.sc-studio-page .stm .st-read > * {
+  flex: 0 0 auto !important;
+}
+.sc-studio-page .stm .st-legend button {
+  white-space: nowrap !important;
+  writing-mode: horizontal-tb !important;
+  min-width: auto !important;
+}
+/* 画线工具在手机上还没做触摸版，先藏起来，避免挤占图例 */
+.sc-studio-page .stm .st-legend > button:last-child {
+  display: none;
+}
+.sc-studio-page .stm .st-read {
+  gap: 10px !important;
+  font-size: 11px;
+}
+
+/* 图例行只保留指标读数：指标入口在顶栏、缩放交给双指，避免挤爆 */
+.sc-studio-page .stm .st-legend button {
+  display: none !important;
+}
+.sc-studio-page .stm .st-legend {
+  min-height: 24px;
+  padding: 2px 8px;
+}
+
+/* ==========================================================================
+   指标面板改为右侧抽屉 + 主图/副图空间分配
+   ========================================================================== */
+
+/* 抽屉 */
+.st-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+.st-drawer-mask {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgb(0 0 0 / 0.32);
+  cursor: default;
+}
+.st-drawer-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 92vw);
+  height: 100%;
+  background: hsl(var(--card));
+  border-left: 1px solid var(--edge);
+  box-shadow: -8px 0 28px rgb(0 0 0 / 0.18);
+  animation: st-drawer-in 0.18s ease-out;
+}
+@keyframes st-drawer-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.st-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 48px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--edge);
+  font-size: 14px;
+}
+.st-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hint);
+}
+.st-drawer-close:hover {
+  background: hsl(var(--muted));
+  color: var(--ink);
+}
+.st-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+}
+
+/* 指标面板 */
+.st-ind {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.st-ind-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  color: var(--hint);
+}
+.st-ind-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+.st-ind-search button {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--hint);
+}
+.st-ind-block > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.st-ind-block h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hint);
+  letter-spacing: 0.04em;
+}
+.st-ind-block > header span {
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-ind-link {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--action);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* 已添加 chip */
+.st-ind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.st-ind-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  overflow: hidden;
+  background: hsl(var(--muted));
+}
+.st-ind-chip[data-place='pane'] {
+  border-style: dashed;
+}
+.st-ind-chip[data-active='true'] {
+  border-color: var(--action);
+  box-shadow: 0 0 0 1px var(--action) inset;
+}
+.st-ind-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.st-ind-chip button:first-child i {
+  margin-left: 5px;
+  color: var(--hint);
+  font-style: normal;
+  font-size: 11px;
+}
+.st-ind-chip button:last-child {
+  padding: 4px 7px;
+  color: var(--hint);
+  border-left: 1px solid var(--edge);
+}
+.st-ind-chip button:last-child:hover {
+  color: #dc2626;
+}
+
+/* 指标卡片 */
+.st-ind-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.st-ind-kinds button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.st-ind-kinds button b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-ind-kinds button small {
+  color: var(--hint);
+  font-size: 10px;
+}
+.st-ind-kinds button[aria-pressed='true'] {
+  border-color: var(--action);
+  background: hsl(var(--accent));
+}
+.st-ind-empty {
+  grid-column: 1 / -1;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+/* 参数与位置 */
+.st-ind-args {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.st-ind-args label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-ind-args input {
+  width: 84px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.st-ind-place {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 3px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+}
+.st-ind-place button {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hint);
+  font-size: 12px;
+  cursor: pointer;
+}
+.st-ind-place button[aria-pressed='true'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.st-ind-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 36px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.st-ind-error {
+  margin: 8px 0 0;
+  color: #dc2626;
+  font-size: 12px;
+}
+
+/* 主图 / 副图空间：主图保底高度，副图变矮，超出时整列滚动 */
+.st-chart {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.st-plot-wrap {
+  flex: 1 1 auto;
+  min-height: 260px;
+}
+.st-subplot > div {
+  height: 96px;
+}
+.st-subplot header {
+  padding-block: 3px;
+}
+
+/* 抽屉内的主按钮要压住 .st button 的通用颜色 */
+.st .st-ind-submit,
+.st .st-ind-submit:hover,
+.st .st-ind-submit:focus {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+.st .st-ind-place button[aria-pressed='true'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+/* ---- 指标浮层：锚定在「指标」按钮下方（替代右侧抽屉） ---- */
+.st-legend-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.st-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  max-height: min(70vh, 560px);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: hsl(var(--card));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.16);
+  overflow: hidden;
+  text-align: left;
+}
+.st-popover > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 40px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--edge);
+  font-size: 13px;
+}
+.st-popover-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hint);
+}
+.st-popover-close:hover {
+  background: hsl(var(--muted));
+  color: var(--ink);
+}
+.st-popover-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+}
+/* 浮层内控件尺寸收一档，避免 380px 里显得空 */
+.st-popover .st-ind {
+  gap: 14px;
+}
+.st-popover .st-ind-kinds {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  max-height: 188px;
+}
+.st-popover .st-mark-options {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+/* 浮层改为从按钮左侧向右展开（指标按钮在图例左侧，右对齐会跑出屏幕） */
+.st-popover {
+  left: 0;
+  right: auto;
+}
+
+/* 浮层改为 fixed 定位（坐标由按钮 rect 计算），避免被可滚动的图表区裁切 */
+.st-popover {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: auto;
+  max-height: min(72vh, 600px);
+}
+
+/* 浮层里的主按钮：确保实心（此前被通用按钮样式冲淡） */
+.st-popover .st-ind-submit {
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+  border: 0 !important;
+}
+
+/* 指标变多后：卡片更紧凑，添加按钮吸底常驻 */
+.st-popover .st-ind-kinds {
+  max-height: 268px;
+}
+.st-popover .st-ind-kinds button {
+  padding: 5px 8px;
+}
+.st-popover .st-ind-block:last-of-type {
+  display: flex;
+  flex-direction: column;
+}
+.st-popover .st-ind-submit {
+  position: sticky;
+  bottom: -14px;
+}
+
+/* ==========================================================================
+   指标面板：列表 ↔ 参数 两段式（参考观潮「指标列表 → 独立设置窗」）
+   ========================================================================== */
+
+/* 设置页头部 */
+.st-ind-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.st-ind-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.st-ind-head b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.st-ind-head small {
+  color: var(--hint);
+  font-size: 11px;
+}
+.st-ind-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+}
+
+/* 参数行：标签在左、控件在右 */
+.st-ind-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.st-ind-row {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.st-ind-row > span:first-child {
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-ind-row > input,
+.st-ind-row select,
+.st-ind-pick input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.st-ind-row > input,
+.st-ind-pick input {
+  width: 100%;
+  min-width: 0;
+}
+.st-ind-pick {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.st-ind-pick select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.st-ind-pick input {
+  flex: 0 0 84px;
+}
+.st-ind-row .st-ind-place {
+  margin: 0;
+}
+
+/* 底部按钮：取消 / 添加 */
+.st-ind-foot {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 8px;
+  padding-top: 4px;
+}
+.st-ind-cancel {
+  height: 36px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hint);
+  font-size: 13px;
+}
+.st-ind-foot .st-ind-submit {
+  margin-top: 0;
+}
+
+/* 列表页：每条一行，比卡片网格更能承载 21 项 */
+.st-ind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 288px;
+  overflow-y: auto;
+}
+.st-ind-list > button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.st-ind-list > button:hover {
+  background: hsl(var(--muted));
+}
+.st-ind-list > button b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-ind-list > button b i {
+  margin-left: 4px;
+  color: var(--action);
+  font-style: normal;
+}
+.st-ind-list > button small {
+  color: var(--hint);
+  font-size: 10px;
+}
+.st-ind-list > button[aria-selected='true'] {
+  border-color: var(--edge);
+  background: hsl(var(--accent));
+}
+
+/* 设置页头部左对齐（此前被继承的样式推到右边） */
+.st-popover .st-ind-head {
+  justify-content: flex-start !important;
+  text-align: left !important;
+  width: 100%;
+}
+.st-popover .st-ind-head > div {
+  align-items: flex-start;
+  text-align: left;
+}
+
+/* 设置页头部用 grid 固定「返回键 + 标题」靠左，避免受父级对齐方式影响 */
+.st-popover .st-ind-head {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 修正：吸底按钮用的 flex 包裹把「可选指标」列表压塌了，恢复普通块布局 */
+.st-popover .st-ind-block:last-of-type {
+  display: block;
+}
+.st-ind-block {
+  display: block;
+}
+.st-ind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.st-ind-list > button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+}
+.st-popover .st-ind-submit {
+  position: static;
+}
+/* 列表区自带滚动，外层不再撑高 */
+.st-popover-body {
+  overflow-y: auto;
+}
+
+/* 显示位置：两个等大的描边按钮，仅选中态实心，避免「一个像按钮一个像文字」 */
+.st-ind-place {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+}
+.st-ind-place button {
+  height: 32px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 400;
+}
+.st-ind-place button:hover {
+  border-color: var(--action);
+  color: var(--ink);
+}
+.st-ind-place button[aria-pressed='true'],
+.st .st-ind-place button[aria-pressed='true'] {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+
+/* 显示位置：强制等分（grid 会被上下文影响，用 flex + flex:1 1 0 兜死） */
+.st-popover .st-ind-place,
+.st-ind-place {
+  display: flex !important;
+  align-items: stretch;
+  gap: 6px !important;
+  width: 100% !important;
+  padding: 0 !important;
+  border: 0 !important;
+  margin: 0 !important;
+  grid-template-columns: none !important;
+}
+.st-popover .st-ind-place > button,
+.st-ind-place > button {
+  flex: 1 1 0 !important;
+  width: 0 !important;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-popover .st-ind-place > button[aria-pressed='true'],
+.st-ind-place > button[aria-pressed='true'] {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   图表区 / 回测区 各自独立调高
+   - 图表区底部一条拖拽条，控制自己的高度（0 = 自适应吃满）
+   - 回测 dock 仍用自己的把手控制高度
+   - 两者相加超出窗口时，工作台整体纵向滚动，互不挤压
+   ========================================================================== */
+.st.st-workbench {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.st.st-workbench .st-stage.st-stage-fixed {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.st-stage {
+  position: relative;
+}
+.st-stage-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 7;
+}
+.st-stage-resize::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 46px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--edge);
+  transform: translateX(-50%);
+  transition: background 0.15s ease;
+}
+.st-stage-resize:hover::before,
+.st-stage-resize:active::before {
+  background: var(--action);
+}
+/* 图表区固定高度时，底部留出拖拽条的位置，避免盖住时间轴 */
+.st-stage.st-stage-fixed .st-chart {
+  padding-bottom: 8px;
+}
+/* 回测区可以拉得更高，但留出图表最小空间 */
+.st-dock {
+  max-height: 76vh;
+}
+
+/* 拖拽条占位：给图表区底部留 10px，避免压住时间轴刻度 */
+.st-workbench .st-stage {
+  padding-bottom: 10px;
+}
+.st-stage.st-stage-fixed .st-chart {
+  padding-bottom: 0;
+}
+
+/* ==========================================================================
+   单层滚动：整块占满视口，页面不滚；图表区不滚；副图按比例分享高度
+   （桌面应用惯例：VS Code 面板 / DevTools / TradingView 都是这个结构）
+   ========================================================================== */
+.st.st-workbench {
+  overflow: hidden;
+}
+.st-chart {
+  overflow: hidden;
+}
+/* 主图占 2 份，每个副图占 1 份，谁都不会被裁掉 */
+.st-chart > .st-plot-wrap {
+  flex: 2 1 0;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+.st-chart > .st-subplot,
+.st-chart > .st-pine-panes > .st-subplot {
+  flex: 1 1 0;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+}
+.st-chart > .st-pine-panes {
+  flex: 1 1 0;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.st-chart > .st-subplot > div,
+.st-chart > .st-pine-panes > .st-subplot > div {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 48px;
+  overflow: hidden;
+}
+/* 用户设过高度时允许被压缩（回测区变大时），但不会超出容器 */
+.st.st-workbench .st-stage.st-stage-fixed {
+  flex: 0 1 auto;
+  min-height: 240px;
+}
+/* 把手做得更像可拖拽的把手 */
+.st .st-dock-handle {
+  flex-basis: 26px;
+  height: 26px;
+  min-height: 26px;
+}
+.st-dock-handle::before {
+  width: 52px;
+  height: 4px;
+}
+.st-dock-handle:hover::before,
+.st-dock-handle:focus-visible::before {
+  width: 64px;
+}
+
+/* 回测面板把手条：中间拖拽把手 + 右侧一键展开/收起 */
+.st-dock-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  height: 26px;
+}
+.st .st-dock-bar .st-dock-handle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 26px;
+  min-height: 26px;
+}
+.st-dock-toggle {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  margin-left: auto;
+  margin-right: 10px;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: hsl(var(--card));
+  color: var(--hint);
+  cursor: pointer;
+}
+.st-dock-toggle:hover {
+  color: var(--ink);
+  border-color: var(--action);
+}
+
+/* 桌面端整页不滚动：容器吃掉视口高度，工作台填满剩余空间 */
+@media (min-width: 701px) {
+  .sc-studio-page {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto;
+  }
+  .sc-studio-page .st.st-workbench {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+  }
+}
+
+/* 桌面端：工作台固定成一层（贴住 App 头以下），整页不再产生滚动条 */
+@media (min-width: 701px) {
+  .sc-studio-page {
+    position: fixed !important;
+    top: 68px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 0 16px !important;
+    background: hsl(var(--background));
+  }
+  .sc-studio-page > header,
+  .sc-studio-page .sc-nav {
+    flex: 0 0 auto !important;
+  }
+  .sc-studio-page .st.st-workbench {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin-bottom: 8px;
+  }
+}
+
+/* 顶部偏移对齐 App 头高度（108px），避免标题被压住 */
+@media (min-width: 701px) {
+  .sc-studio-page {
+    top: 108px !important;
+  }
+}
+
+/* ==========================================================================
+   桌面端最终布局：内容向下生长，只有一个滚动容器
+   - 图表区、回测区各有自己的高度，谁变大就把下面的内容往下推
+   - 总高超过可视区时，只有 .sc-studio-page 这一条滑轨
+   ========================================================================== */
+@media (min-width: 701px) {
+  .sc-studio-page {
+    position: fixed !important;
+    top: 108px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    display: block !important;
+    height: auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 0 16px 16px !important;
+    background: hsl(var(--background));
+    scrollbar-width: thin;
+  }
+  /* 工作台不再压缩子项：按内容自然排布 */
+  .sc-studio-page .st.st-workbench {
+    display: flex !important;
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  /* 图表区默认高度（拖过之后被内联 height 覆盖） */
+  .sc-studio-page .st-workbench .st-stage,
+  .sc-studio-page .st-stage.st-stage-fixed {
+    flex: 0 0 auto !important;
+    height: 54vh;
+    min-height: 320px;
+  }
+  /* 回测区只按自己的高度占位，不抢图表空间 */
+  .sc-studio-page .st-dock {
+    flex: 0 0 auto !important;
+  }
+}
+
+/* 副图高度：每条副图顶部一个拖拽条，拖完记住；双击恢复自动比例 */
+.st-chart > .st-subplot,
+.st-chart > .st-pine-panes > .st-subplot {
+  position: relative;
+}
+.st-pane-resize {
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  z-index: 8;
+  cursor: row-resize;
+  touch-action: none;
+}
+.st-pane-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--edge);
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.st-subplot:hover > .st-pane-resize::after,
+.st-pane-resize:hover::after {
+  opacity: 1;
+  background: var(--action);
+}
+
+/* ==========================================================================
+   回测结果弹窗（与指标浮层同一套视觉语言）
+   ========================================================================== */
+.st-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.st-modal-mask {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgb(0 0 0 / 0.42);
+  cursor: default;
+}
+.st-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 94vw);
+  height: min(76vh, 760px);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: hsl(var(--card));
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.32);
+  overflow: hidden;
+}
+.st-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 44px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--edge);
+  font-size: 14px;
+}
+.st-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hint);
+  cursor: pointer;
+}
+.st-modal-close:hover {
+  background: hsl(var(--muted));
+  color: var(--ink);
+}
+.st-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+/* 弹窗里的回测面板铺满，隐藏它自己的拖拽把手 */
+.st-modal-body .st-dock {
+  flex: 1 1 auto;
+  height: 100% !important;
+  max-height: none;
+  border: 0;
+}
+.st-modal-body .st-dock-bar {
+  display: none;
+}
+
+/* 回测面板改为「从顶栏下方展开」，不再居中浮在屏幕中间 */
+.st-modal {
+  align-items: flex-start;
+  justify-content: center;
+  padding: 116px 16px 16px;
+}
+.st-modal-panel {
+  width: min(1240px, 96vw);
+  height: min(66vh, 720px);
+}
+
+/* 脚本工具条从底部移到顶栏下方（图表之上），状态栏仍在最底部 */
+@media (min-width: 701px) {
+  .st.st-workbench > .st-topbar {
+    order: 0;
+  }
+  .st.st-workbench > .st-scriptbar {
+    order: 1;
+    border-top: 0;
+    border-bottom: 1px solid var(--edge);
+  }
+  .st.st-workbench > .st-stage {
+    order: 2;
+  }
+  .st.st-workbench > .st-statusbar {
+    order: 3;
+  }
+}
+
+/* 十字光标提示框：改为跟随鼠标（内联 left/top），并加过渡防止抖动 */
+.st-tooltip {
+  top: auto;
+  left: auto;
+  transition: left 0.04s linear, top 0.04s linear;
+  will-change: left, top;
+}
+
+/* 回测弹窗：遮罩变浅（不要整片发黑）、宽度贴合内容（右半边不再空一片） */
+.st-modal {
+  padding: 96px 16px 24px;
+}
+.st-modal-mask {
+  background: rgb(0 0 0 / 0.26);
+}
+.st-modal-panel {
+  width: min(820px, 94vw);
+  height: min(72vh, 780px);
+  border-radius: 10px;
+}
+/* 内部内容铺满弹窗宽度，滚动条贴右边 */
+.st-modal-body .st-dock,
+.st-modal-body .st-dock-body,
+.st-modal-body .st-dock-tabs,
+.st-modal-body .st-dock-report-head {
+  width: 100%;
+  max-width: 100%;
+}
+.st-modal-body .st-dock-body {
+  padding: 8px 16px 14px;
+}
+.st-modal-body .st-dock-body > * {
+  max-width: 100%;
+}
+/* 细滚动条，别用浏览器默认的粗条 */
+.st-modal-body .st-dock-body::-webkit-scrollbar {
+  width: 8px;
+}
+.st-modal-body .st-dock-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--edge);
+}
+
+/* 回测弹窗：顶部 KPI 卡 + tab 分段控件 + 铺满宽度的内容 */
+.st-modal-body {
+  flex-direction: column;
+}
+.st-report-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 12px 16px 4px;
+}
+.st-report-kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: hsl(var(--muted));
+}
+.st-report-kpi-card span {
+  color: var(--hint);
+  font-size: 11px;
+}
+.st-report-kpi-card b {
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+/* 弹窗里的 dock 不再有自己的头部高度 */
+.st-modal-body .st-dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.st-modal-body .st-dock-tabs {
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 6px 16px 0;
+  border-bottom: 1px solid var(--edge);
+}
+.st-modal-body .st-dock-tabs button {
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--hint);
+  font-size: 12px;
+}
+.st-modal-body .st-dock-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--action);
+  color: var(--ink);
+  font-weight: 600;
+}
+@media (max-width: 900px) {
+  .st-report-kpi {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 遮罩：锁死 hover/active/focus 状态，避免被全局 button:hover 改色导致「移出去整片变黑」 */
+.st-modal-mask,
+.st-modal-mask:hover,
+.st-modal-mask:focus,
+.st-modal-mask:focus-visible,
+.st-modal-mask:active {
+  background: rgb(0 0 0 / 0.26) !important;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  cursor: default;
+}
+/* 面板内部不受影响 */
+.st-modal-panel:hover {
+  background: hsl(var(--card));
+}
+
+/* ---- 手机端精简：少几行、图表更大 ---- */
+@media (max-width: 700px) {
+  /* 标题+两个按钮在手机上占 90px，且底部导航已有入口；直接收起 */
+  .sc-studio-page > header {
+    display: none !important;
+  }
+  /* 图例行在手机上只剩「指标/缩放」，入口已移到顶栏；且 Pine 模板没有快慢线会显示「—」 */
+  .stm .st-legend {
+    display: none !important;
+  }
+  /* 顶栏与读数更紧凑 */
+  .stm-top {
+    flex-basis: 38px;
+    height: 38px;
+  }
+  .stm .st-read {
+    padding: 2px 8px;
+    font-size: 11px;
+    gap: 8px;
+  }
+  /* 副图在手机上默认矮一点，主图更大 */
+  .stm .st-chart > .st-subplot {
+    flex: 0 0 64px;
+  }
+}
+
+/* ---- 观潮式编辑器状态栏 / 行号错误标记 ---- */
+.st-editor-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 6px;
+  font-size: 11px;
+  color: var(--hint);
+}
+.st-editor-status > span[data-dirty='true'] {
+  color: #d97706;
+  font-weight: 600;
+}
+.st-editor-status > span[data-error='true'] {
+  color: #dc2626;
+  font-weight: 600;
+}
+.st-gutter > span {
+  display: block;
+  line-height: inherit;
+}
+.st-gutter > span.is-error {
+  color: #dc2626;
+  font-weight: 600;
+  background: rgb(220 38 38 / 0.12);
+  border-radius: 2px;
+}

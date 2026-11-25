@@ -1,67 +1,24 @@
-// PanWatch Service Worker
-const CACHE_NAME = 'panwatch-v2';
-
-// 需要缓存的静态资源
-const STATIC_ASSETS = [
-  '/',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-];
-
-// 安装时缓存静态资源
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
-  // 立即激活
+// PanWatch Service Worker —— 自毁版
+//
+// 这个应用是本地部署的实时行情/回测工具，离线缓存收益很小，却会在频繁发版后
+// 让旧页面继续请求已被删除的 hash chunk，导致「页面加载失败」。
+// 所以这里主动注销自己并清空所有缓存，之后不再注册新的 Service Worker。
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
-// 激活时清理旧缓存
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    (async () => {
+      const names = await caches.keys();
+      await Promise.all(names.map((name) => caches.delete(name)));
+      await self.registration.unregister();
+      const clients = await self.clients.matchAll({ type: 'window' });
+      clients.forEach((client) => client.postMessage({ type: 'PANWATCH_SW_REMOVED' }));
+    })(),
   );
-  // 立即接管所有客户端
-  self.clients.claim();
 });
 
-// 网络优先策略（适合实时数据应用）
-self.addEventListener('fetch', (event) => {
-  // 只处理同源请求
-  if (!event.request.url.startsWith(self.location.origin)) {
-    return;
-  }
-
-  // API 请求不缓存，直接走网络
-  if (event.request.url.includes('/api/')) {
-    return;
-  }
-
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // 成功获取网络响应，更新缓存
-        if (response.ok) {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
-        }
-        return response;
-      })
-      .catch(() => {
-        // 网络失败，尝试从缓存获取
-        return caches.match(event.request);
-      })
-  );
+self.addEventListener('fetch', () => {
+  // 不做任何拦截，全部走网络
 });

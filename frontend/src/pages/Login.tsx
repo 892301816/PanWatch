@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { TrendingUp, Lock, Eye, EyeOff, User } from 'lucide-react'
 import { authApi } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -9,6 +9,7 @@ import { useToast } from '@panwatch/base-ui/components/ui/toast'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { toast } = useToast()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -54,7 +55,10 @@ export default function LoginPage() {
       localStorage.setItem('token_expires', data.expires_at)
 
       toast(isSetup ? '密码设置成功' : '登录成功', 'success')
-      navigate('/')
+      const from = location.state?.from
+      navigate(from?.pathname === '/opportunities'
+        ? { pathname: '/opportunities', search: from.search || '' }
+        : '/', { replace: true })
     } catch (e) {
       toast(e instanceof Error ? e.message : '操作失败', 'error')
     } finally {

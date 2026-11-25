@@ -36,6 +36,11 @@ export class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, Route
         <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-destructive/20 bg-card/30 px-6 text-center">
           <p className="text-sm font-medium text-foreground">页面加载失败</p>
           <p className="max-w-md text-xs text-muted-foreground">请重试；如果问题持续存在，可能是浏览器缓存了旧版本页面。</p>
+          {this.state.error?.message && (
+            <pre className="max-w-full overflow-x-auto rounded-lg bg-muted px-3 py-2 text-left text-[11px] leading-relaxed text-muted-foreground">
+              {this.state.error.message}
+            </pre>
+          )}
           <button
             type="button"
             className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"

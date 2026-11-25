@@ -46,7 +46,14 @@ export function templateSignalDescription(config: StrategyConfig | undefined, di
 export function strategySummary(draft: Pick<StrategyDraftInput, 'buy' | 'sell' | 'avoid' | 'config'>, fields: StrategyField[], presets: StrategyPreset[]) {
   const preset = presets.find(p => p.id === draft.config?.template_id)
   const describe = (direction: 'buy' | 'sell' | 'avoid') => {
-    const enriched = fields.map(f => preset && (f.key === 'template_entry' || f.key === 'template_exit') ? { ...f, label: `${preset.name} · ${templateSignalDescription(draft.config, f.key === 'template_entry' ? 'buy' : 'sell')}` } : f)
+    // 模板信号用真实描述替换「所选模板入场信号 = 是」这种没有信息量的文案
+    const enriched = fields.map(f => {
+      if (f.key !== 'template_entry' && f.key !== 'template_exit') return f
+      const dir = f.key === 'template_entry' ? 'buy' : 'sell'
+      const desc = families[draft.config?.template_id || '']?.[dir === 'buy' ? 1 : 2]
+      if (!desc) return f
+      return { ...f, label: preset ? `${preset.name} · ${desc}` : desc }
+    })
     return rulesText(draft[direction], enriched, direction === 'buy' ? '尚未设置买入条件' : direction === 'sell' ? '未设置技术卖出条件' : '无额外禁买条件', direction === 'buy' ? ' 且 ' : ' 或 ')
   }
   return { buy: describe('buy'), sell: describe('sell'), avoid: describe('avoid') }
