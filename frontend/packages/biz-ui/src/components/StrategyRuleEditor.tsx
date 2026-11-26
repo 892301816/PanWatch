@@ -81,8 +81,8 @@ function TemplateConditionRows({ template, value, onChange }: {
   const params = value.config?.params || {}
   const set = (key: string, next: unknown) => onChange({ ...value, config: { ...value.config, params: { ...params, [key]: next } } })
   const switchStyle = (on: boolean): React.CSSProperties => ({
-    position: 'relative', width: 36, height: 20, borderRadius: 999, border: '1px solid ' + (on ? 'var(--primary, #5b5ef4)' : 'var(--border, #d4d4d8)'),
-    background: on ? 'var(--primary, #5b5ef4)' : 'var(--muted, #e5e7eb)', cursor: 'pointer', flex: '0 0 auto', padding: 0,
+    position: 'relative', width: 36, height: 20, borderRadius: 999, border: '1px solid ' + (on ? 'hsl(var(--primary))' : 'hsl(var(--border))'),
+    background: on ? 'hsl(var(--primary))' : 'hsl(var(--muted))', cursor: 'pointer', flex: '0 0 auto', padding: 0,
   })
   const knobStyle = (on: boolean): React.CSSProperties => ({
     position: 'absolute', top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: '50%',
@@ -101,16 +101,16 @@ function TemplateConditionRows({ template, value, onChange }: {
             : <span style={{ width: 36, flex: '0 0 auto' }} />}
           <span style={{ flex: '1 1 auto', minWidth: 0, fontSize: 13 }}>{row.label}</span>
           {row.control === 'number' ? <>
-            <span style={{ flex: '0 0 auto', fontSize: 12, color: 'var(--muted-foreground, #71717a)' }}>{row.op || '≥'}</span>
+            <span style={{ flex: '0 0 auto', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>{row.op || '≥'}</span>
             <input
               aria-label={row.label}
               type="number"
               disabled={!gateOn}
-              style={{ width: 88, height: 30, flex: '0 0 auto', textAlign: 'center', borderRadius: 8, border: '1px solid var(--border, #d4d4d8)', background: 'var(--background, #fff)', fontSize: 13 }}
+              style={{ width: 88, height: 30, flex: '0 0 auto', textAlign: 'center', borderRadius: 8, border: '1px solid hsl(var(--border))', background: 'hsl(var(--background))', color: 'hsl(var(--foreground))', fontSize: 13 }}
               value={String(raw)}
               onChange={e => { const next = Number(e.target.value); if (Number.isFinite(next)) set(row.key, next) }}
             />
-            <span style={{ width: 40, flex: '0 0 auto', fontSize: 11, color: 'var(--muted-foreground, #71717a)' }}>{row.unit || ''}</span>
+            <span style={{ width: 40, flex: '0 0 auto', fontSize: 11, color: 'hsl(var(--muted-foreground))' }}>{row.unit || ''}</span>
           </> : null}
         </div>
       })}
