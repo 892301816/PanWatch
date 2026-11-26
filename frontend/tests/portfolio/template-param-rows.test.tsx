@@ -38,14 +38,16 @@ describe('模板条件行', () => {
         presets={[preset]}
       />,
     )
-    const number = screen.getByLabelText('新低回看天数') as HTMLInputElement
+    const numbers = screen.getAllByLabelText('新低回看天数') as HTMLInputElement[]
+    const number = numbers.find(n => n.type === 'number') as HTMLInputElement
     expect(number).toBeTruthy()
     expect(number.type).toBe('number')
     expect(number.value).toBe('20')
     expect(number.disabled).toBe(false)
     expect(number.style.width).toBe('88px')
     expect(number.style.border).toContain('hsl(var(--border))')
-    const toggle = screen.getByLabelText('要求收盘价在 MA60 上方') as HTMLInputElement
+    const toggles = screen.getAllByLabelText('要求收盘价在 MA60 上方') as HTMLInputElement[]
+    const toggle = toggles.find(n => n.type === 'checkbox') as HTMLInputElement
     expect(toggle.type).toBe('checkbox')
   })
 })
