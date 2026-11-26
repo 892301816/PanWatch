@@ -142,6 +142,20 @@ export interface StrategyDecisionCheck {
 export interface StrategyPreset {
   config?: StrategyConfig
   params?: Array<{id:string;label:string;type:string;default:number|boolean;min?:number;max?:number}>
+  /** 后端归一后的统一条件行：开关 + 字段 + 比较符 + 数值 + 单位 */
+  paramRows?: Array<{
+    key: string
+    gate?: string | null
+    label: string
+    control: 'toggle' | 'number'
+    op?: string
+    unit?: string
+    default?: number | boolean
+    min?: number
+    max?: number
+    step?: number
+    hint?: string
+  }>
   source?: string
   id: string
   name: string

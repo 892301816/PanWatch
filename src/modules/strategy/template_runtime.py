@@ -75,8 +75,109 @@ def normalize_config(config):
     if clean:out['execution']=clean
     return out
 
+_GATE_PREFIX = ('use_', 'enable_', 'require_', 'is_')
+
+_UNIT_RULES = (
+    ('_pct', '%'), ('pct', '%'), ('gap', '%'), ('range', '%'), ('turnover', '%'),
+    ('days', '天'), ('window', '天'), ('period', '天'),
+    ('vol_ratio', '倍'), ('ratio', '倍'), ('count', '次'), ('boards', '次'), ('limit_up', '次'),
+    ('price', '元'), ('amount', '元'),
+)
+
+
+def _unit_of(pid: str, label: str = '') -> str:
+    # 标签里带单位符号时优先采用（'涨停次数' -> 次，'涨幅%' -> %）
+    if '次' in label:
+        return '次'
+    if '%' in label:
+        return '%'
+    if '天' in label:
+        return '天'
+    low = pid.lower()
+    for token, unit in _UNIT_RULES:
+        if token in low:
+            return unit
+    return ''
+
+
+def _op_of(pid: str) -> str:
+    low = pid.lower()
+    if low.startswith('min_') or low.startswith('least_'):
+        return '≥'
+    if low.startswith('max_') or low.endswith('_max'):
+        return '≤'
+    if 'above' in low or 'at_least' in low:
+        return '≥'
+    return '≥'
+
+
+def param_rows(spec: dict) -> list[dict]:
+    """把模板参数声明归一成统一的条件行。
+
+    规则：
+    - `use_/enable_/require_/is_*` 且默认值为布尔 -> 视为"开关"；
+      若紧跟一个非布尔参数，则两者合并成一行（开关控制这行是否生效）。
+    - 其余数值参数 -> 一行"字段 ≥/≤ 数值 单位"，比较符由 id 前缀推断。
+    - 所有模板共用同一套行结构，前端只需要一种渲染。
+    """
+    params = spec.get('params') or []
+    rows: list[dict] = []
+    index = 0
+    while index < len(params):
+        param = params[index]
+        pid = str(param.get('id', ''))
+        default = param.get('default')
+        is_bool = isinstance(default, bool)
+        is_gate = is_bool and pid.lower().startswith(_GATE_PREFIX)
+        if is_gate:
+            nxt = params[index + 1] if index + 1 < len(params) else None
+            paired = nxt is not None and not isinstance(nxt.get('default'), bool)
+            if paired:
+                qkey = str(nxt.get('id', ''))
+                rows.append({
+                    'key': qkey,
+                    'gate': pid,
+                    'label': nxt.get('label') or qkey,
+                    'control': 'number',
+                    'op': _op_of(qkey),
+                    'unit': _unit_of(qkey, str(nxt.get('label') or '')),
+                    'default': nxt.get('default'),
+                    'min': nxt.get('min'),
+                    'max': nxt.get('max'),
+                    'step': nxt.get('step'),
+                    'hint': param.get('label') or '',
+                })
+                index += 2
+                continue
+        if is_bool:
+            rows.append({
+                'key': pid,
+                'label': param.get('label') or pid,
+                'control': 'toggle',
+                'op': '',
+                'unit': '',
+                'default': default,
+                'hint': '',
+            })
+        else:
+            rows.append({
+                'key': pid,
+                'label': param.get('label') or pid,
+                'control': 'number',
+                'op': _op_of(pid),
+                'unit': _unit_of(pid, str(param.get('label') or '')),
+                'default': default,
+                'min': param.get('min'),
+                'max': param.get('max'),
+                'step': param.get('step'),
+                'hint': '',
+            })
+        index += 1
+    return rows
+
+
 def presets():
-    return [{**s,'note':s.get('description',''),'buy':[{'field':'template_entry','op':'eq','value':1}], 'sell':[{'field':'template_exit','op':'eq','value':1}], 'avoid':[], 'config':{'template_id':s['id'],'params':{p['id']:p['default'] for p in s.get('params',[])},'execution':{'stop_loss_pct':(s.get('stop_loss') or -.06)*100,'max_hold_days':s.get('max_hold_days') or 20},'scoring':s.get('scoring') or ({'momentum_20d':1} if s['id']=='factor_rank_research' else {}),'directions':{}},'source':'tick-stock-panel','formula_version':CATALOG['version']} for s in TEMPLATES.values()]
+    return [{**s,'note':s.get('description',''),'paramRows':param_rows(s),'buy':[{'field':'template_entry','op':'eq','value':1}], 'sell':[{'field':'template_exit','op':'eq','value':1}], 'avoid':[], 'config':{'template_id':s['id'],'params':{p['id']:p['default'] for p in s.get('params',[])},'execution':{'stop_loss_pct':(s.get('stop_loss') or -.06)*100,'max_hold_days':s.get('max_hold_days') or 20},'scoring':s.get('scoring') or ({'momentum_20d':1} if s['id']=='factor_rank_research' else {}),'directions':{}},'source':'tick-stock-panel','formula_version':CATALOG['version']} for s in TEMPLATES.values()]
 
 def execute(histories,config):
     config=normalize_config(config)
