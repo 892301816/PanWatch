@@ -70,6 +70,8 @@ type Props = {
   onOpenLibrary?: (symbol: string, market: string) => void
   /** 打开工作台时直接弹出脚本编辑器（Pine 主线：从策略列表进来） */
   autoEdit?: boolean
+  /** 调用方显式指定：本条策略按脚本打开（不再做类型推断） */
+  forceScript?: boolean
 }
 /**
  * 工作台只走 Pine：模板内置的都是 Pine 策略脚本，
@@ -134,13 +136,16 @@ function scriptOnly(
     rows[0].value === 1 &&
     !rows[0].offset &&
     (!rows[0].consecutive || rows[0].consecutive === 1)
-  return (
-    !!item?.config?.chart_script &&
-    !item.questions?.length &&
-    !item.avoid.length &&
-    matches(item.buy, 'template_entry') &&
-    matches(item.sell, 'template_exit')
-  )
+  // 脚本策略以 config.mode 为准；老数据（只有合成 template_entry/exit 行）仍按脚本处理
+  const config = item?.config as { mode?: string; chart_script?: string; legacy_script?: string } | undefined
+  const hasScript = !!(config?.chart_script || config?.legacy_script)
+  if (!hasScript || item?.questions?.length) return false
+  const realBuy = (item?.buy || []).filter(row => row.field !== 'template_entry')
+  const realSell = (item?.sell || []).filter(row => row.field !== 'template_exit')
+  if (realBuy.length || realSell.length || (item?.avoid?.length || 0) > 0) return false
+  if (config?.mode === 'script') return true
+  if (config?.mode === 'conditions') return true   // 只剩合成行：仍是脚本策略
+  return matches(item!.buy, 'template_entry') || matches(item!.sell, 'template_exit')
 }
 function snapshot(result: BacktestResult): History {
   const rules = result.rules_snapshot as
@@ -165,6 +170,7 @@ export default function StrategyStudio({
   onRules,
   onOpenLibrary,
   autoEdit = false,
+  forceScript = false,
 }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     scriptOnly(selected)
@@ -175,8 +181,26 @@ export default function StrategyStudio({
         }
       : savedDraft(),
   )
+  // 支持从列表直接进入脚本编辑（?script=1），绕开类型推断
+  const urlMode = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mode') : null
+  const forceScriptFromQuery = urlMode === 'script' || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('script') === '1')
+  const forceConditions = urlMode === 'conditions'
+  // selected 是异步到达的：到了再校正一次，脚本策略一律回到脚本模式（不依赖首帧）
+  useEffect(() => {
+    const cfg = selected?.config as { chart_script?: string; legacy_script?: string } | undefined
+    if (cfg?.chart_script || cfg?.legacy_script) setStructured(undefined)
+  }, [selected?.id])
+  // 打开过一次就把 edit/script 从地址栏去掉，刷新时不应再次弹窗
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('edit') !== '1' && !params.has('script')) return
+    params.delete('edit')
+    params.delete('script')
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
+  }, [])
   const [structured, setStructured] = useState<StrategyLibraryItem | undefined>(
-    scriptOnly(selected) ? undefined : selected,
+    forceConditions ? selected : (scriptOnly(selected) || forceScript || forceScriptFromQuery ? undefined : selected),
   )
   const [applied, setApplied] = useState<Draft>(() => {
     if (scriptOnly(selected)) return draft
@@ -264,6 +288,18 @@ export default function StrategyStudio({
   })
   // —— TideView 布局新增状态：只影响工作台外观，不改变原有数据流 ——
   const [editorOpen, setEditorOpen] = useState(false)
+  // 关闭脚本编辑器：若从「我的策略」进来，则返回并重新打开弹窗
+  const editorWasOpen = useRef(false)
+  useEffect(() => {
+    if (editorOpen) { editorWasOpen.current = true; return }
+    if (!editorWasOpen.current || typeof window === 'undefined') return
+    if (sessionStorage.getItem('pw:returnToLibrary') !== '1') return
+    sessionStorage.removeItem('pw:returnToLibrary')
+    const params = new URLSearchParams(window.location.search)
+    params.set('view', 'my')
+    params.set('library', '1')
+    window.location.href = `${window.location.pathname}?${params.toString()}`
+  }, [editorOpen])
   useEffect(() => {
     if (autoEdit && !structured) setEditorOpen(true)
   }, [autoEdit, structured])
@@ -1238,6 +1274,25 @@ export default function StrategyStudio({
         favorite={favorite}
         onReport={() => setReportOpen(true)}
         reportState={dockState}
+        strategies={items.map(item => ({
+          id: item.id,
+          name: item.name,
+          kind: ((item.config as { chart_script?: string; legacy_script?: string } | undefined)?.chart_script
+            || (item.config as { chart_script?: string; legacy_script?: string } | undefined)?.legacy_script)
+            ? 'script' as const : 'conditions' as const,
+        }))}
+        strategyValue={selected?.id}
+        onStrategyChange={(id) => {
+          const item = items.find(row => row.id === id)
+          if (!item) return
+          const cfg = item.config as { chart_script?: string; legacy_script?: string } | undefined
+          const kind = cfg?.chart_script || cfg?.legacy_script ? 'script' : 'conditions'
+          const params = new URLSearchParams(window.location.search)
+          params.set('view', 'studio')
+          params.set('strategy', String(id))
+          params.set('mode', kind)
+          window.location.href = `${window.location.pathname}?${params.toString()}`
+        }}
         canBacktest={plainStock && compatible}
         backtestHint={
           !plainStock

@@ -11,6 +11,12 @@ export interface StrategyCondition {
 }
 
 export interface StrategyConfig {
+  /** 策略类型：conditions=条件为唯一真相；script=脚本为唯一真相 */
+  mode?: 'conditions' | 'script'
+  /** 被条件模式取代的遗留脚本（留档，不参与信号与画线） */
+  legacy_script?: string
+  /** 模板来源标识（仅用于界面识别，不参与回测执行） */
+  template_ref?: string | null
   chart_script?: string
   template_id?: string
   params?: Record<string, unknown>

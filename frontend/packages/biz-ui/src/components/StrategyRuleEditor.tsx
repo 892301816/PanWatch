@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { StrategyDraftInput, StrategyField, StrategyPreset } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { ConditionEditor, ConditionValueInput } from './strategy-rules'
-import { templateSignalDescription, templateCaveat } from './strategy-description'
+import { conditionsToPine } from '../../../../src/lib/conditions-to-pine'
 
 export function validateRuleDraft(value: StrategyDraftInput, fields: StrategyField[]): string[] {
   const errors: string[] = []
@@ -40,34 +40,85 @@ export default function StrategyRuleEditor({ value, onChange, fields, presets, b
   onAiDraft?: (text: string) => Promise<void>
 }) {
   const [idea, setIdea] = useState('')
+  const [pineOpen, setPine] = useState<{ code: string; unsupported: string[] } | null>(null)
   const [ideaOpen, setIdeaOpen] = useState(initialMode === 'idea')
-  const template=presets.find(p=>p.id===value.config?.template_id)
+  const template=presets.find(p=>p.id===(value.config?.template_ref || value.config?.template_id))
+  // 旧草稿迁移：合成模板行（template_entry/exit）替换成模板的真实条件行
+  useEffect(() => {
+    if (!template) return
+    const hasEntry = value.buy.some(r => r.field === 'template_entry')
+    const hasExit = value.sell.some(r => r.field === 'template_exit')
+    if (!hasEntry && !hasExit) return
+    const buy = [...value.buy.filter(r => r.field !== 'template_entry'), ...(hasEntry ? (template.buy || []) : [])]
+    const sell = [...value.sell.filter(r => r.field !== 'template_exit'), ...(hasExit ? (template.sell || []) : [])]
+    onChange({ ...value, buy, sell })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template?.id])
   const updateConfig=(patch:Partial<NonNullable<StrategyDraftInput['config']>>)=>onChange({...value,config:{...value.config,...patch}})
-  return <fieldset disabled={busy} className="min-w-0 space-y-5">
+  return <fieldset disabled={busy} className="min-w-0 space-y-5" data-guided={guided ? 'true' : undefined}>
     <div className="grid gap-4 sm:grid-cols-2">
       <label className="space-y-1.5 text-sm"><span className="block font-medium">草稿名称</span><input aria-label="草稿名称" className="w-full rounded-lg border border-border bg-background px-3 py-2" value={value.name} onChange={e => onChange({ ...value, name: e.target.value })} placeholder="例如：缩量回踩，不追高" /></label>
       <label className="space-y-1.5 text-sm"><span className="block font-medium">从模板开始</span><select aria-label="载入策略模板" className="w-full rounded-lg border border-border bg-background px-3 py-2" value="" onChange={e => { const preset = presets.find(p => p.id === e.target.value); if (preset) onChange({ ...value, name: preset.name, buy: preset.buy, sell: preset.sell, avoid: preset.avoid, note: preset.note, config:preset.config||{}, questions: [] }) }}><option value="">选择模板，仅修改草稿</option>{presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
     </div>
-    {onAiDraft && <details open={ideaOpen} onToggle={e=>setIdeaOpen(e.currentTarget.open)} className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">让 AI 把我的想法写成规则</summary><p className="mt-3 text-sm leading-6 text-muted-foreground">描述想买、想卖和绝不买的情形。AI 只生成待确认草稿，不会改变正在使用的策略。</p><label className="mt-3 block"><span className="sr-only">策略想法</span><textarea className="min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" aria-label="策略想法" value={idea} onChange={e => setIdea(e.target.value)} placeholder="例如：缩量回踩20日线时考虑买入；放量高开低走且没有修复时不追。" /></label><Button type="button" variant="secondary" className="mt-2" disabled={!idea.trim() || busy} onClick={() => void onAiDraft(idea.trim())}>{busy ? '正在生成…' : '生成规则草稿'}</Button></details>}
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border p-3">
+      <span className="text-sm font-medium">策略类型</span>
+      <div className="flex overflow-hidden rounded-lg border border-border">
+        {(['conditions', 'script'] as const).map(mode => {
+          const active = (value.config?.mode || 'conditions') === mode
+          return <button key={mode} type="button"
+            aria-pressed={active}
+            className={'px-3 py-1.5 text-xs ' + (active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground')}
+            onClick={() => updateConfig({ mode })}>{mode === 'conditions' ? '条件' : '脚本'}</button>
+        })}
+      </div>
+      <span className="text-xs text-muted-foreground">
+        {(value.config?.mode || 'conditions') === 'conditions'
+          ? '条件为唯一真相：图表买卖点与回测都按条件计算'
+          : '脚本为唯一真相：条件不参与图表与回测，结果与条件口径不可比'}
+      </span>
+    </div>
+    {(value.config?.mode || 'conditions') === 'script' && (
+      <p className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+        当前是脚本模式：下面编辑的条件不会生效。切回「条件」后条件才会驱动图表与回测。
+      </p>
+    )}        {onAiDraft && <details open={ideaOpen} onToggle={e=>setIdeaOpen(e.currentTarget.open)} className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">让 AI 把我的想法写成规则</summary><p className="mt-3 text-sm leading-6 text-muted-foreground">描述想买、想卖和绝不买的情形。AI 只生成待确认草稿，不会改变正在使用的策略。</p><label className="mt-3 block"><span className="sr-only">策略想法</span><textarea className="min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" aria-label="策略想法" value={idea} onChange={e => setIdea(e.target.value)} placeholder="例如：缩量回踩20日线时考虑买入；放量高开低走且没有修复时不追。" /></label><Button type="button" variant="secondary" className="mt-2" disabled={!idea.trim() || busy} onClick={() => void onAiDraft(idea.trim())}>{busy ? '正在生成…' : '生成规则草稿'}</Button></details>}
     {!!value.questions?.length && <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm" role="alert"><p className="font-medium">这些想法还不能直接执行</p><ul className="mt-2 list-disc space-y-1 pl-5">{value.questions.map((question, index) => <li key={index}>{question}</li>)}</ul><p className="mt-3 text-muted-foreground">请补充或调整下面的规则。清除问题不代表 AI 判断正确，应用前仍需核对。</p><Button type="button" size="sm" variant="secondary" className="mt-3" onClick={() => onChange({ ...value, questions: [] })}>已核对并完善规则，清除待确认项</Button></div>}
-    {template&&<><TemplateConditionRows template={template} value={value} onChange={onChange} /><section aria-label="模板信号" className="rounded-xl border border-border p-4"><h3 className="font-medium">模板信号（只读）</h3><div className="my-2 text-sm leading-7 text-muted-foreground"><p>入场：{templateSignalDescription(value.config, 'buy')}</p><p>退出：{templateSignalDescription(value.config, 'sell')}</p><p>{templateCaveat(template.id)}</p></div><p className="text-xs text-muted-foreground">这段由模板定义，不能在这里改写；要改逻辑请用「脚本编辑」。</p></section></>}
+        <ConditionEditor title="买入条件（全部满足才入场）" emptyHint="不设置买入条件：不产生买入信号。" value={value.buy} onChange={buy => onChange({ ...value, buy })} fields={fields} footer={template && (template.paramRows?.length || 0) > 0 ? <div className="mt-3"><p className="mb-2 text-xs font-medium text-muted-foreground">算法窗口（高级）</p><TemplateConditionRows bare template={template} value={value} onChange={onChange} /><p className="mt-2 text-xs leading-6 text-muted-foreground">这些不是条件，是计算派生字段用的窗口（例如「创N日新低」按多少天判断）。</p></div> : null} />
+    <ConditionEditor title="卖出条件（任一满足即退出）" emptyHint="不设置卖出条件：不会根据策略主动退出，期末持仓继续计价。" value={value.sell} onChange={sell => onChange({ ...value, sell })} fields={fields} />
+        <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" variant="ghost" onClick={() => setPine(conditionsToPine(value.buy, value.sell, value.avoid, value.name || '条件策略'))}>生成 Pine 脚本</Button>
+      <span className="text-xs text-muted-foreground">条件、脚本二选一；生成后可在脚本编辑器里继续改</span>
+    </div>
+    {pineOpen && (
+      <div className="rounded-xl border border-border p-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="font-medium">生成的 Pine 脚本</h3>
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(pineOpen.code)}>复制</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPine(null)}>关闭</Button>
+          </div>
+        </div>
+        <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 text-xs leading-relaxed">{pineOpen.code}</pre>
+        {!!pineOpen.unsupported.length && (
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+            以下字段无法用 Pine 等价表达，已写成注释：{pineOpen.unsupported.join('、')}
+          </p>
+        )}
+      </div>
+    )}    <ConditionEditor title="禁买条件（任一命中就不买）" emptyHint="不设置禁买条件：不附加禁买限制。" value={value.avoid} onChange={avoid => onChange({ ...value, avoid })} fields={fields} />
     {template&&<details className="rounded-xl border border-border p-4"><summary className="cursor-pointer font-medium">候选评分与排名</summary><p className="my-3 text-xs text-muted-foreground">用于机会排序和组合选股。按同日股票池做最小最大归一化，权重归一后加总；方向由你指定。单股信号检查不冒充全市场排名。</p>{Object.entries(value.config?.scoring||template.config?.scoring||{}).map(([id,w])=><div key={id} className="mb-3 flex flex-wrap items-center gap-3"><span className="text-sm">{fields.find(f=>f.source_id===id||f.key===`tf_${id}`)?.label||id}</span><ConditionValueInput label={`${id}评分权重`} op="eq" value={w} onChange={n=>updateConfig({scoring:{...value.config?.scoring,[id]:n as number}})}/><select aria-label={`${id}评分方向`} className="min-h-10 rounded border bg-card px-3" value={value.config?.directions?.[id]||'high'} onChange={e=>updateConfig({directions:{...value.config?.directions,[id]:e.target.value as 'high'|'low'}})}><option value="high">越高越优先</option><option value="low">越低越优先</option></select><button type="button" onClick={()=>{const scoring={...value.config?.scoring},directions={...value.config?.directions};delete scoring[id];delete directions[id];updateConfig({scoring,directions})}}>移除</button></div>)}<select aria-label="添加评分因子" value="" className="min-h-10 max-w-full rounded border bg-card px-3" onChange={e=>{if(e.target.value)updateConfig({scoring:{...value.config?.scoring,[e.target.value]:1}})}}><option value="">添加评分因子（最多4个）</option>{fields.filter(f=>f.source_id||f.key.startsWith('tf_')).map(f=><option key={f.key} value={f.source_id||f.key.slice(3)}>{f.label}</option>)}</select></details>}
     <section aria-label="风险与执行" className="rounded-xl border border-border p-4"><h3 className="font-medium">风险与执行</h3><p className="my-2 text-xs text-muted-foreground">按策略建仓成本及交易日计算。日线风险在收盘确认，下一交易日开盘尝试退出，可能跳空且受涨跌停限制。留空关闭对应规则。</p><div className="grid gap-3 sm:grid-cols-3">{([['stop_loss_pct','止损幅度','%'],['take_profit_pct','止盈幅度','%'],['max_hold_days','最长持有',' 个交易日']] as const).map(([key,label,unit])=><label key={key} className="space-y-1 rounded-lg border border-border px-3 py-2"><span className="block text-xs text-muted-foreground">{label}{unit}</span><ConditionValueInput label={label} value={value.config?.execution?.[key]??''} op="eq" onChange={n=>{const execution={...value.config?.execution};if(n==='')delete execution[key];else execution[key]=n as number;updateConfig({execution})}}/></label>)}</div></section>
-    {template && <TemplateConditionRows template={template} value={value} onChange={onChange} />}
-    <p className="text-xs leading-6 text-muted-foreground">{template ? "模板信号是「买入条件」里的一行（字段：模板入场信号）。删掉这行就不再使用模板信号，可以换成你自己的任意条件；三组条件都是同一套增删改操作，和普通策略没有区别。" : (guided ? "三组条件都可以增删改：买入全部满足才入场，卖出任一满足即退出，禁买任一命中就不买。" : "条件支持增删改；保存草稿后需要重新验证。")}</p>
-    <ConditionEditor title="买入条件（全部满足才入场）" emptyHint="不设置买入条件：不产生买入信号。" value={value.buy} onChange={buy => onChange({ ...value, buy })} fields={fields} />
-    <ConditionEditor title="卖出条件（任一满足即退出）" emptyHint="不设置卖出条件：不会根据策略主动退出，期末持仓继续计价。" value={value.sell} onChange={sell => onChange({ ...value, sell })} fields={fields} />
-    <ConditionEditor title="禁买条件（任一命中就不买）" emptyHint="不设置禁买条件：不附加禁买限制。" value={value.avoid} onChange={avoid => onChange({ ...value, avoid })} fields={fields} />
     <label className="block space-y-1.5 text-sm"><span className="block font-medium">策略说明</span><textarea aria-label="策略说明" rows={2} className="w-full rounded-lg border border-border bg-background p-3" value={value.note} onChange={e => onChange({ ...value, note: e.target.value })} /><span className="block text-xs text-muted-foreground">说明供 AI 理解；只有上面的结构化条件会参与确定性回测。</span></label>
   </fieldset>
 }
 
 /** 模板条件行：所有模板统一为「开关 + 字段 + 比较符 + 数值 + 单位」。
  *  注意：这里全部用内联样式，避免新增 Tailwind 类被构建漏掉（开关会塌成白圆）。 */
-function TemplateConditionRows({ template, value, onChange }: {
+function TemplateConditionRows({ template, value, onChange, bare = false }: {
   template: { name: string; paramRows?: Array<{ key: string; gate?: string | null; label: string; control: 'toggle' | 'number'; op?: string; unit?: string; default?: number | boolean; hint?: string }> }
   value: StrategyDraftInput
   onChange: (value: StrategyDraftInput) => void
+  bare?: boolean
 }) {
   const rows = template.paramRows || []
   if (!rows.length) return null
@@ -81,9 +132,9 @@ function TemplateConditionRows({ template, value, onChange }: {
     position: 'absolute', top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: '50%',
     background: '#fff', transition: 'left .15s', pointerEvents: 'none',
   })
-  return <section aria-label="模板条件" className="rounded-xl border border-border p-4">
-    <h3 className="font-medium">{template.name} · 条件设置</h3>
-    <p className="my-2 text-xs text-muted-foreground">每一行都是一条条件；关掉左侧开关表示这条不参与判断，改动数值后需要重新验证。</p>
+  return <section aria-label={bare ? '模板参数' : '模板条件'} className={bare ? '' : 'rounded-xl border border-border p-4'}>
+    {!bare && <h3 className="font-medium">{template.name} · 条件设置</h3>}
+    {!bare && <p className="my-2 text-xs text-muted-foreground">每一行都是一条条件；关掉左侧开关表示这条不参与判断，改动数值后需要重新验证。</p>}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {rows.map(row => {
         const gateOn = row.gate ? Boolean(params[row.gate] ?? true) : true

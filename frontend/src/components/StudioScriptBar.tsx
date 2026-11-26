@@ -26,6 +26,10 @@ type Props = {
   /** 追加：打开回测结果弹窗 */
   onReport?: () => void
   reportState?: 'idle' | 'running' | 'done' | 'error'
+  /** 策略下拉：脚本与条件策略都列出 */
+  strategies?: Array<{ id: number; name: string; kind: 'script' | 'conditions' }>
+  strategyValue?: number
+  onStrategyChange?: (id: number) => void
 }
 
 const kindLabel = (kind: StudioScriptKind) =>
@@ -47,6 +51,9 @@ export default function StudioScriptBar({
   onKnowledge,
   favorite,
   canBacktest = true,
+  strategies = [],
+  strategyValue,
+  onStrategyChange,
   backtestHint,
   onReport,
   reportState = 'idle',
@@ -54,9 +61,28 @@ export default function StudioScriptBar({
   return (
     <div className="st-scriptbar" aria-label="脚本工具条">
       <div className="st-scriptbar-actions">
-        <button type="button" onClick={onEdit} title="打开脚本编辑抽屉">
+        <select
+          aria-label="选择策略"
+          className="st-strategy-select"
+          value={strategyValue ?? ''}
+          onChange={(event) => onStrategyChange?.(Number(event.target.value))}
+          title="切换图表与回测使用的策略（脚本 / 条件都在这里）"
+        >
+          <option value="" disabled>选择策略</option>
+          <optgroup label="条件策略">
+            {strategies.filter((item) => item.kind === 'conditions').map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </optgroup>
+          <optgroup label="脚本策略">
+            {strategies.filter((item) => item.kind === 'script').map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </optgroup>
+        </select>
+        <button type="button" onClick={onEdit} title="打开脚本编辑器">
           <Braces size={15} />
-          脚本编辑
+          编辑
         </button>
         <div className="st-split">
           <button

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { StrategyCondition, StrategyField } from '@panwatch/api'
 import StrategyFactorPicker from './StrategyFactorPicker'
 
@@ -63,6 +63,7 @@ export function ConditionEditor({
   fields,
   emptyHint = '未设置',
   depth = 0,
+  footer,
 }: {
   title: string
   hint?: string
@@ -71,6 +72,8 @@ export function ConditionEditor({
   fields: StrategyField[]
   emptyHint?: string
   depth?: number
+  /** 在该组条件列表末尾追加内容（模板参数挂在模板条件行下面） */
+  footer?: ReactNode
 }) {
   const [pickerOpen,setPickerOpen]=useState(false)
   const update = (i: number, patch: Partial<StrategyCondition>) =>
@@ -166,6 +169,7 @@ export function ConditionEditor({
           <details className="basis-full text-xs text-muted-foreground"><summary className="cursor-pointer">时序与公式说明</summary><p className="my-2">{fields.find(f=>f.key===c.field)?.description || '原有量价条件，继续使用原来的计算口径。'}</p><label>前几个交易日 <input aria-label={`${title}第${i+1}条历史偏移`} type="number" min={0} max={240} value={c.offset||0} className="w-20 min-h-10 bg-background border rounded px-2" onChange={e=>update(i,{offset:Number(e.target.value)})}/></label><label className="ml-3">连续满足 <input aria-label={`${title}第${i+1}条连续天数`} type="number" min={1} max={60} value={c.consecutive||1} className="w-20 min-h-10 bg-background border rounded px-2" onChange={e=>update(i,{consecutive:Number(e.target.value)})}/> 个交易日</label></details>
         </div>
       ))}
+      {footer}
     </div>
   )
 }

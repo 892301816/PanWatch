@@ -31,6 +31,10 @@ type Props = {
   strategyName: string
   scriptKind: StudioScriptKind
   onScriptEdit: () => void
+  /** 策略下拉：脚本策略与条件策略都在这里切换 */
+  strategies?: Array<{ id: number; name: string; kind: 'script' | 'conditions' }>
+  strategyValue?: number
+  onStrategyChange?: (id: number) => void
   onBacktest: () => void
   onSettings: () => void
   /** 以下为保持工作台原有“切换标的 / 布局”能力追加的可选入参。 */
