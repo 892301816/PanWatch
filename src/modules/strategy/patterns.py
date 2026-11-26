@@ -62,6 +62,29 @@ FEATURES += [f for f in FACTOR_FIELDS if f['key'] not in _legacy_keys] + [
     {"key":"template_entry","label":"所选模板入场信号","unit":"","group":"模板信号","kind":"boolean"},
     {"key":"template_exit","label":"所选模板退出信号","unit":"","group":"模板信号","kind":"boolean"},
 ]
+_EXTRA_VALID = [
+    {"key": "consecutive_limit_ups", "label": "连板数", "unit": "次", "group": "涨停基因"},
+    {"key": "limit_up_locked", "label": "当日涨停", "unit": "", "group": "涨停基因", "kind": "boolean"},
+    {"key": "limit_up_count_60d", "label": "近60日涨停次数", "unit": "次", "group": "涨停基因"},
+    {"key": "turnover_rate", "label": "换手率", "unit": "%", "group": "量价形态"},
+    {"key": "above_ma5", "label": "收盘价在MA5上方", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "above_ma20", "label": "收盘价在MA20上方", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "above_ma60", "label": "收盘价在MA60上方", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "ma_golden_cross", "label": "MA5上穿MA20", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "ma_bull_alignment", "label": "MA5>MA20>MA60", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "ma20_breakout", "label": "突破MA20", "unit": "", "group": "均线", "kind": "boolean"},
+    {"key": "macd_golden_cross", "label": "MACD金叉", "unit": "", "group": "指标", "kind": "boolean"},
+    {"key": "boll_breakout", "label": "突破布林上轨", "unit": "", "group": "指标", "kind": "boolean"},
+    {"key": "n_day_low", "label": "创N日新低", "unit": "", "group": "形态", "kind": "boolean"},
+    {"key": "close_above_prev", "label": "收盘高于昨收", "unit": "", "group": "形态", "kind": "boolean"},
+    {"key": "annual_vol_20d", "label": "20日年化波动率", "unit": "%", "group": "量价形态"},
+    {"key": "momentum_20d", "label": "20日动量", "unit": "%", "group": "动量"},
+    {"key": "rsi_14", "label": "RSI(14)", "unit": "", "group": "指标"},
+    {"key": "boll_width", "label": "布林带宽", "unit": "%", "group": "指标"},
+]
+_known_keys = {f["key"] for f in FEATURES}
+FEATURES += [f for f in _EXTRA_VALID if f["key"] not in _known_keys]
+
 FIELD_MAP = {f["key"]: f for f in FEATURES}
 VALID_FIELDS = set(FIELD_MAP)
 
@@ -220,11 +243,17 @@ def compute_features(bars: Sequence[Any], idx: int, extended: bool = True) -> di
             break
         below_days += 1
 
+    # 换手率/成交额来自行情附加字段（PriceBar 可能没有），缺失时为 None
+    turnover = getattr(bar, 'turnover_rate', None)
+    amount = getattr(bar, 'amount', None)
+
     today_event = gap_drop_event(bars, idx)
     unrepaired = unrepaired_gap_drop(bars, idx)
 
     result = {
         "change_pct": round((price / prev - 1) * 100, 2) if prev > 0 else None,
+        "turnover_rate": round(float(turnover), 4) if turnover is not None else None,
+        "amount": float(amount) if amount is not None else None,
         "runup_3d": _ret(bars, idx, 3),
         "runup_5d": _ret(bars, idx, 5),
         "runup_10d": _ret(bars, idx, 10),

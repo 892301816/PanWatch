@@ -440,13 +440,11 @@ def chart_preview(payload: ChartPreviewIn, db: Session = Depends(get_db)):
             rows = strategy_rows(ordered, rules.get("config", {}), buy + sell + avoid, payload.symbol)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        points = []
-        for i, row in enumerate(rows):
-            entry = combine([evaluate(rows, i, c) for c in buy])
-            blocked = combine([evaluate(rows, i, c) for c in avoid], "any")
-            exit_signal = combine([evaluate(rows, i, c) for c in sell], "any")
-            points.append({**row, "template_entry": entry is True and blocked is False,
-                           "template_exit": exit_signal is True})
+        # 信号只走一个实现：持仓状态机（无买不卖、持仓不加仓），与回测同源
+        from src.modules.strategy.chart_script import apply_paired_markers
+        apply_paired_markers(rows, buy, sell, avoid)
+        points = [{**row, "template_entry": row.get("template_entry") == 1,
+                   "template_exit": row.get("template_exit") == 1} for row in rows]
     else:
         try:
             if payload.price_only:

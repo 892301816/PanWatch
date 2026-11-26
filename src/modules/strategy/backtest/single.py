@@ -447,13 +447,20 @@ def run_single_backtest(
         "lot_size": lot_size, "limit_pct": limit_pct,
         "cost_config": asdict(cost.cfg), "limitations": limitations,
     }
-    rows = strategy_rows(bars, config, buy + sell + avoid, symbol)
+    rows = strategy_rows(bars, config, buy + sell + avoid, symbol, sides={'buy': buy, 'sell': sell, 'avoid': avoid})
     if config.get('template_id') or any('tf_' in str(c) for c in buy+sell+avoid):
         data_info['factor_version']=CATALOG['version']
     known_bars=sum(all(evaluate(rows,i,c) is not None for c in buy+avoid) for i in period)
     data_info['condition_coverage']={'known_entry_bars':known_bars,'total_bars':len(period)}
     if buy and known_bars==0:
-        return fail('missing_factor_data','所选区间没有可完整判断入场与禁买条件的日期，请检查指标预热、历史财务或交易状态数据',data_info)
+        missing = sorted({
+            c.get('field') for row in (buy + avoid)
+            for c in ([row] + list(row.get('children') or []))
+            if c.get('field') and all(evaluate(rows, i, c) is None for i in period)
+        })
+        data_info['unavailable_fields'] = missing
+        hint = ('；缺少数据的字段：' + '、'.join(missing)) if missing else ''
+        return fail('missing_factor_data','所选区间没有可完整判断入场与禁买条件的日期，请检查指标预热、历史财务或交易状态数据' + hint,data_info)
     cash, shares = initial_capital, 0
     entry_order: dict | None = None
     entry_index = 0

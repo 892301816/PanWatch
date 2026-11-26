@@ -52,8 +52,50 @@ def compute_frame(bars,extra_fields=()) -> pd.DataFrame:
     for p in (20,60):
         locked=col('limit_up_locked');f[f'limit_up_count_{p}d']=locked.rolling(p).sum()
     f.update(log_float_mv=np.log((raw*v/turnover).where((turnover>0)&(v>0))),momentum_120d=rel(c,c.shift(120)),mom_accel_20_60=f['momentum_20d']-f['momentum_60d'],rsi_14_delta_5d=f['rsi_14']-f['rsi_14'].shift(5),overnight_ret_20d=rel(o,c.shift()).rolling(20).sum(),intraday_ret_20d=rel(c,o).rolling(20).sum(),downside_vol_20d=np.sqrt(r.clip(upper=0).pow(2).rolling(20).mean()),vol_regime_5_60=ratio(r.rolling(5).std(),r.rolling(60).std()),amplitude_trend_20_60=rel(f['amplitude'].rolling(20).mean(),f['amplitude'].rolling(60).mean()),obv_trend_20d=ratio((np.sign(r)*v).rolling(20).sum(),v.rolling(20).mean()*20),amount_mean_20d=(a/1e8).rolling(20).mean(),turnover_mean_20d=turnover.rolling(20).mean(),turnover_std_20d=ratio(turnover.rolling(20).std(),turnover.rolling(20).mean()),position_240d=ratio(c-c.rolling(240).min(),c.rolling(240).max()-c.rolling(240).min()),distance_to_high_240d=rel(c,c.rolling(240).max()))
+    # ---- 模板条件所需的派生字段（全部来自已有列，不引入新数据源） ----
+    f['above_ma5'] = (c > f['ma5']).astype(float).where(f['ma5'].notna())
+    f['above_ma20'] = (c > f['ma20']).astype(float).where(f['ma20'].notna())
+    f['above_ma60'] = (c > f['ma60']).astype(float).where(f['ma60'].notna())
+    f['boll_breakout'] = (c > f['boll_upper']).astype(float).where(f['boll_upper'].notna())
+    f['ma_golden_cross'] = ((f['ma5'] > f['ma20']) & (f['ma5'].shift(1) <= f['ma20'].shift(1))).astype(float).where(f['ma20'].notna())
+    f['ma_bull_alignment'] = ((f['ma5'] > f['ma20']) & (f['ma20'] > f['ma60'])).astype(float).where(f['ma60'].notna())
+    f['ma20_breakout'] = ((c > f['ma20']) & (c.shift(1) <= f['ma20'].shift(1))).astype(float).where(f['ma20'].notna())
+    f['macd_golden_cross'] = ((dif > dea) & (dif.shift(1) <= dea.shift(1))).astype(float)
+    f['close_above_prev'] = (c > f['prev_close']).astype(float)
+    for w in sorted({60} | {int(k[9:]) for k in extra_fields if k.startswith('n_day_low_') and k[9:].isdigit() and 5 <= int(k[9:]) <= 250}):
+        low_n = l.rolling(w).min()
+        f[f'n_day_low_{w}'] = (l <= low_n).astype(float).where(low_n.notna())
+    f.setdefault('n_day_low', f['n_day_low_60'])
     for name in ('price_limit_pct','limit_up_locked','consecutive_limit_ups'):
-        f[name]=col(name)
+        f[name] = col(name)
+
+    # 行情源未提供涨停/连板列时，按 A 股涨跌停规则推导（主板 10%、创业/科创 20%、ST 5%）
+    if f['limit_up_locked'].isna().all():
+        limit_col = col('price_limit_pct')
+        limit_ratio = limit_col.where(limit_col > 0, np.nan)
+        # price_limit_pct 可能是百分数(10)或小数(0.1)，统一成小数阈值
+        limit_ratio = limit_ratio.where(limit_ratio < 1, limit_ratio / 100.0)
+        threshold = (limit_ratio - 0.002).fillna(0.098)
+        locked = (r >= threshold).astype(float)
+        f['limit_up_locked'] = locked
+        group = (~locked.astype(bool)).cumsum()
+        f['consecutive_limit_ups'] = locked.groupby(group).cumsum()
+        for span in (20, 60):
+            f[f'limit_up_count_{span}d'] = locked.rolling(span).sum()
+
+
+    # 行情源未提供涨停/连板列时，按 A 股涨跌停规则推导
+    if f['limit_up_locked'].isna().all():
+        limit_col = col('price_limit_pct')
+        limit_ratio = limit_col.where(limit_col > 0, np.nan)
+        limit_ratio = limit_ratio.where(limit_ratio < 1, limit_ratio / 100.0)
+        threshold = (limit_ratio - 0.002).fillna(0.098)
+        locked = (r >= threshold).astype(float)
+        f['limit_up_locked'] = locked
+        group = (~locked.astype(bool)).cumsum()
+        f['consecutive_limit_ups'] = locked.groupby(group).cumsum()
+        for span in (20, 60):
+            f[f'limit_up_count_{span}d'] = locked.rolling(span).sum()
     for spec in CATALOG['factors']:
         if spec['id'] not in f:f[spec['id']]=col(spec['id'])
     return pd.DataFrame(f,index=range(n)).replace([np.inf,-np.inf],np.nan)

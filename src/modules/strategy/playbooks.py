@@ -203,7 +203,13 @@ def _upsert(
         raise ValueError("同一标的的市场不能直接修改，请使用正确的市场标识")
     row.market = payload.get("market") or "CN"
     row.timing = payload.get("timing") or "completed_daily"
-    row.policy_config = payload.get('config') or {}
+    _cfg = dict(payload.get('config') or {})
+    _has_cond = bool(payload.get('buy') or payload.get('sell') or payload.get('avoid'))
+    if _cfg.get('chart_script') and _has_cond:
+        _cfg.setdefault('legacy_script', _cfg.pop('chart_script'))
+        _cfg['mode'] = 'conditions'
+    _cfg.setdefault('mode', 'conditions' if _has_cond else 'script')
+    row.policy_config = _cfg
     row.buy_conditions = _clean(payload.get("buy"))
     row.sell_conditions = _clean(payload.get("sell"))
     row.avoid_conditions = _clean(payload.get("avoid"))
@@ -403,6 +409,16 @@ def check_symbol(
         if own:
             db.close()
 
+    # 迁移：条件优先；遗留脚本降级为留档字段，不再参与信号与画线
+    if isinstance(config, dict):
+        if config.get('chart_script') and (buy or sell or avoid):
+            config = {**config, 'legacy_script': config.get('chart_script')}
+            config.pop('chart_script', None)
+            config.setdefault('mode', 'conditions')
+        elif config.get('chart_script'):
+            config.setdefault('mode', 'script')
+        config.setdefault('mode', 'conditions' if (buy or sell or avoid) else 'script')
+
     has_playbook = bool(scope)
     config = playbook.policy_config or {} if playbook else {}
     if rules_override is not None:
@@ -450,6 +466,14 @@ def check_symbol(
         try:rows=attach(rows,bars,config,symbol)
         except ValueError as exc:
             return {'symbol':symbol,'has_playbook':True,'verdict':'数据不足','error':str(exc),'buy_checks':[],'sell_checks':[],'avoid_checks':[]}
+    # 策略只有一种模式：conditions 用条件出信号，script 用脚本出信号
+    mode = (config or {}).get('mode')
+    if mode not in ('conditions', 'script'):
+        mode = 'conditions' if (buy or sell or avoid) else 'script'
+    if mode == 'conditions' and (buy or sell or avoid):
+        from src.modules.strategy.chart_script import apply_paired_markers
+        apply_paired_markers(rows, buy, sell, avoid)
+
     features = rows[-1]
     pattern = diagnose(bars, len(bars) - 1, features)
 
@@ -536,3 +560,27 @@ def board(symbols: list[str], db: Session | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"[策略] {symbol} 检查失败: {exc}")
     return {"items": out}
+
+# 模板条件用到的派生字段（补齐中文名，供条件编辑器下拉选择）
+_EXTRA_FIELDS = [
+    {"key": "above_ma5", "label": "收盘价在MA5上方", "group": "均线", "kind": "boolean"},
+    {"key": "above_ma20", "label": "收盘价在MA20上方", "group": "均线", "kind": "boolean"},
+    {"key": "above_ma60", "label": "收盘价在MA60上方", "group": "均线", "kind": "boolean"},
+    {"key": "ma_golden_cross", "label": "MA5上穿MA20", "group": "均线", "kind": "boolean"},
+    {"key": "ma_bull_alignment", "label": "MA5>MA20>MA60多头排列", "group": "均线", "kind": "boolean"},
+    {"key": "ma20_breakout", "label": "突破MA20", "group": "均线", "kind": "boolean"},
+    {"key": "macd_golden_cross", "label": "MACD金叉", "group": "指标", "kind": "boolean"},
+    {"key": "boll_breakout", "label": "突破布林上轨", "group": "指标", "kind": "boolean"},
+    {"key": "n_day_low", "label": "创N日新低", "group": "形态", "kind": "boolean"},
+    {"key": "close_above_prev", "label": "收盘高于昨收", "group": "形态", "kind": "boolean"},
+    {"key": "consecutive_limit_ups", "label": "连板数", "group": "涨停基因", "unit": "次"},
+    {"key": "limit_up_locked", "label": "当日涨停", "group": "涨停基因", "kind": "boolean"},
+    {"key": "limit_up_count_60d", "label": "近60日涨停次数", "group": "涨停基因", "unit": "次"},
+    {"key": "turnover_rate", "label": "换手率", "group": "量价形态", "unit": "%"},
+    {"key": "annual_vol_20d", "label": "20日年化波动率", "group": "量价形态", "unit": "%"},
+    {"key": "momentum_20d", "label": "20日动量", "group": "动量", "unit": "%"},
+    {"key": "rsi_14", "label": "RSI(14)", "group": "指标", "unit": ""},
+    {"key": "boll_width", "label": "布林带宽", "group": "指标", "unit": "%"},
+]
+_known = {f["key"] for f in FEATURES}
+FEATURES = FEATURES + [f for f in _EXTRA_FIELDS if f["key"] not in _known]

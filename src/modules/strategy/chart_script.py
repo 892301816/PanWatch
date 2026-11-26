@@ -163,16 +163,69 @@ def chart_bar(bar, row):
     return data
 
 
-def strategy_rows(bars, config, conditions, symbol):
+def apply_paired_markers(rows, buy, sell, avoid):
+    """唯一的信号实现：按持仓状态生成配对买卖点（图表与回测共用）。"""
+    from src.modules.strategy.rule_engine import evaluate
+    buy, sell, avoid = buy or [], sell or [], avoid or []
+    holding = False
+    for index, row in enumerate(rows):
+        entry = bool(buy) and all(evaluate(rows, index, c) is True for c in buy)
+        exit_hit = bool(sell) and any(evaluate(rows, index, c) is True for c in sell)
+        avoid_hit = bool(avoid) and any(evaluate(rows, index, c) is True for c in avoid)
+        if not holding and entry and not avoid_hit:
+            row['template_entry'], row['template_exit'] = 1, None
+            holding = True
+        elif holding and (exit_hit or avoid_hit):
+            row['template_exit'], row['template_entry'] = 1, None
+            holding = False
+        else:
+            row['template_entry'] = row['template_exit'] = None
+    return rows
+
+def strategy_rows(bars, config, conditions, symbol, sides=None):
     from src.modules.strategy.patterns import compute_features
     from src.modules.strategy.factor_engine import field_rows
     from src.modules.strategy.template_runtime import attach
 
     rows = [compute_features(bars, index, extended=False) for index in range(len(bars))]
+    # 涨停/连板：与 tick-stock-panel 的 price_limits 完全一致
+    #   涨停价 = 四舍五入(前收 × (1+板块涨跌幅))，按整数分计算
+    #   板块：.BJ→30%，300/301/688/689→20%，其余→10%（ST 5% 需股票名称，回测无名称则不处理）
+    if symbol:
+        code = str(symbol)
+        if code.endswith(".BJ"):
+            limit_pct = 0.30
+        elif code.split(".")[0].startswith(("300", "301", "688", "689")):
+            limit_pct = 0.20
+        else:
+            limit_pct = 0.10
+        numerator = int(round((1 + limit_pct) * 100))
+        locked_flags, streak, counts = [], 0, []
+        for index, bar in enumerate(bars):
+            prev = float(bars[index - 1].close) if index else 0.0
+            hit = False
+            if prev > 0:
+                cents = int((prev * 100) + 0.5)
+                limit_price = ((cents * numerator + 50) // 100) / 100
+                hit = float(bar.close) >= limit_price - 1e-6
+            streak = streak + 1 if hit else 0
+            locked_flags.append(hit)
+            counts.append(streak)
+        for index, row in enumerate(rows):
+            row["limit_up_locked"] = 1 if locked_flags[index] else 0
+            row["consecutive_limit_ups"] = counts[index]
+            row["limit_up_count_60d"] = sum(locked_flags[max(0, index - 59): index + 1])
     if config.get("template_id") or any("tf_" in str(c) for c in conditions):
         for row, extra in zip(rows, field_rows(bars)):
             row.update({key: value for key, value in extra.items() if key.startswith("tf_")})
-    return attach(rows, bars, config, symbol)
+
+    rows = attach(rows, bars, config, symbol)
+
+    # 条件型策略：先让脚本/模板写出信号，再用持仓状态机覆盖成配对买卖点
+    # （没有买入就不会有卖出；持仓中不加仓，与回测口径一致）
+    if sides:
+        apply_paired_markers(rows, sides.get('buy'), sides.get('sell'), sides.get('avoid'))
+    return rows
 
 
 def describe(source):

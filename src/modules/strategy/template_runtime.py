@@ -38,7 +38,7 @@ def normalize_config(config):
             if clean_inputs:
                 out['inputs'] = clean_inputs
         return out
-    if set(config)-{'template_id','params','execution','scoring','directions','factor_version'}:raise ValueError('策略配置包含不支持的字段')
+    if set(config)-{'template_id','template_ref','mode','legacy_script','params','execution','scoring','directions','factor_version'}:raise ValueError('策略配置包含不支持的字段')
     if config.get('factor_version') not in (None,CATALOG['version']):raise ValueError('公式版本不受支持，请保留旧报告并重新核对策略')
     if config.get('factor_version'):out['factor_version']=config['factor_version']
     template=config.get('template_id')
@@ -111,6 +111,74 @@ def _op_of(pid: str) -> str:
     return '≥'
 
 
+
+# 参数 -> 条件字段映射：过滤类参数翻译成统一条件行；窗口类保留为「算法窗口」
+FILTER_FIELDS = {
+    'min_pct': ('change_pct', 'gte', '%'), 'min_change': ('change_pct', 'gte', '%'),
+    'max_change': ('change_pct', 'lte', '%'), 'min_open_gap': ('open_gap', 'gte', '%'),
+    'limit_gap': ('open_gap', 'lte', '%'),
+    'vol_ratio_max': ('volume_ratio_5d', 'lte', '倍'), 'min_vol_ratio': ('volume_ratio_5d', 'gte', '倍'),
+    'min_turnover': ('turnover_rate', 'gte', '%'), 'max_turnover': ('turnover_rate', 'lte', '%'),
+    'min_boards': ('consecutive_limit_ups', 'gte', '次'), 'boards': ('consecutive_limit_ups', 'gte', '次'),
+    'min_limit_count': ('limit_up_count_60d', 'gte', '次'),
+    'rsi_max': ('rsi_14', 'lte', ''), 'rsi_min': ('rsi_14', 'gte', ''),
+    'vol_max': ('annual_vol_20d', 'lte', '%'),
+    'ma_proximity': ('ma20_dev', 'abs_lte', '%'), 'proximity': ('ma20_dev', 'abs_lte', '%'),
+    'range_pct_max': ('boll_width', 'lte', '%'),
+    'require_limit_up': ('limit_up_locked', 'eq', '是'),
+    'require_boll_breakout': ('boll_breakout', 'eq', '是'),
+    'require_ma_golden': ('ma_golden_cross', 'eq', '是'),
+    'require_above_ma5': ('above_ma5', 'eq', '是'),
+    'require_above_ma20': ('above_ma20', 'eq', '是'),
+    'require_above_ma60': ('above_ma60', 'eq', '是'),
+    'require_ma_alignment': ('ma_bull_alignment', 'eq', '是'),
+    'require_positive_momentum': ('momentum_20d', 'gt', '%'),
+    'require_positive_change': ('change_pct', 'gt', '%'),
+    'require_n_day_high': ('high20_gap', 'gte', '%'),
+    'require_n_day_low': ('n_day_low', 'eq', '是'),
+    'require_bullish_candle': ('body_pct', 'gt', '%'),
+    'require_recovery': ('close_above_prev', 'eq', '是'),
+    'require_close_above_open': ('body_pct', 'gt', '%'),
+    'require_ma20_breakout': ('ma20_breakout', 'eq', '是'),
+    'require_macd_golden': ('macd_golden_cross', 'eq', '是'),
+}
+
+WINDOW_HINT = ('days', 'window', 'period', 'platform_days', 'squeeze_days')
+
+
+def _is_window(pid: str) -> bool:
+    low = pid.lower()
+    return any(token in low for token in WINDOW_HINT) and not low.startswith(('min_', 'max_'))
+
+
+def template_conditions(spec: dict) -> dict:
+    """把模板的过滤参数翻译成 buy 条件行；窗口参数保留在 params（算法窗口）。"""
+    params = spec.get('params') or []
+    buy, windows = [], []
+    for index, param in enumerate(params):
+        pid = str(param.get('id', ''))
+        default = param.get('default')
+        if _is_window(pid):
+            windows.append(param)
+            continue
+        if isinstance(default, bool):
+            # 开关：默认关闭的参数不进入条件，打开时由映射决定阈值
+            continue
+        mapped = FILTER_FIELDS.get(pid)
+        if not mapped:
+            continue
+        field, op, unit = mapped
+        buy.append({'field': field, 'op': op, 'value': default})
+    # 布尔条件：require_* 为真的默认开启
+    for param in params:
+        pid = str(param.get('id', ''))
+        if isinstance(param.get('default'), bool) and param.get('default'):
+            mapped = FILTER_FIELDS.get(pid)
+            if mapped and mapped[0] not in {row['field'] for row in buy}:
+                buy.append({'field': mapped[0], 'op': mapped[1], 'value': 1})
+    return {'buy': buy, 'windows': windows}
+
+
 def param_rows(spec: dict) -> list[dict]:
     """把模板参数声明归一成统一的条件行。
 
@@ -177,7 +245,7 @@ def param_rows(spec: dict) -> list[dict]:
 
 
 def presets():
-    return [{**s,'note':s.get('description',''),'paramRows':param_rows(s),'buy':[{'field':'template_entry','op':'eq','value':1}], 'sell':[{'field':'template_exit','op':'eq','value':1}], 'avoid':[], 'config':{'template_id':s['id'],'params':{p['id']:p['default'] for p in s.get('params',[])},'execution':{'stop_loss_pct':(s.get('stop_loss') or -.06)*100,'max_hold_days':s.get('max_hold_days') or 20},'scoring':s.get('scoring') or ({'momentum_20d':1} if s['id']=='factor_rank_research' else {}),'directions':{}},'source':'tick-stock-panel','formula_version':CATALOG['version']} for s in TEMPLATES.values()]
+    return [{**s,'note':s.get('description',''),'paramRows':[r for r in param_rows(s) if _is_window(str(r.get('key','')))],'buy':template_conditions(s)['buy'], 'sell':[], 'avoid':[], 'config':{'mode':'conditions','template_ref':s['id'],'params':{p['id']:p['default'] for p in s.get('params',[]) if _is_window(str(p.get('id','')))},'execution':{'stop_loss_pct':(s.get('stop_loss') or -.06)*100,'max_hold_days':s.get('max_hold_days') or 20},'scoring':s.get('scoring') or ({'momentum_20d':1} if s['id']=='factor_rank_research' else {}),'directions':{}},'source':'tick-stock-panel','formula_version':CATALOG['version']} for s in TEMPLATES.values()]
 
 def execute(histories,config):
     config=normalize_config(config)
