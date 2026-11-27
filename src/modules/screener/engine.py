@@ -44,6 +44,37 @@ def _limit_threshold(code: str) -> float:
     return 0.09
 
 
+def _board_limit_pct(code: str) -> float:
+    """按代码前缀返回涨跌幅比例（不含 ST，ST 需名称判断）。"""
+    c = str(code)
+    for prefix in ("sz", "sh", "bj"):
+        if c.startswith(prefix):
+            c = c[2:]
+            break
+    c = c.split(".")[0]
+    if c.startswith(("300", "301", "688", "689")):
+        return 0.20
+    if c.startswith(("4", "8", "92")):
+        return 0.30
+    return 0.10
+
+
+def _limit_price(prev_close: float, pct: float) -> float:
+    """按整数分四舍五入计算涨停价（与交易所口径一致）。"""
+    cents = int(float(prev_close) * 100 + 0.5)
+    numerator = int(round((1 + float(pct)) * 100))
+    return ((cents * numerator + 50) // 100) / 100
+
+
+def _is_limit_up(code: str, close: float, prev_close: float, name: str = "") -> bool:
+    """精确判定是否涨停：收盘价 >= 涨停价（ST 按 5%，其余按板块）。"""
+    if not close or not prev_close or float(prev_close) <= 0:
+        return False
+    # 注：ST 股 5% 板需要可靠的名称来源；本地快照的名称可能滞后，
+    # 曾把已摘帽个股按 5% 误判为涨停，因此这里只按板块比例判定。
+    return float(close) >= _limit_price(prev_close, _board_limit_pct(code)) - 1e-6
+
+
 def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
     """用本地 daily_bars 推算当日涨停与连板数(涨停池不可用时的兜底)。
 
@@ -61,8 +92,8 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
     # 连板数只需要计算当日涨停股。全市场窗口函数会让 SQLite 扫描多年
     # 的 (symbol, trade_date) 索引；先缩到几十只，再按同一索引回看历史。
     candidates = (
-        {q["symbol"] for q in quotes if q.get("price") and q.get("prev_close")
-         and q["price"] / q["prev_close"] - 1 >= _limit_threshold(q["symbol"])}
+        {q["symbol"] for q in quotes
+         if _is_limit_up(q["symbol"], q.get("price"), q.get("prev_close"), q.get("name") or "")}
         if live else _local_limit_up_symbols(trade_date)
     )
     if not candidates:
@@ -97,22 +128,22 @@ def _local_ladder(trade_date: str, *, days: int = 21) -> list[dict]:
         return []
     day_index = {d: i for i, d in enumerate(dates)}
 
+    try:
+        names = {r["symbol"]: r.get("name") or "" for r in quotes}
+    except Exception:  # noqa: BLE001
+        names = {}
+
     hit: dict[tuple[str, str], float] = {}
     pct_by_symbol: dict[str, float] = {}
     for symbol, day, close, prev in rows:
         code = str(symbol)
         pct = (float(close) - float(prev)) / float(prev)
-        if pct >= _limit_threshold(code):
+        if _is_limit_up(code, float(close), float(prev), names.get(code, "")):
             hit[(code, str(day))] = pct * 100
             if str(day) == trade_date:
                 pct_by_symbol[code] = pct * 100
     if not pct_by_symbol:
         return []
-
-    try:
-        names = {r["symbol"]: r.get("name") or "" for r in quotes}
-    except Exception:  # noqa: BLE001
-        names = {}
 
     items: list[dict] = []
     for symbol, pct in pct_by_symbol.items():
@@ -334,7 +365,7 @@ def _local_limit_up_symbols(day: str) -> set[str]:
     """
     if snapshot_mod._MEM.get("trade_date") == day and snapshot_mod._MEM.get("rows"):
         return {q["symbol"] for q in snapshot_mod._MEM["rows"]
-                if q.get("price") and q.get("prev_close") and q["price"] / q["prev_close"] - 1 >= _limit_threshold(q["symbol"])}
+                if _is_limit_up(q["symbol"], q.get("price"), q.get("prev_close"), q.get("name") or "")}
     from sqlalchemy import text
 
     from src.platform.persistence.database import SessionLocal
