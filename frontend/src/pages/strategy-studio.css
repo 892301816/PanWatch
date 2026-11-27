@@ -4072,3 +4072,17 @@
   background: rgb(220 38 38 / 0.12);
   border-radius: 2px;
 }
+
+/* 标的/策略下拉：暗色主题下不让浏览器用白底白字 */
+.st-topbar-instrument,
+.st-topbar-instrument option,
+.st-scriptbar-actions select,
+.st-scriptbar-actions option {
+  background-color: hsl(var(--popover, var(--background)));
+  color: hsl(var(--foreground));
+}
+.st-topbar-instrument option:checked,
+.st-scriptbar-actions option:checked {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}

@@ -245,6 +245,38 @@ export default function StrategyStudio({
   ]
   if (!options.some((s) => keyOf(s) === keyOf(instrument)))
     options.push(instrument)
+
+  // 从个股K线直接进入时只有代码，补拉名称用于下拉展示
+  const [nameMap, setNameMap] = useState<Record<string, string>>({})
+  const optionKey = options.map((row) => keyOf(row) + (row.name || '')).join('|')
+  useEffect(() => {
+    const missing = options
+      .filter((row) => !row.name || row.name === row.symbol)
+      .slice(0, 12)
+    if (!missing.length) return
+    let alive = true
+    void Promise.all(
+      missing.map(async (row) => {
+        try {
+          const data = await fetchAPI<Array<{ symbol?: string; name?: string }>>(
+            `/stocks/search?q=${encodeURIComponent(row.symbol)}`,
+          )
+          const hit = (data || []).find((item) => item.symbol === row.symbol)
+          return [keyOf(row), hit?.name || ''] as const
+        } catch {
+          return [keyOf(row), ''] as const
+        }
+      }),
+    ).then((rows) => {
+      if (!alive) return
+      const filled = Object.fromEntries(rows.filter(([, n]) => n))
+      if (Object.keys(filled).length) setNameMap((prev) => ({ ...prev, ...filled }))
+    })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionKey])
   const [period, setPeriod] = useState('1d'),
     [tab, setTab] = useState<'editor' | 'report'>(
       historical ? 'report' : 'editor',
@@ -1009,10 +1041,13 @@ export default function StrategyStudio({
         }}
         symbolOptions={options.map((target) => ({
           value: keyOf(target),
-          label:
-            target.name === target.symbol
+          label: (() => {
+            const resolved = nameMap[keyOf(target)] || target.name
+            const head = !resolved || resolved === target.symbol
               ? target.symbol
-              : target.name + ' ' + target.symbol,
+              : `${resolved} · ${target.symbol}`
+            return `${head} ${target.kind === 'index' ? '指数' : target.market}`
+          })(),
         }))}
         onSymbol={changeInstrument}
         period={period}
@@ -1104,12 +1139,13 @@ export default function StrategyStudio({
         instrumentValue={instrumentKey}
         instrumentOptions={options.map((target) => ({
           value: keyOf(target),
-          label:
-            (target.name === target.symbol
+          label: (() => {
+            const resolved = nameMap[keyOf(target)] || target.name
+            const head = !resolved || resolved === target.symbol
               ? target.symbol
-              : target.name + ' · ' + target.symbol) +
-            ' ' +
-            (target.kind === 'index' ? '指数' : target.market),
+              : `${resolved} · ${target.symbol}`
+            return `${head} ${target.kind === 'index' ? '指数' : target.market}`
+          })(),
         }))}
         onInstrumentChange={changeInstrument}
         onGallery={(view) => setGallery(view)}
